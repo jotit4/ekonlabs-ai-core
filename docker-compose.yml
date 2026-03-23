@@ -1,0 +1,48 @@
+# docker-compose.yml — Desarrollo local
+# Servicios: api (FastAPI), redis, worker (RQ)
+
+services:
+
+  # ────────────────────────────────────────
+  # API — FastAPI en uvicorn
+  # ────────────────────────────────────────
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ────────────────────────────────────────
+  # Redis 7.x
+  # ────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ────────────────────────────────────────
+  # Worker — RQ (Redis Queue)
+  # ────────────────────────────────────────
+  worker:
+    build: .
+    command: ["python", "-m", "app.workers.worker"]
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
