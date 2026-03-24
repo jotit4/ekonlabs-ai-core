@@ -15,6 +15,7 @@ from app.core.rate_limiter import limiter
 from app.core.config import settings
 from app.api.v1.health import router as health_router
 from app.api.v1.tenants import router as tenants_router
+from app.api.v1.webhooks import router as webhooks_router
 
 
 @asynccontextmanager
@@ -125,3 +126,4 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(tenants_router, prefix="/api/v1")
+app.include_router(webhooks_router, prefix="/api/v1")

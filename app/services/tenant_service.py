@@ -135,6 +135,62 @@ def update_tenant_rules(tenant_id: str, update: TenantRulesUpdate) -> TenantResp
         ) from exc
 
 
+def get_tenant_by_phone(phone_number: str) -> TenantResponse | None:
+    """Busca un Tenant por su número de WhatsApp registrado.
+
+    Normaliza el número intentando con y sin prefijo "+" para manejar las
+    diferencias de formato entre Meta API (sin "+") y los tenants registrados.
+
+    NOTA: Función sincrónica (supabase-py es blocking).
+    Llamar desde contexto async vía asyncio.to_thread().
+
+    Args:
+        phone_number: Número de teléfono, con o sin prefijo "+" (ej: "15550051237").
+
+    Returns:
+        TenantResponse si se encontró el tenant, None si no existe o hay error.
+    """
+    # Normalizar: Meta envía sin "+", los tenants pueden tener "+" o no
+    if phone_number.startswith("+"):
+        candidates = [phone_number, phone_number[1:]]
+    else:
+        candidates = [f"+{phone_number}", phone_number]
+
+    client = get_supabase_client()
+
+    for candidate in candidates:
+        try:
+            result = (
+                client.table("tenants")
+                .select("*")
+                .eq("whatsapp_number", candidate)
+                .execute()
+            )
+        except Exception as exc:
+            logger.warning(
+                "Error buscando tenant por teléfono",
+                phone=phone_number,
+                error=str(exc),
+            )
+            return None
+
+        data = getattr(result, "data", None)
+        if data:
+            row = _normalize_row(data[0] if isinstance(data, list) else data)
+            try:
+                return TenantResponse.model_validate(row)
+            except Exception as exc:
+                logger.warning(
+                    "Invalid tenant row shape en búsqueda por teléfono",
+                    phone=phone_number,
+                    error=str(exc),
+                )
+                return None
+
+    logger.warning("Tenant no encontrado por número de teléfono", phone=phone_number)
+    return None
+
+
 def create_tenant(tenant_create: TenantCreate) -> TenantResponse:
     client = get_supabase_client()
     payload = tenant_create.model_dump()
