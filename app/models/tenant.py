@@ -40,6 +40,9 @@ class TenantConfig(BaseModel):
     status: Literal["active", "inactive"]
     system_prompt_override: str | None = None
     rules: dict = Field(default_factory=dict)
+    # Epic 3 — Google Calendar (nullable; tenants sin calendario operan con RAG normal)
+    calendar_id: str | None = None
+    calendar_credentials: dict | None = None
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
