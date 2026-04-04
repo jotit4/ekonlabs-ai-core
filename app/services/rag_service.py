@@ -16,8 +16,8 @@ from app.core.exceptions import AppException
 
 logger = structlog.get_logger(__name__)
 
-_CHUNK_SIZE = 1000
-_CHUNK_OVERLAP = 200
+_CHUNK_SIZE = 400
+_CHUNK_OVERLAP = 60
 _EMBED_MODEL = "text-embedding-3-small"
 _EMBED_DIMS = 1536
 _SIMILARITY_THRESHOLD: float = 0.60
@@ -104,6 +104,13 @@ def ingest_document(tenant_id: str, file_path: str, source_filename: str) -> int
         try:
             with conn:
                 with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        DELETE FROM public.knowledge_chunks
+                        WHERE tenant_id = %s AND source_filename = %s
+                        """,
+                        (tenant_id, source_filename),
+                    )
                     for idx, (chunk, vector) in enumerate(zip(chunks, vectors)):
                         cur.execute(
                             """

@@ -217,6 +217,73 @@ def test_search_knowledge_includes_chunk_at_exactly_threshold():
     assert results[0]["similarity"] == 0.60
 
 
+def test_ingest_deletes_existing_chunks_before_insert(tmp_path):
+    """ingest_document must DELETE existing chunks before INSERTing new ones."""
+    pdf_path = tmp_path / "clinic.pdf"
+    pdf_path.write_bytes(b"")
+    fake_chunks = [MagicMock(page_content="chunk 0")]
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_pool = _mock_pool(mock_conn)
+
+    with (
+        patch("app.services.rag_service.PyPDFLoader") as MockLoader,
+        patch("app.services.rag_service.RecursiveCharacterTextSplitter") as MockSplitter,
+        patch("app.services.rag_service._get_embedder") as MockEmbed,
+        patch("app.services.rag_service._get_pool", return_value=mock_pool),
+        patch("app.services.rag_service.register_vector"),
+    ):
+        MockLoader.return_value.load.return_value = [MagicMock(page_content="p")]
+        MockSplitter.return_value.split_documents.return_value = fake_chunks
+        MockEmbed.return_value.embed_documents.return_value = [FAKE_VECTOR]
+        ingest_document(TENANT_ID, str(pdf_path), "clinic.pdf")
+
+    calls = mock_cursor.execute.call_args_list
+    delete_calls = [c for c in calls if "DELETE" in str(c[0][0]).upper()]
+    assert len(delete_calls) >= 1
+    delete_idx = next(i for i, c in enumerate(calls) if "DELETE" in str(c[0][0]).upper())
+    insert_idx = next(i for i, c in enumerate(calls) if "INSERT" in str(c[0][0]).upper())
+    assert delete_idx < insert_idx
+
+
+def test_ingest_delete_uses_correct_params(tmp_path):
+    """DELETE must use the correct tenant_id and source_filename params."""
+    pdf_path = tmp_path / "tarifario.pdf"
+    pdf_path.write_bytes(b"")
+    fake_chunks = [MagicMock(page_content="chunk 0")]
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_pool = _mock_pool(mock_conn)
+
+    with (
+        patch("app.services.rag_service.PyPDFLoader") as MockLoader,
+        patch("app.services.rag_service.RecursiveCharacterTextSplitter") as MockSplitter,
+        patch("app.services.rag_service._get_embedder") as MockEmbed,
+        patch("app.services.rag_service._get_pool", return_value=mock_pool),
+        patch("app.services.rag_service.register_vector"),
+    ):
+        MockLoader.return_value.load.return_value = [MagicMock(page_content="p")]
+        MockSplitter.return_value.split_documents.return_value = fake_chunks
+        MockEmbed.return_value.embed_documents.return_value = [FAKE_VECTOR]
+        ingest_document(TENANT_ID, str(pdf_path), "tarifario.pdf")
+
+    calls = mock_cursor.execute.call_args_list
+    delete_call = next(c for c in calls if "DELETE" in str(c[0][0]).upper())
+    delete_params = delete_call[0][1]
+    assert TENANT_ID in delete_params
+    assert "tarifario.pdf" in delete_params
+
+
+def test_chunk_size_constant_is_400():
+    """_CHUNK_SIZE must equal 400."""
+    import app.services.rag_service as m
+    assert m._CHUNK_SIZE == 400
+
+
+def test_chunk_overlap_constant_is_60():
+    """_CHUNK_OVERLAP must equal 60."""
+    import app.services.rag_service as m
+    assert m._CHUNK_OVERLAP == 60
+
+
 def test_connection_returned_to_pool_on_db_error():
     """Pool connection must be returned even when a DB operation raises an exception."""
     mock_conn, mock_cursor = _make_mock_conn()
