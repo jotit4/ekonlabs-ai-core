@@ -74,7 +74,7 @@ Progress: [████████░░] 80% — 4 of 5 phases complete
 - [07-03] Dedup check placed after display_phone extraction, before tenant resolution — skipped for status receipts with no messages array
 - [08-plan] 08-01 + 08-03 are Wave 1 (independent); 08-02 is Wave 2 (depends on 08-01 for ADMIN_API_KEY in config and conftest)
 - [08-plan] _require_admin_api_key uses Optional[str] = Header(default=None) to return 401 (not 422) when X-API-Key is absent
-- [08-plan] test_patch_tenant_rules_returns_422_on_invalid_uuid does NOT need X-API-Key header — UUID path validation returns 422 before Depends runs
+- [08-02] FastAPI 0.135+ resolves Depends before path param validation — test_patch_tenant_rules_returns_422_on_invalid_uuid requires X-API-Key header to reach the 422 path (plan assumption was incorrect)
 - [08-plan] Redis PING uses socket_connect_timeout=3; client is closed in finally block; APP_ENV=test guard skips it
 - [08-01] Required secret fields in Settings now enforce fail-fast at startup (no blank = "" defaults); ADMIN_API_KEY added as required field for upcoming SEC-02 admin endpoint protection
 - [08-03] Redis PING added to lifespan after Supabase check; hard-raises on bad REDIS_URL; client closed in finally block
