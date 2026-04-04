@@ -12,12 +12,12 @@
 ## Current Position
 
 **Current Phase:** 8 — Security & Configuration (in progress)
-**Current Plan:** 08-02 (08-01 complete)
+**Current Plan:** 08-03 complete (08-01, 08-02, 08-03 complete)
 **Phase Status:** In progress
 **Milestone Status:** In progress
 
 ```
-Progress: [██████░░░░] 60% — 3 of 5 phases complete
+Progress: [████████░░] 80% — 4 of 5 phases complete
 ```
 
 ---
@@ -29,7 +29,7 @@ Progress: [██████░░░░] 60% — 3 of 5 phases complete
 | 5 | Intent Detection Fixes | Complete |
 | 6 | RAG Quality | Complete |
 | 7 | Infrastructure Reliability | Complete |
-| 8 | Security & Configuration | Planned |
+| 8 | Security & Configuration | Complete |
 | 9 | Copy & LLM Settings | Not started |
 
 ---
@@ -39,7 +39,7 @@ Progress: [██████░░░░] 60% — 3 of 5 phases complete
 - Requirements mapped: 25/25
 - Phases defined: 5
 - Plans written: 12
-- Plans complete: 9
+- Plans complete: 12
 
 ---
 
@@ -77,6 +77,8 @@ Progress: [██████░░░░] 60% — 3 of 5 phases complete
 - [08-plan] test_patch_tenant_rules_returns_422_on_invalid_uuid does NOT need X-API-Key header — UUID path validation returns 422 before Depends runs
 - [08-plan] Redis PING uses socket_connect_timeout=3; client is closed in finally block; APP_ENV=test guard skips it
 - [08-01] Required secret fields in Settings now enforce fail-fast at startup (no blank = "" defaults); ADMIN_API_KEY added as required field for upcoming SEC-02 admin endpoint protection
+- [08-03] Redis PING added to lifespan after Supabase check; hard-raises on bad REDIS_URL; client closed in finally block
+- [08-03] Test suite auto-fixed: 08-01 added ADMIN_API_KEY auth to tenant endpoints but 6 tenant tests were missing X-API-Key header — all fixed
 
 ### Active Constraints
 
@@ -103,8 +105,8 @@ None.
 
 ## Session Continuity
 
-**Last session:** 2026-04-04 — 08-01 complete (config hardening: SEC-01 + SEC-03). 324 tests pass. Ready for 08-02.
-**Resume from:** `/gsd:execute-phase 8`
+**Last session:** 2026-04-04 — 08-03 complete (Redis startup PING: SEC-04). 326 tests pass. Phase 8 complete.
+**Resume from:** `/gsd:execute-phase 9`
 
 ---
 
