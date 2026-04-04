@@ -156,6 +156,67 @@ def test_search_knowledge_never_returns_other_tenant_chunks():
     assert results == []
 
 
+def test_search_knowledge_filters_below_threshold():
+    """search_knowledge must exclude results with similarity < 0.60."""
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_pool = _mock_pool(mock_conn)
+    mock_cursor.fetchall.return_value = [
+        ("content A", "a.pdf", 0.45),
+        ("content B", "b.pdf", 0.72),
+    ]
+
+    with (
+        patch("app.services.rag_service._get_embedder") as MockEmbed,
+        patch("app.services.rag_service._get_pool", return_value=mock_pool),
+        patch("app.services.rag_service.register_vector"),
+    ):
+        MockEmbed.return_value.embed_query.return_value = FAKE_VECTOR
+        results = search_knowledge(TENANT_ID, "precio consulta", k=3)
+
+    assert len(results) == 1
+    assert results[0]["similarity"] == 0.72
+
+
+def test_search_knowledge_returns_empty_list_when_all_below_threshold():
+    """search_knowledge must return [] when all rows are below 0.60 threshold."""
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_pool = _mock_pool(mock_conn)
+    mock_cursor.fetchall.return_value = [
+        ("content X", "x.pdf", 0.30),
+        ("content Y", "y.pdf", 0.55),
+    ]
+
+    with (
+        patch("app.services.rag_service._get_embedder") as MockEmbed,
+        patch("app.services.rag_service._get_pool", return_value=mock_pool),
+        patch("app.services.rag_service.register_vector"),
+    ):
+        MockEmbed.return_value.embed_query.return_value = FAKE_VECTOR
+        results = search_knowledge(TENANT_ID, "precio consulta", k=3)
+
+    assert results == []
+
+
+def test_search_knowledge_includes_chunk_at_exactly_threshold():
+    """search_knowledge must include results with similarity == 0.60 (inclusive)."""
+    mock_conn, mock_cursor = _make_mock_conn()
+    mock_pool = _mock_pool(mock_conn)
+    mock_cursor.fetchall.return_value = [
+        ("content Z", "z.pdf", 0.60),
+    ]
+
+    with (
+        patch("app.services.rag_service._get_embedder") as MockEmbed,
+        patch("app.services.rag_service._get_pool", return_value=mock_pool),
+        patch("app.services.rag_service.register_vector"),
+    ):
+        MockEmbed.return_value.embed_query.return_value = FAKE_VECTOR
+        results = search_knowledge(TENANT_ID, "precio consulta", k=3)
+
+    assert len(results) == 1
+    assert results[0]["similarity"] == 0.60
+
+
 def test_connection_returned_to_pool_on_db_error():
     """Pool connection must be returned even when a DB operation raises an exception."""
     mock_conn, mock_cursor = _make_mock_conn()

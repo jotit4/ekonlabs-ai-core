@@ -40,7 +40,7 @@ def make_search_tool(tenant_id: str):
         """
         results = search_knowledge(tenant_id=tenant_id, query=query, k=3)
         if not results:
-            return "No se encontró información relevante en la base de conocimiento."
+            return ""
         return "\n\n---\n\n".join(r["content"] for r in results)
 
     return search_knowledge_tool

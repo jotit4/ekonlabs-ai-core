@@ -20,6 +20,7 @@ _CHUNK_SIZE = 1000
 _CHUNK_OVERLAP = 200
 _EMBED_MODEL = "text-embedding-3-small"
 _EMBED_DIMS = 1536
+_SIMILARITY_THRESHOLD: float = 0.60
 
 # Module-level singletons — created once, reused across calls
 _embedder: OpenAIEmbeddings | None = None
@@ -171,6 +172,7 @@ def search_knowledge(tenant_id: str, query: str, k: int = 3) -> list[dict]:
         return [
             {"content": row[0], "source_filename": row[1], "similarity": float(row[2])}
             for row in rows
+            if float(row[2]) >= _SIMILARITY_THRESHOLD
         ]
 
     except AppException:
