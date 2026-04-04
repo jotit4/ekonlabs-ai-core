@@ -134,10 +134,15 @@ def test_patch_tenant_rules_returns_404_when_not_found(client, monkeypatch):
 
 
 def test_patch_tenant_rules_returns_422_on_invalid_uuid(client):
-    """L2 fix: tenant_id path param validado como UUID -> 422 limpio."""
+    """L2 fix: tenant_id path param validado como UUID -> 422 limpio.
+
+    Note: FastAPI 0.135+ resolves Depends before path param validation,
+    so the valid X-API-Key header is required to reach the 422 path.
+    """
     response = client.patch(
         "/api/v1/tenants/not-a-uuid/rules",
         json={"system_prompt_override": "X"},
+        headers={"X-API-Key": "test-admin-key-for-tests-only"},
     )
 
     assert response.status_code == 422
