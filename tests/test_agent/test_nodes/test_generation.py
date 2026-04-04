@@ -645,3 +645,31 @@ def test_empty_rag_context_no_xml_tags():
         generation_node(state)
     system_msg = mock_llm.invoke.call_args[0][0][0]
     assert "<clinic_knowledge>" not in system_msg.content
+
+
+# ── Plan 09-01: COPY-01/02/03 — Argentine copy rewrites ─────────────────────
+
+
+def test_anti_diagnostic_response_contains_te_soy_sincero():
+    """COPY-01: ANTI_DIAGNOSTIC_RESPONSE uses 'te soy sincero', no gendered slash constructions."""
+    from app.agent.nodes.generation import ANTI_DIAGNOSTIC_RESPONSE
+
+    assert "te soy sincero" in ANTI_DIAGNOSTIC_RESPONSE
+    assert "/a" not in ANTI_DIAGNOSTIC_RESPONSE
+
+
+def test_low_confidence_pause_response_directs_to_clinic():
+    """COPY-02: LOW_CONFIDENCE_PAUSE_RESPONSE tells patient to call clinic — no escalation promise."""
+    from app.agent.nodes.generation import LOW_CONFIDENCE_PAUSE_RESPONSE
+
+    assert "clínica" in LOW_CONFIDENCE_PAUSE_RESPONSE
+    assert "contactaremos" not in LOW_CONFIDENCE_PAUSE_RESPONSE
+    assert "especialista" not in LOW_CONFIDENCE_PAUSE_RESPONSE
+
+
+def test_shadow_mode_redirect_specifies_contact_channels():
+    """COPY-03: SHADOW_MODE_REDIRECT_RESPONSE specifies 'por teléfono o de forma presencial'."""
+    from app.agent.nodes.generation import SHADOW_MODE_REDIRECT_RESPONSE
+
+    assert "por teléfono o de forma presencial" in SHADOW_MODE_REDIRECT_RESPONSE
+    assert "canales habituales" not in SHADOW_MODE_REDIRECT_RESPONSE
