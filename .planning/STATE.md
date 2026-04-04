@@ -11,9 +11,9 @@
 
 ## Current Position
 
-**Current Phase:** 7 — Infrastructure Reliability (complete)
-**Current Plan:** None (phase complete)
-**Phase Status:** Complete
+**Current Phase:** 8 — Security & Configuration (in progress)
+**Current Plan:** 08-02 (08-01 complete)
+**Phase Status:** In progress
 **Milestone Status:** In progress
 
 ```
@@ -29,7 +29,7 @@ Progress: [██████░░░░] 60% — 3 of 5 phases complete
 | 5 | Intent Detection Fixes | Complete |
 | 6 | RAG Quality | Complete |
 | 7 | Infrastructure Reliability | Complete |
-| 8 | Security & Configuration | Not started |
+| 8 | Security & Configuration | Planned |
 | 9 | Copy & LLM Settings | Not started |
 
 ---
@@ -38,8 +38,8 @@ Progress: [██████░░░░] 60% — 3 of 5 phases complete
 
 - Requirements mapped: 25/25
 - Phases defined: 5
-- Plans written: 9
-- Plans complete: 5
+- Plans written: 12
+- Plans complete: 9
 
 ---
 
@@ -72,6 +72,11 @@ Progress: [██████░░░░] 60% — 3 of 5 phases complete
 - [07-02] booking_node confirmation path uses state.get("available_slots") or calendar call — eliminates race window between slot presentation and booking
 - [07-03] receive_whatsapp_webhook checks Redis SET NX (key=webhook:dedup:{message_id}, ex=86400) before enqueue — duplicate deliveries return 200 without re-processing
 - [07-03] Dedup check placed after display_phone extraction, before tenant resolution — skipped for status receipts with no messages array
+- [08-plan] 08-01 + 08-03 are Wave 1 (independent); 08-02 is Wave 2 (depends on 08-01 for ADMIN_API_KEY in config and conftest)
+- [08-plan] _require_admin_api_key uses Optional[str] = Header(default=None) to return 401 (not 422) when X-API-Key is absent
+- [08-plan] test_patch_tenant_rules_returns_422_on_invalid_uuid does NOT need X-API-Key header — UUID path validation returns 422 before Depends runs
+- [08-plan] Redis PING uses socket_connect_timeout=3; client is closed in finally block; APP_ENV=test guard skips it
+- [08-01] Required secret fields in Settings now enforce fail-fast at startup (no blank = "" defaults); ADMIN_API_KEY added as required field for upcoming SEC-02 admin endpoint protection
 
 ### Active Constraints
 
@@ -98,8 +103,8 @@ None.
 
 ## Session Continuity
 
-**Last session:** 2026-04-04 — Phase 7 executed (07-01 pool+503+retry, 07-02 booking race fix, 07-03 webhook dedup SET NX). 17/17 tests pass.
-**Resume from:** `/gsd:plan-phase 8`
+**Last session:** 2026-04-04 — 08-01 complete (config hardening: SEC-01 + SEC-03). 324 tests pass. Ready for 08-02.
+**Resume from:** `/gsd:execute-phase 8`
 
 ---
 
