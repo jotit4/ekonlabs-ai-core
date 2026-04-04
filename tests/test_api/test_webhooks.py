@@ -282,3 +282,96 @@ def test_webhook_post_returns_200_for_invalid_json_after_valid_signature(client,
     # para evitar bucles de retry automáticos de Meta en respuestas 4xx.
     assert response.status_code == 200
     assert response.json()["status"] == "success"
+
+
+# ---------------------------------------------------------------------------
+# INFRA-02 / INFRA-03 / INFRA-04: Redis pool + 503 + Retry
+# ---------------------------------------------------------------------------
+
+
+def test_enqueue_task_raises_503_on_redis_error():
+    from redis.exceptions import ConnectionError as RedisConnectionError
+    from app.api.v1.webhooks import _enqueue_task
+    from app.core.exceptions import AppException
+    import pytest
+
+    with (
+        patch("app.api.v1.webhooks._get_redis_pool") as mock_pool,
+        patch("app.api.v1.webhooks.Queue") as mock_queue_cls,
+    ):
+        mock_pool.return_value = MagicMock()
+        mock_q = MagicMock()
+        mock_queue_cls.return_value = mock_q
+        mock_q.enqueue.side_effect = RedisConnectionError("Connection refused")
+
+        with pytest.raises(AppException) as exc_info:
+            _enqueue_task({"entry": []}, "tenant-abc")
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.code == "REDIS_UNAVAILABLE"
+
+
+def test_enqueue_task_503_propagates_to_endpoint(client, monkeypatch):
+    import app.core.security as sec_module
+    from redis.exceptions import ConnectionError as RedisConnectionError
+    monkeypatch.setattr(sec_module.settings, "META_APP_SECRET", TEST_SECRET)
+    mock_tenant = _make_mock_tenant()
+    body = json.dumps(_make_webhook_payload()).encode()
+    sig = _sign_body(body)
+
+    with (
+        patch("app.api.v1.webhooks.get_tenant_by_phone", return_value=mock_tenant),
+        patch("app.api.v1.webhooks._get_redis_pool") as mock_pool,
+        patch("app.api.v1.webhooks.Queue") as mock_queue_cls,
+    ):
+        mock_pool.return_value = MagicMock()
+        mock_q = MagicMock()
+        mock_queue_cls.return_value = mock_q
+        mock_q.enqueue.side_effect = RedisConnectionError("down")
+
+        response = client.post(
+            "/api/v1/webhooks/whatsapp",
+            content=body,
+            headers={"Content-Type": "application/json", "X-Hub-Signature-256": sig},
+        )
+
+    assert response.status_code == 503
+
+
+def test_enqueue_task_uses_retry_object():
+    from app.api.v1.webhooks import _enqueue_task
+    from rq import Retry
+
+    with (
+        patch("app.api.v1.webhooks._get_redis_pool") as mock_pool,
+        patch("app.api.v1.webhooks.Queue") as mock_queue_cls,
+    ):
+        mock_pool.return_value = MagicMock()
+        mock_q = MagicMock()
+        mock_queue_cls.return_value = mock_q
+
+        _enqueue_task({"entry": []}, "tenant-abc")
+
+    call_kwargs = mock_q.enqueue.call_args[1]
+    assert "retry" in call_kwargs, "retry kwarg missing from enqueue call"
+    retry_obj = call_kwargs["retry"]
+    assert isinstance(retry_obj, Retry)
+    assert retry_obj.max == 3
+    assert retry_obj.intervals == [10, 30, 60]
+
+
+def test_enqueue_task_reuses_pool():
+    from app.api.v1.webhooks import _enqueue_task
+    import app.api.v1.webhooks as wh_module
+
+    # Reset pool to ensure clean state
+    wh_module._redis_pool = None
+
+    with patch("app.api.v1.webhooks.Redis") as mock_redis_cls:
+        mock_redis_cls.from_url.return_value = MagicMock()
+        with patch("app.api.v1.webhooks.Queue") as mock_queue_cls:
+            mock_queue_cls.return_value = MagicMock()
+            _enqueue_task({"entry": []}, "t1")
+            _enqueue_task({"entry": []}, "t2")
+
+    assert mock_redis_cls.from_url.call_count == 1, "Redis.from_url must be called once (pool), not per request"
