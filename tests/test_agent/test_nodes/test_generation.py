@@ -673,3 +673,28 @@ def test_shadow_mode_redirect_specifies_contact_channels():
 
     assert "por teléfono o de forma presencial" in SHADOW_MODE_REDIRECT_RESPONSE
     assert "canales habituales" not in SHADOW_MODE_REDIRECT_RESPONSE
+
+
+# ── Plan 09-02: COPY-04/05 — System prompt fix + LLM tuning ─────────────────
+
+
+def test_default_system_prompt_has_correct_accents():
+    """COPY-04: DEFAULT_SYSTEM_PROMPT contains 'recepción' and 'médica' (accents present)."""
+    from app.agent.nodes.generation import DEFAULT_SYSTEM_PROMPT
+
+    assert "recepción" in DEFAULT_SYSTEM_PROMPT
+    assert "médica" in DEFAULT_SYSTEM_PROMPT
+
+
+def test_llm_temperature_is_0_3():
+    """COPY-05: _llm singleton uses temperature=0.3 for deterministic responses."""
+    from app.agent.nodes.generation import _llm
+
+    assert _llm.temperature == 0.3
+
+
+def test_llm_request_timeout_is_20():
+    """COPY-05: _llm singleton has request_timeout=20 to prevent worker blocking."""
+    from app.agent.nodes.generation import _llm
+
+    assert _llm.request_timeout == 20
