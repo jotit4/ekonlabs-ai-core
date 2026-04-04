@@ -293,27 +293,52 @@ def process_whatsapp_message(payload: dict, tenant_id: str) -> None:
             break
 
     if ai_text:
-        phone_number_id = _extract_phone_number_id(payload)
-        if phone_number_id and settings.META_ACCESS_TOKEN:
-            try:
-                send_whatsapp_message(
-                    phone_number_id,
-                    phone_number,
-                    ai_text,
-                    settings.META_ACCESS_TOKEN,
-                )
-            except Exception as exc:
+        provider = payload.get("provider", "meta")
+
+        if provider == "evolution":
+            # Evolution API send path
+            if settings.EVOLUTION_API_KEY and settings.EVOLUTION_API_URL and settings.EVOLUTION_INSTANCE:
+                try:
+                    from app.services.evolution_service import send_message as send_evolution_message
+                    send_evolution_message(
+                        to_phone=phone_number,
+                        message_text=ai_text,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Error enviando respuesta Evolution — continuando",
+                        tenant_id=tenant_id,
+                        phone_number=phone_number,
+                        error=str(exc),
+                    )
+            else:
                 logger.warning(
-                    "Error enviando respuesta WhatsApp — continuando",
+                    "Evolution settings incompletos — respuesta no enviada",
                     tenant_id=tenant_id,
-                    phone_number=phone_number,
-                    error=str(exc),
                 )
-        elif not settings.META_ACCESS_TOKEN:
-            logger.warning(
-                "META_ACCESS_TOKEN no configurado — respuesta no enviada",
-                tenant_id=tenant_id,
-            )
+        else:
+            # Meta path — unchanged (default when provider missing for backward compat)
+            phone_number_id = _extract_phone_number_id(payload)
+            if phone_number_id and settings.META_ACCESS_TOKEN:
+                try:
+                    send_whatsapp_message(
+                        phone_number_id,
+                        phone_number,
+                        ai_text,
+                        settings.META_ACCESS_TOKEN,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Error enviando respuesta WhatsApp — continuando",
+                        tenant_id=tenant_id,
+                        phone_number=phone_number,
+                        error=str(exc),
+                    )
+            elif not settings.META_ACCESS_TOKEN:
+                logger.warning(
+                    "META_ACCESS_TOKEN no configurado — respuesta no enviada",
+                    tenant_id=tenant_id,
+                )
 
         save_message(
             phone_number=phone_number,

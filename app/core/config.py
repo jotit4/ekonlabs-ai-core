@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     GOOGLE_CALENDAR_CREDENTIALS_PATH: str = ""
     DEFAULT_SLOT_DURATION_MINUTES: int = 60
     SCHEDULING_LOOKAHEAD_HOURS: int = 72
+    # WhatsApp Provider Selection
+    WHATSAPP_PROVIDER: str = "meta"          # "meta" | "evolution"
+    # Evolution API (required only when WHATSAPP_PROVIDER=evolution)
+    EVOLUTION_API_URL: str = ""              # e.g. "https://evolution.miserv.io"
+    EVOLUTION_API_KEY: str = ""              # global apikey from AUTHENTICATION_API_KEY
+    EVOLUTION_INSTANCE: str = ""             # instance name (e.g. "clinic-isadi")
+    EVOLUTION_DISPLAY_PHONE: str = ""        # clinic's WA number for tenant resolution
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

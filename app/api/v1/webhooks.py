@@ -1,5 +1,6 @@
 """WhatsApp webhook endpoints — GET challenge verification + POST message reception."""
 import asyncio
+import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, Request
@@ -171,4 +172,129 @@ async def receive_whatsapp_webhook(request: Request) -> JSONResponse:
         phone=display_phone,
     )
 
+    return JSONResponse(content=_success_response())
+
+
+def _normalize_evolution_payload(body: dict) -> dict:
+    """Convierte el payload de Evolution API al formato interno Meta-compatible.
+
+    El formato interno es consumido por tasks._extract_message_info() que navega
+    entry[0].changes[0].value.messages[0]. Inyecta provider="evolution" para que
+    tasks.py despache al send correcto.
+    """
+    data = body.get("data", {})
+    key = data.get("key", {})
+    remote_jid = key.get("remoteJid", "")
+    phone = remote_jid.split("@")[0]  # strip "@s.whatsapp.net"
+
+    msg_content = data.get("message", {})
+    text = (
+        msg_content.get("conversation")
+        or (msg_content.get("extendedTextMessage") or {}).get("text")
+        or ""
+    )
+    message_id = key.get("id", "")
+    timestamp = str(data.get("messageTimestamp", ""))
+
+    return {
+        "provider": "evolution",
+        "entry": [{
+            "id": body.get("instance", ""),
+            "changes": [{
+                "value": {
+                    "messaging_product": "whatsapp",
+                    "metadata": {
+                        "display_phone_number": "",
+                        "phone_number_id": "",
+                    },
+                    "contacts": [],
+                    "messages": [{
+                        "from": phone,
+                        "id": message_id,
+                        "timestamp": timestamp,
+                        "type": "text",
+                        "text": {"body": text},
+                    }],
+                },
+                "field": "messages",
+            }],
+        }],
+    }
+
+
+@router.post("/webhooks/evolution")
+@limiter.limit(f"{settings.RATE_LIMIT_REQUESTS_PER_MINUTE}/minute")
+async def receive_evolution_webhook(request: Request) -> JSONResponse:
+    """Recibe webhook de Evolution API, valida apikey, normaliza payload y encola en RQ.
+
+    Flow:
+        1. Validar apikey header (Evolution no usa HMAC — no hay firma)
+        2. Leer y parsear body JSON
+        3. Filtrar: solo event="messages.upsert" y fromMe=false y JID individual (@s.whatsapp.net)
+        4. Dedup por message ID (mismo mecanismo SET NX que Meta)
+        5. Resolver tenant por EVOLUTION_DISPLAY_PHONE
+        6. Normalizar payload al formato interno Meta-compatible
+        7. Encolar en RQ y retornar 200
+    """
+    # 1. Validar apikey header
+    apikey = request.headers.get("apikey", "")
+    if not settings.EVOLUTION_API_KEY or apikey != settings.EVOLUTION_API_KEY:
+        raise AppException(
+            code="WEBHOOK_APIKEY_INVALID",
+            message="API key inválida",
+            status_code=403,
+        )
+
+    # 2. Parse body
+    body_bytes = await request.body()
+    try:
+        body = json.loads(body_bytes)
+    except Exception as exc:
+        logger.warning("evolution.webhook.parse_error", error=str(exc))
+        return JSONResponse(content=_success_response())
+
+    # 3. Event filter — only messages.upsert for individual incoming messages
+    if body.get("event") != "messages.upsert":
+        return JSONResponse(content=_success_response())
+
+    data = body.get("data", {})
+    key = data.get("key", {})
+
+    if key.get("fromMe"):
+        return JSONResponse(content=_success_response())
+
+    remote_jid = key.get("remoteJid", "")
+    if not remote_jid.endswith("@s.whatsapp.net"):
+        # Skip group messages (@g.us) and broadcasts
+        return JSONResponse(content=_success_response())
+
+    # 4. Dedup via message ID (same SET NX pattern as Meta — INFRA-01)
+    try:
+        message_id = key["id"]
+        dedup_key = f"webhook:dedup:{message_id}"
+        acquired = await asyncio.to_thread(
+            _get_redis_pool().set, dedup_key, 1, nx=True, ex=86400
+        )
+        if not acquired:
+            logger.info("evolution.webhook.duplicate_discarded", message_id=message_id)
+            return JSONResponse(content=_success_response())
+    except (KeyError, TypeError):
+        pass
+
+    # 5. Resolve tenant from display phone env var
+    display_phone = settings.EVOLUTION_DISPLAY_PHONE
+    tenant = await asyncio.to_thread(get_tenant_by_phone, display_phone)
+    if tenant is None:
+        logger.warning("evolution.webhook.tenant_not_found", phone=display_phone)
+        return JSONResponse(content=_success_response())
+
+    # 6. Normalize to Meta-compatible internal format + enqueue
+    normalized = _normalize_evolution_payload(body)
+    await asyncio.to_thread(_enqueue_task, normalized, str(tenant.tenant_id))
+
+    logger.info(
+        "evolution.webhook.enqueued",
+        tenant_id=str(tenant.tenant_id),
+        phone=display_phone,
+    )
     return JSONResponse(content=_success_response())
