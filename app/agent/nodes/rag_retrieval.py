@@ -29,19 +29,19 @@ def rag_retrieval_node(state: ConversationState) -> ConversationState:
     """
     tenant_id = state["tenant_id"]
 
-    # Extract the latest user message text for the search query
-    query = ""
-    messages = state["messages"] if state.get("messages") else []
+    # RAG-05: Build query from last 2 human turns for better follow-up handling
+    messages = state.get("messages") or []
+    last_2_human: list[str] = []
     for msg in reversed(messages):
-        content = getattr(msg, "content", None)
-        msg_type = getattr(msg, "type", None)
-        if msg_type == "human" and content:
-            query = content
-            break
+        if getattr(msg, "type", None) == "human" and getattr(msg, "content", ""):
+            last_2_human.append(msg.content)
+            if len(last_2_human) == 2:
+                break
+    query = " ".join(reversed(last_2_human)).strip()
 
     if not query:
         logger.debug("rag_retrieval.no_query", tenant_id=tenant_id)
-        return {**state, "rag_context": ""}
+        return {"rag_context": ""}
 
     try:
         search_tool = make_search_tool(tenant_id)
@@ -56,4 +56,4 @@ def rag_retrieval_node(state: ConversationState) -> ConversationState:
         logger.warning("rag_retrieval.error", tenant_id=tenant_id, error=str(exc))
         rag_context = ""
 
-    return {**state, "rag_context": rag_context}
+    return {"rag_context": rag_context}
