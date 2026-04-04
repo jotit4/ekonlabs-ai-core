@@ -26,6 +26,7 @@ def test_create_tenant_returns_201_and_wrapper(client, monkeypatch):
             "shadow_mode_enabled": False,
             "status": "active",
         },
+        headers={"X-API-Key": "test-admin-key-for-tests-only"},
     )
 
     assert response.status_code == 201
@@ -51,6 +52,7 @@ def test_create_tenant_returns_409_on_duplicate(client, monkeypatch):
             "shadow_mode_enabled": False,
             "status": "active",
         },
+        headers={"X-API-Key": "test-admin-key-for-tests-only"},
     )
 
     assert response.status_code == 409
@@ -63,12 +65,13 @@ def test_create_tenant_returns_422_on_invalid_payload(client):
     response = client.post(
         "/api/v1/tenants",
         json={
-            "name": "A",  # nombre inválido (mínimo 2 chars)
-            "whatsapp_number": "abc",  # formato inválido
-            "timezone": "",  # mínimo 1 char
+            "name": "A",  # nombre invalido (minimo 2 chars)
+            "whatsapp_number": "abc",  # formato invalido
+            "timezone": "",  # minimo 1 char
             "shadow_mode_enabled": False,
             "status": "active",
         },
+        headers={"X-API-Key": "test-admin-key-for-tests-only"},
     )
 
     assert response.status_code == 422
@@ -99,6 +102,7 @@ def test_patch_tenant_rules_returns_200(client, monkeypatch):
     response = client.patch(
         f"/api/v1/tenants/{FAKE_TENANT_ID}/rules",
         json={"system_prompt_override": "Eres formal.", "rules": {"tono": "formal"}},
+        headers={"X-API-Key": "test-admin-key-for-tests-only"},
     )
 
     assert response.status_code == 200
@@ -120,6 +124,7 @@ def test_patch_tenant_rules_returns_404_when_not_found(client, monkeypatch):
     response = client.patch(
         f"/api/v1/tenants/{FAKE_TENANT_ID}/rules",
         json={"system_prompt_override": "Algo"},
+        headers={"X-API-Key": "test-admin-key-for-tests-only"},
     )
 
     assert response.status_code == 404
@@ -129,7 +134,7 @@ def test_patch_tenant_rules_returns_404_when_not_found(client, monkeypatch):
 
 
 def test_patch_tenant_rules_returns_422_on_invalid_uuid(client):
-    """L2 fix: tenant_id path param validado como UUID → 422 limpio."""
+    """L2 fix: tenant_id path param validado como UUID -> 422 limpio."""
     response = client.patch(
         "/api/v1/tenants/not-a-uuid/rules",
         json={"system_prompt_override": "X"},
