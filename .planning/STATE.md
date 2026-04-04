@@ -11,13 +11,13 @@
 
 ## Current Position
 
-**Current Phase:** 6 — RAG Quality (complete)
-**Current Plan:** None (phase complete)
-**Phase Status:** Complete
+**Current Phase:** 7 — Infrastructure Reliability (in progress)
+**Current Plan:** 07-02 complete, 07-03 next
+**Phase Status:** In progress
 **Milestone Status:** In progress
 
 ```
-Progress: [████░░░░░░] 40% — 2 of 5 phases complete
+Progress: [████░░░░░░] 40% — 2 of 5 phases complete (Phase 7: 2/3 plans done)
 ```
 
 ---
@@ -28,7 +28,7 @@ Progress: [████░░░░░░] 40% — 2 of 5 phases complete
 |---|-------|--------|
 | 5 | Intent Detection Fixes | Complete |
 | 6 | RAG Quality | Complete |
-| 7 | Infrastructure Reliability | Not started |
+| 7 | Infrastructure Reliability | Planned |
 | 8 | Security & Configuration | Not started |
 | 9 | Copy & LLM Settings | Not started |
 
@@ -38,8 +38,8 @@ Progress: [████░░░░░░] 40% — 2 of 5 phases complete
 
 - Requirements mapped: 25/25
 - Phases defined: 5
-- Plans written: 6
-- Plans complete: 3
+- Plans written: 9
+- Plans complete: 5
 
 ---
 
@@ -66,6 +66,12 @@ Progress: [████░░░░░░] 40% — 2 of 5 phases complete
 - [06-02] Binary confidence score block removed from generation_node — empty rag_context no longer sets is_paused=True
 - [06-02] rag_retrieval_node builds query from last 2 human messages (not just latest) for follow-up handling
 - [06-03] RAG context injected with XML delimiters <clinic_knowledge> and explicit anti-injection instruction
+- [07-01] _redis_pool module-level lazy init replaces Redis.from_url() per request in _enqueue_task (pool pattern follows rag_service._get_pool)
+- [07-01] Redis failure in _enqueue_task raises AppException(code="REDIS_UNAVAILABLE", status_code=503) — Meta retries on 503
+- [07-01] q.enqueue called with retry=Retry(max=3, interval=[10, 30, 60]) for transient failure resilience
+- [07-02] booking_node confirmation path uses state.get("available_slots") or calendar call — eliminates race window between slot presentation and booking
+- [07-03] receive_whatsapp_webhook checks Redis SET NX (key=webhook:dedup:{message_id}, ex=86400) before enqueue — duplicate deliveries return 200 without re-processing
+- [07-03] Dedup check placed after display_phone extraction, before tenant resolution — skipped for status receipts with no messages array
 
 ### Active Constraints
 
@@ -85,13 +91,15 @@ None.
 - RAG-02 fix changes agent behavior when no context is found — must not introduce false positives
 - Phase 6 plans: 06-01 (threshold+dedup+chunk size), 06-02 (confidence fix+multi-turn), 06-03 (XML injection hardening)
 - 06-01 and 06-02 are Wave 1 (independent); 06-03 is Wave 2 (depends on 06-02 for generation.py state)
+- Phase 7 plans: 07-01 (pool+503+retry in _enqueue_task), 07-02 (booking race fix), 07-03 (webhook dedup via SET NX)
+- 07-01 and 07-02 are Wave 1 (independent); 07-03 is Wave 2 (depends on 07-01 for _get_redis_pool)
 
 ---
 
 ## Session Continuity
 
-**Last session:** 2026-04-04 — Phase 6 executed: 06-01 (RAG threshold+dedup+chunk), 06-02 (confidence gate removal+multi-turn), 06-03 (XML injection hardening). Phase 6 complete.
-**Resume from:** `/gsd:plan-phase 7`
+**Last session:** 2026-04-04 — 07-02 complete: INFRA-05 race window fix in booking_node (34/34 tests pass). 07-03 (webhook dedup SET NX) is next.
+**Resume from:** `/gsd:execute-phase 7` (plan 07-03)
 
 ---
 
