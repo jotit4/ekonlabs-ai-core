@@ -85,17 +85,16 @@ def test_generation_node_returns_ai_message():
 
 
 def test_generation_node_no_rag_injection_when_rag_present_but_empty_section():
-    """Con rag_context='' → activa pausa por low_confidence, NO inyecta sección RAG ni llama LLM."""
-    from app.agent.nodes.generation import LOW_CONFIDENCE_PAUSE_RESPONSE, generation_node
+    """Con rag_context='' → RAG-02: LLM is called (no confidence gate), section header NOT injected."""
+    from app.agent.nodes.generation import generation_node
 
     mock_llm = _make_mock_llm()
     with patch("app.agent.nodes.generation._llm", mock_llm):
         result = generation_node(_base_state(rag_context=""))
 
-    # rag_context vacío → low_confidence_pause (LLM no llamado)
-    mock_llm.invoke.assert_not_called()
-    assert result["messages"][0].content == LOW_CONFIDENCE_PAUSE_RESPONSE
-    assert result["is_paused"] is True
+    # RAG-02: empty rag_context proceeds to LLM — NOT paused
+    mock_llm.invoke.assert_called_once()
+    assert result.get("is_paused") is not True
 
 def test_generation_node_rag_present_does_not_include_section_header_in_system_when_absent():
     """Con rag_context presente → system_content INCLUYE sección 'Información de la Clínica'."""
@@ -362,34 +361,32 @@ def test_generation_node_urgent_with_rag_context_combines_both():
 
 
 def test_generation_node_low_confidence_when_no_rag_returns_pause_response():
-    """Sin rag_context → LOW_CONFIDENCE_PAUSE_RESPONSE, sin LLM, is_paused=True, confidence=0.0."""
-    from app.agent.nodes.generation import LOW_CONFIDENCE_PAUSE_RESPONSE, generation_node
+    """RAG-02: Sin rag_context → LLM called (no binary confidence gate), NOT paused."""
+    from app.agent.nodes.generation import generation_node
 
     mock_llm = _make_mock_llm()
     with patch("app.agent.nodes.generation._llm", mock_llm):
         result = generation_node(_base_state())  # sin rag_context
 
-    mock_llm.invoke.assert_not_called()
+    # RAG-02: LLM debe ser llamado — no hay confidence gate
+    mock_llm.invoke.assert_called_once()
     assert "messages" in result
     assert len(result["messages"]) == 1
     assert isinstance(result["messages"][0], AIMessage)
-    assert result["messages"][0].content == LOW_CONFIDENCE_PAUSE_RESPONSE
-    assert result["is_paused"] is True
-    assert result["confidence_score"] == 0.0
+    assert result.get("is_paused") is not True
 
 
 def test_generation_node_low_confidence_when_empty_rag_returns_pause_response():
-    """rag_context='' → same as no rag_context — LOW_CONFIDENCE_PAUSE_RESPONSE."""
-    from app.agent.nodes.generation import LOW_CONFIDENCE_PAUSE_RESPONSE, generation_node
+    """RAG-02: rag_context='' → LLM called, NOT paused."""
+    from app.agent.nodes.generation import generation_node
 
     mock_llm = _make_mock_llm()
     with patch("app.agent.nodes.generation._llm", mock_llm):
         result = generation_node(_base_state(rag_context=""))
 
-    mock_llm.invoke.assert_not_called()
-    assert result["messages"][0].content == LOW_CONFIDENCE_PAUSE_RESPONSE
-    assert result["is_paused"] is True
-    assert result["confidence_score"] == 0.0
+    # RAG-02: proceeds to LLM, no pause
+    mock_llm.invoke.assert_called_once()
+    assert result.get("is_paused") is not True
 
 
 def test_generation_node_normal_flow_when_rag_present_calls_llm():
@@ -502,3 +499,49 @@ def test_booking_ambiguous_no_llm_call():
         generation_node(state)
 
     mock_llm.invoke.assert_not_called()
+
+
+# ── Plan 06-02: RAG-02 — Remove confidence gate ──────────────────────────────
+
+
+def test_empty_rag_context_calls_llm_not_pause():
+    """RAG-02: rag_context='' → LLM invocado exactamente 1 vez, result NOT paused."""
+    from app.agent.nodes.generation import generation_node
+
+    mock_llm = _make_mock_llm()
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        result = generation_node(_base_state(rag_context=""))
+
+    assert mock_llm.invoke.call_count == 1
+    assert result.get("is_paused") is not True
+
+
+def test_empty_rag_context_does_not_include_rag_section():
+    """RAG-02: rag_context='' → SystemMessage does NOT contain 'Información de la Clínica'."""
+    from app.agent.nodes.generation import generation_node
+
+    mock_llm = _make_mock_llm()
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        generation_node(_base_state(rag_context=""))
+
+    call_args = mock_llm.invoke.call_args[0][0]
+    system_msg = call_args[0]
+    assert isinstance(system_msg, SystemMessage)
+    assert "Información de la Clínica" not in system_msg.content
+
+
+def test_no_rag_context_key_calls_llm():
+    """RAG-02: state sin clave 'rag_context' → LLM llamado (usa DEFAULT_SYSTEM_PROMPT)."""
+    from app.agent.nodes.generation import generation_node
+
+    state = {
+        "tenant_id": _TENANT_ID,
+        "phone_number": _PHONE,
+        "messages": [HumanMessage(content="Hola")],
+    }
+    mock_llm = _make_mock_llm()
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        result = generation_node(state)
+
+    assert mock_llm.invoke.call_count == 1
+    assert result.get("is_paused") is not True

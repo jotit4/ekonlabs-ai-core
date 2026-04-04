@@ -193,20 +193,8 @@ def generation_node(state: ConversationState) -> dict:
     rag_context: str = state.get("rag_context", "")
     empathy_mode: str = state.get("empathy_mode", "normal")
 
-    # Confidence evaluation — sin RAG no hay base de conocimiento para responder
-    confidence_score: float = 1.0 if rag_context else 0.0
-    if confidence_score < DEFAULT_CONFIDENCE_THRESHOLD:
-        logger.info(
-            "generation_node.done",
-            tenant_id=tenant_id,
-            response_type="low_confidence_pause",
-            confidence_score=confidence_score,
-        )
-        return {
-            "messages": [AIMessage(content=LOW_CONFIDENCE_PAUSE_RESPONSE)],
-            "is_paused": True,
-            "confidence_score": confidence_score,
-        }
+    # RAG-02: No binary confidence gate — empty rag_context proceeds to LLM with system prompt only.
+    # The LLM uses its DEFAULT_SYSTEM_PROMPT instructions when no knowledge base context is available.
 
     system_content = system_prompt
     if empathy_mode == "urgent":
