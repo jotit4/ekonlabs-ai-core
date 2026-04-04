@@ -130,6 +130,26 @@ async def receive_whatsapp_webhook(request: Request) -> JSONResponse:
         )
         return JSONResponse(content=_success_response())
 
+    # 4b. Dedup: check if this message ID has already been processed (INFRA-01)
+    # Meta guarantees at-least-once delivery — duplicates must be silently discarded.
+    # SET NX with 24h TTL: returns True on first delivery, None on duplicate.
+    # Skipped if payload has no messages array (status receipts, delivery notifications).
+    try:
+        message_id = payload.entry[0].changes[0].value.messages[0].id
+        dedup_key = f"webhook:dedup:{message_id}"
+        acquired = await asyncio.to_thread(
+            _get_redis_pool().set, dedup_key, 1, nx=True, ex=86400
+        )
+        if not acquired:
+            logger.info(
+                "webhook.duplicate_discarded",
+                message_id=message_id,
+            )
+            return JSONResponse(content=_success_response())
+    except (IndexError, AttributeError):
+        # No messages array — status receipt or delivery notification; skip dedup
+        pass
+
     # 5. Resolver tenant_id a partir del número de teléfono destino
     tenant = await asyncio.to_thread(get_tenant_by_phone, display_phone)
     if tenant is None:

@@ -156,7 +156,13 @@ def test_webhook_post_returns_200_when_tenant_not_found(client, monkeypatch):
     body = json.dumps(_make_webhook_payload()).encode()
     sig = _sign_body(body)
 
-    with patch("app.api.v1.webhooks.get_tenant_by_phone", return_value=None):
+    mock_redis = MagicMock()
+    mock_redis.set.return_value = True  # SET NX succeeds — new key
+
+    with (
+        patch("app.api.v1.webhooks.get_tenant_by_phone", return_value=None),
+        patch("app.api.v1.webhooks._get_redis_pool", return_value=mock_redis),
+    ):
         response = client.post(
             "/api/v1/webhooks/whatsapp",
             content=body,
@@ -180,9 +186,13 @@ def test_webhook_post_enqueues_and_returns_200(client, monkeypatch):
     body = json.dumps(_make_webhook_payload()).encode()
     sig = _sign_body(body)
 
+    mock_redis = MagicMock()
+    mock_redis.set.return_value = True  # SET NX succeeds — new key
+
     with (
         patch("app.api.v1.webhooks.get_tenant_by_phone", return_value=mock_tenant) as mock_phone,
         patch("app.api.v1.webhooks._enqueue_task") as mock_enqueue,
+        patch("app.api.v1.webhooks._get_redis_pool", return_value=mock_redis),
     ):
         response = client.post(
             "/api/v1/webhooks/whatsapp",
@@ -237,8 +247,12 @@ def test_webhook_post_standard_response_format(client, monkeypatch):
     body = json.dumps(_make_webhook_payload()).encode()
     sig = _sign_body(body)
 
+    mock_redis = MagicMock()
+    mock_redis.set.return_value = True  # SET NX succeeds — new key
+
     with (
         patch("app.api.v1.webhooks.get_tenant_by_phone", return_value=None),
+        patch("app.api.v1.webhooks._get_redis_pool", return_value=mock_redis),
     ):
         response = client.post(
             "/api/v1/webhooks/whatsapp",
@@ -375,3 +389,99 @@ def test_enqueue_task_reuses_pool():
             _enqueue_task({"entry": []}, "t2")
 
     assert mock_redis_cls.from_url.call_count == 1, "Redis.from_url must be called once (pool), not per request"
+
+
+# ---------------------------------------------------------------------------
+# INFRA-01: Webhook idempotency via Redis SET NX
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_message_id_returns_200_without_enqueue(client, monkeypatch):
+    """Second delivery of same message ID returns 200 without enqueuing (INFRA-01)."""
+    import app.core.security as sec_module
+    monkeypatch.setattr(sec_module.settings, "META_APP_SECRET", TEST_SECRET)
+    mock_tenant = _make_mock_tenant()
+    body = json.dumps(_make_webhook_payload()).encode()
+    sig = _sign_body(body)
+
+    mock_redis = MagicMock()
+    with (
+        patch("app.api.v1.webhooks.get_tenant_by_phone", return_value=mock_tenant),
+        patch("app.api.v1.webhooks._enqueue_task") as mock_enqueue,
+        patch("app.api.v1.webhooks._get_redis_pool", return_value=mock_redis),
+    ):
+        # First delivery: SET NX returns True (key is new)
+        mock_redis.set.return_value = True
+        response1 = client.post(
+            "/api/v1/webhooks/whatsapp",
+            content=body,
+            headers={"Content-Type": "application/json", "X-Hub-Signature-256": sig},
+        )
+
+        # Second delivery: SET NX returns None (key already exists)
+        mock_redis.set.return_value = None
+        response2 = client.post(
+            "/api/v1/webhooks/whatsapp",
+            content=body,
+            headers={"Content-Type": "application/json", "X-Hub-Signature-256": sig},
+        )
+
+    assert response1.status_code == 200
+    assert response2.status_code == 200
+    assert mock_enqueue.call_count == 1, f"Expected 1 enqueue call, got {mock_enqueue.call_count}"
+
+
+def test_first_delivery_enqueues_job(client, monkeypatch):
+    """First delivery with a new message ID enqueues exactly one job."""
+    import app.core.security as sec_module
+    monkeypatch.setattr(sec_module.settings, "META_APP_SECRET", TEST_SECRET)
+    mock_tenant = _make_mock_tenant()
+    body = json.dumps(_make_webhook_payload()).encode()
+    sig = _sign_body(body)
+
+    mock_redis = MagicMock()
+    mock_redis.set.return_value = True  # SET NX succeeds — new key
+
+    with (
+        patch("app.api.v1.webhooks.get_tenant_by_phone", return_value=mock_tenant),
+        patch("app.api.v1.webhooks._enqueue_task") as mock_enqueue,
+        patch("app.api.v1.webhooks._get_redis_pool", return_value=mock_redis),
+    ):
+        response = client.post(
+            "/api/v1/webhooks/whatsapp",
+            content=body,
+            headers={"Content-Type": "application/json", "X-Hub-Signature-256": sig},
+        )
+
+    assert response.status_code == 200
+    mock_enqueue.assert_called_once()
+
+
+def test_dedup_key_uses_message_id(client, monkeypatch):
+    """Dedup Redis key contains the message ID with nx=True and ex=86400."""
+    import app.core.security as sec_module
+    monkeypatch.setattr(sec_module.settings, "META_APP_SECRET", TEST_SECRET)
+    mock_tenant = _make_mock_tenant()
+    body = json.dumps(_make_webhook_payload()).encode()
+    sig = _sign_body(body)
+
+    mock_redis = MagicMock()
+    mock_redis.set.return_value = True
+
+    with (
+        patch("app.api.v1.webhooks.get_tenant_by_phone", return_value=mock_tenant),
+        patch("app.api.v1.webhooks._enqueue_task"),
+        patch("app.api.v1.webhooks._get_redis_pool", return_value=mock_redis),
+    ):
+        client.post(
+            "/api/v1/webhooks/whatsapp",
+            content=body,
+            headers={"Content-Type": "application/json", "X-Hub-Signature-256": sig},
+        )
+
+    mock_redis.set.assert_called_once()
+    set_call_args = mock_redis.set.call_args
+    key_arg = set_call_args[0][0]
+    assert "wamid.test_message_id_123" in key_arg, f"Dedup key must contain message ID, got: {key_arg}"
+    assert set_call_args[1].get("nx") is True, "SET must use nx=True"
+    assert set_call_args[1].get("ex") == 86400, "TTL must be 86400 (24h)"
