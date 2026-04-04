@@ -12,7 +12,7 @@
 
 - [ ] **Phase 5: Intent Detection Fixes** — Fix slot selection, keyword coverage, routing edge cases, and state flag for slot ambiguity
 - [x] **Phase 6: RAG Quality** — Similarity threshold, confidence scoring, dedup on re-ingest, chunk size, multi-turn query, prompt injection hardening
-- [ ] **Phase 7: Infrastructure Reliability** — Message dedup, Redis 503 on failure, RQ retry policy, connection pool, booking race window
+- [x] **Phase 7: Infrastructure Reliability** — Message dedup, Redis 503 on failure, RQ retry policy, connection pool, booking race window
 - [ ] **Phase 8: Security & Configuration** — Fail-fast secrets, admin API key auth, .env.example, Redis PING at startup
 - [ ] **Phase 9: Copy & LLM Settings** — Hardcoded response rewrites, Argentine Spanish tone, temperature + timeout tuning
 
@@ -61,7 +61,12 @@ Plans:
   2. A Redis unavailability event during enqueue returns HTTP 503 (not 500) so Meta retries delivery
   3. A transient OpenAI timeout on a job automatically retries up to 3 times with backoff before failing permanently
   4. The booked appointment slot matches the slot shown to the patient (race window eliminated)
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [x] 07-01-PLAN.md — Redis pool + 503 error handling + Retry on enqueue in _enqueue_task (INFRA-02, INFRA-03, INFRA-04)
+- [x] 07-02-PLAN.md — booking_node reads state["available_slots"] first to eliminate Calendar re-fetch race (INFRA-05)
+- [x] 07-03-PLAN.md — Webhook dedup via Redis SET NX before enqueue (INFRA-01)
 
 ### Phase 8: Security & Configuration
 **Goal**: The application fails fast on missing secrets, admin endpoints require authentication, and all required env vars are documented
@@ -93,7 +98,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 5. Intent Detection Fixes | 3/3 | Complete | 2026-04-04 |
 | 6. RAG Quality | 3/3 | Complete | 2026-04-04 |
-| 7. Infrastructure Reliability | 0/0 | Not started | - |
+| 7. Infrastructure Reliability | 3/3 | Complete | 2026-04-04 |
 | 8. Security & Configuration | 0/0 | Not started | - |
 | 9. Copy & LLM Settings | 0/0 | Not started | - |
 
