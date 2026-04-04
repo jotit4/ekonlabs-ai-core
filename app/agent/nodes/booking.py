@@ -72,12 +72,32 @@ def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", ascii_text.lower()).strip()
 
 
-def _detect_slot_index(normalized_query: str) -> int:
-    """Retorna el índice del slot seleccionado (0, 1 o 2). Default 0."""
-    for key, idx in SLOT_INDEX_MAP.items():
+def _detect_slot_index(normalized_query: str) -> int | None:
+    """Retorna el índice del slot seleccionado (0, 1 o 2), o None si no hay match claro.
+
+    Phrase keys (multi-word) use substring matching — no ambiguity risk.
+    Digit keys ("1", "2", "3") use word-boundary regex to prevent false matches
+    on "14:30" or "21 de abril".
+    """
+    PHRASE_KEYS = {
+        "el primero": 0, "la primera": 0,
+        "el segundo": 1, "la segunda": 1,
+        "el tercero": 2, "la tercera": 2,
+    }
+    DIGIT_KEYS = {"1": 0, "2": 1, "3": 2}
+    # Word phrases first (no digits) — safe substring matching
+    for key, idx in PHRASE_KEYS.items():
         if key in normalized_query:
             return idx
-    return 0
+    # "el N" patterns — use word-boundary on the digit to avoid "el 21" matching "el 2"
+    for digit, idx in DIGIT_KEYS.items():
+        if re.search(rf"\bel {digit}\b", normalized_query):
+            return idx
+    # Bare digit keys — word-boundary only
+    for digit, idx in DIGIT_KEYS.items():
+        if re.search(rf"\b{digit}\b", normalized_query):
+            return idx
+    return None  # No match — ambiguous selection
 
 
 def booking_node(state: ConversationState) -> dict:
@@ -181,6 +201,22 @@ def booking_node(state: ConversationState) -> dict:
 
         # ── Flujo confirmación ─────────────────────────────────────────────
         selected_idx = _detect_slot_index(normalized_query)
+
+        if selected_idx is None:
+            logger.info(
+                "booking_node.done",
+                tenant_id=tenant_id,
+                booking_intent=True,
+                booking_action="confirm",
+                booking_ambiguous_slot=True,
+                query_preview=query[:80],
+            )
+            return {
+                "booking_intent": True,
+                "booking_action": "confirm",
+                "booking_ambiguous_slot": True,
+                "calendar_event_id": None,
+            }
 
         slots = calendar_service.get_available_slots(
             calendar_id=calendar_id,
