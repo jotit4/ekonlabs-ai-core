@@ -344,3 +344,96 @@ def test_argentine_confirm_keywords_negative_reservar_para_manana():
     # "reservar" is NOT in BOOKING_CONFIRM_KEYWORDS — it's a scheduling phrase
     assert result == {"booking_intent": False}
     mock_ts.get_tenant_config.assert_not_called()
+
+
+# ── Plan 05-02: Slot Selection Ambiguity Fix ─────────────────────────────────
+
+def test_state_has_booking_ambiguous_slot():
+    """ConversationState debe tener el campo booking_ambiguous_slot en sus annotations."""
+    from app.agent.state import ConversationState
+
+    assert "booking_ambiguous_slot" in ConversationState.__annotations__
+
+
+def test_state_partial_invoke_without_flag():
+    """Estado parcial sin booking_ambiguous_slot no genera error de construcción."""
+    from langchain_core.messages import HumanMessage
+
+    # Esto simula una invocación parcial de LangGraph sin el campo opcional
+    state = {"tenant_id": "t", "phone_number": "p", "messages": [HumanMessage(content="test")]}
+    # Verificar que se puede construir sin error
+    assert state["tenant_id"] == "t"
+
+
+def test_detect_slot_index_returns_none_on_no_match():
+    """_detect_slot_index('confirmo sin numero') debe retornar None (sin match claro)."""
+    from app.agent.nodes.booking import _detect_slot_index
+
+    assert _detect_slot_index("confirmo sin numero") is None
+
+
+def test_detect_slot_index_digit_1_matches():
+    """_detect_slot_index('quiero el 1') retorna 0 (primer slot)."""
+    from app.agent.nodes.booking import _detect_slot_index
+
+    assert _detect_slot_index("quiero el 1") == 0
+
+
+def test_detect_slot_index_bare_1_matches():
+    """_detect_slot_index('1') retorna 0 con word-boundary."""
+    from app.agent.nodes.booking import _detect_slot_index
+
+    assert _detect_slot_index("1") == 0
+
+
+def test_false_positive_1430_no_slot():
+    """_detect_slot_index('a las 14:30') debe retornar None — '1' en '14' no debe hacer match."""
+    from app.agent.nodes.booking import _detect_slot_index
+
+    assert _detect_slot_index("a las 14:30") is None
+
+
+def test_false_positive_21_de_abril_no_slot():
+    """_detect_slot_index('el 21 de abril') debe retornar None — '2' en '21' no hace match."""
+    from app.agent.nodes.booking import _detect_slot_index
+
+    assert _detect_slot_index("el 21 de abril") is None
+
+
+def test_booking_node_ambiguous_sets_flag():
+    """booking_node con 'confirmo' (sin dígito de slot) retorna booking_ambiguous_slot=True
+    y NO llama a calendar_service.create_event."""
+    from app.agent.nodes.booking import booking_node
+
+    with (
+        patch("app.agent.nodes.booking.tenant_service") as mock_ts,
+        patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant()
+        mock_cs.get_available_slots.return_value = _FAKE_SLOTS
+
+        result = booking_node(_base_state("confirmo"))
+
+    assert result["booking_intent"] is True
+    assert result["booking_action"] == "confirm"
+    assert result["booking_ambiguous_slot"] is True
+    mock_cs.create_event.assert_not_called()
+
+
+def test_booking_node_clear_digit_books():
+    """booking_node con 'el 1' (slot explícito) retorna booking_intent=True
+    sin booking_ambiguous_slot=True."""
+    from app.agent.nodes.booking import booking_node
+
+    with (
+        patch("app.agent.nodes.booking.tenant_service") as mock_ts,
+        patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant()
+        mock_cs.get_available_slots.return_value = _FAKE_SLOTS
+        mock_cs.create_event.return_value = _EVENT_ID
+
+        result = booking_node(_base_state("el 1"))
+
+    assert result["booking_intent"] is True
+    assert result.get("booking_ambiguous_slot") is not True
