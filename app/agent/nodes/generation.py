@@ -72,7 +72,7 @@ DEFAULT_CONFIDENCE_THRESHOLD: float = 0.5
 
 # Module-level singleton — initialized once at import time.
 # Tests must patch at: app.agent.nodes.generation._llm
-_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
+_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3, request_timeout=20)
 
 
 def generation_node(state: ConversationState) -> dict:
