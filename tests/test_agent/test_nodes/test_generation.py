@@ -66,7 +66,7 @@ def test_generation_node_injects_rag_context():
     call_args = mock_llm.invoke.call_args[0][0]
     system_msg = call_args[0]
     assert rag_text in system_msg.content
-    assert "Información de la Clínica" in system_msg.content
+    assert "<clinic_knowledge>" in system_msg.content
 
 
 def test_generation_node_returns_ai_message():
@@ -106,7 +106,7 @@ def test_generation_node_rag_present_does_not_include_section_header_in_system_w
 
     call_args = mock_llm.invoke.call_args[0][0]
     system_msg = call_args[0]
-    assert "Información de la Clínica" in system_msg.content
+    assert "<clinic_knowledge>" in system_msg.content
 
 
 def test_generation_node_prepends_empathy_modifier_when_urgent():
@@ -545,3 +545,103 @@ def test_no_rag_context_key_calls_llm():
 
     assert mock_llm.invoke.call_count == 1
     assert result.get("is_paused") is not True
+
+
+# ── Plan 06-03: RAG-06 — XML delimiters + anti-injection ─────────────────────
+
+
+def test_rag_context_wrapped_in_xml_delimiters():
+    """RAG-06: rag_context presente → SystemMessage contiene <clinic_knowledge> y </clinic_knowledge>."""
+    from app.agent.nodes.generation import generation_node
+
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = AIMessage(content="resp")
+    state = {
+        "tenant_id": "test", "phone_number": "+54911",
+        "messages": [HumanMessage(content="precio")],
+        "rag_context": "Precio implante: $1200",
+    }
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        generation_node(state)
+    system_msg = mock_llm.invoke.call_args[0][0][0]
+    assert "<clinic_knowledge>" in system_msg.content
+    assert "</clinic_knowledge>" in system_msg.content
+
+
+def test_rag_context_xml_contains_the_content():
+    """RAG-06: el contenido RAG está entre las etiquetas XML."""
+    from app.agent.nodes.generation import generation_node
+
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = AIMessage(content="resp")
+    rag = "Horario: Lunes a Viernes 8-20hs"
+    state = {
+        "tenant_id": "test", "phone_number": "+54911",
+        "messages": [HumanMessage(content="horario")],
+        "rag_context": rag,
+    }
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        generation_node(state)
+    system_msg = mock_llm.invoke.call_args[0][0][0]
+    open_idx = system_msg.content.index("<clinic_knowledge>")
+    close_idx = system_msg.content.index("</clinic_knowledge>")
+    assert rag in system_msg.content[open_idx:close_idx]
+
+
+def test_rag_context_injection_includes_anti_injection_instruction():
+    """RAG-06: el SystemMessage incluye instrucción anti-injection."""
+    from app.agent.nodes.generation import generation_node
+
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = AIMessage(content="resp")
+    state = {
+        "tenant_id": "test", "phone_number": "+54911",
+        "messages": [HumanMessage(content="precio")],
+        "rag_context": "Precio consulta: $500",
+    }
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        generation_node(state)
+    system_msg = mock_llm.invoke.call_args[0][0][0]
+    content_lower = system_msg.content.lower()
+    assert (
+        "instruccion" in content_lower
+        or "instrucción" in content_lower
+        or "ignorar" in content_lower
+        or "ignorá" in content_lower
+        or "ignore" in content_lower
+        or "comando" in content_lower
+    )
+
+
+def test_rag_context_old_markdown_header_absent():
+    """RAG-06: el header markdown antiguo '## Información de la Clínica' NO aparece."""
+    from app.agent.nodes.generation import generation_node
+
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = AIMessage(content="resp")
+    state = {
+        "tenant_id": "test", "phone_number": "+54911",
+        "messages": [HumanMessage(content="precio")],
+        "rag_context": "Precio: $100",
+    }
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        generation_node(state)
+    system_msg = mock_llm.invoke.call_args[0][0][0]
+    assert "## Información de la Clínica" not in system_msg.content
+
+
+def test_empty_rag_context_no_xml_tags():
+    """RAG-06: rag_context='' → SystemMessage NO contiene etiquetas XML de clinic_knowledge."""
+    from app.agent.nodes.generation import generation_node
+
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = AIMessage(content="resp")
+    state = {
+        "tenant_id": "test", "phone_number": "+54911",
+        "messages": [HumanMessage(content="hola")],
+        "rag_context": "",
+    }
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        generation_node(state)
+    system_msg = mock_llm.invoke.call_args[0][0][0]
+    assert "<clinic_knowledge>" not in system_msg.content
