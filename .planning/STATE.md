@@ -12,7 +12,7 @@
 ## Current Position
 
 **Current Phase:** 6 — RAG Quality (in progress)
-**Current Plan:** 06-02 (06-01 complete)
+**Current Plan:** 06-03 (06-01, 06-02 complete)
 **Phase Status:** In progress
 **Milestone Status:** In progress
 
@@ -90,8 +90,8 @@ None.
 
 ## Session Continuity
 
-**Last session:** 2026-04-04 — Completed 06-01 (RAG Data Quality Fixes): similarity threshold, delete-before-insert, chunk size 400/60, search_tool empty return
-**Resume from:** `/gsd:execute-phase 6` (next: 06-02)
+**Last session:** 2026-04-04 — Completed 06-02 (Remove confidence gate + multi-turn RAG query): RAG-02 empty rag_context no longer pauses, RAG-05 query from last 2 human turns
+**Resume from:** `/gsd:execute-phase 6` (next: 06-03)
 
 ---
 
