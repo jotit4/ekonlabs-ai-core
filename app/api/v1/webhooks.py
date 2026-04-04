@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from redis import Redis
-from rq import Queue
+from rq import Queue, Retry
 
 from app.core.config import settings
 from app.core.exceptions import AppException
@@ -19,6 +19,16 @@ from app.workers.tasks import process_whatsapp_message
 router = APIRouter(tags=["webhooks"])
 logger = get_logger(__name__)
 
+_redis_pool: Redis | None = None
+
+
+def _get_redis_pool() -> Redis:
+    """Lazy-initialized module-level Redis connection. Reused across requests."""
+    global _redis_pool
+    if _redis_pool is None:
+        _redis_pool = Redis.from_url(settings.REDIS_URL)
+    return _redis_pool
+
 
 def _success_response() -> dict:
     """Retorna el wrapper estándar de éxito para respuestas de webhook."""
@@ -31,19 +41,27 @@ def _success_response() -> dict:
 
 
 def _enqueue_task(payload_dict: dict, tenant_id: str) -> None:
-    """Encola la tarea de procesamiento en RQ (sincrónico — llamar vía asyncio.to_thread).
+    """Encola la tarea de procesamiento en RQ.
 
-    Args:
-        payload_dict: Payload del webhook serializado como dict.
-        tenant_id: Identificador del tenant para la tarea.
-
-    Note:
-        Abre una nueva conexión Redis por llamada. Aceptable para MVP.
-        Connection pool es deuda técnica para stories futuras.
+    Usa pool de conexión Redis a nivel de módulo (INFRA-04).
+    Redis failure → AppException(status_code=503) para que Meta reintente (INFRA-02).
+    Retry automático x3 con backoff para fallas transitorias (INFRA-03).
     """
-    conn = Redis.from_url(settings.REDIS_URL)
-    q = Queue("default", connection=conn)
-    q.enqueue(process_whatsapp_message, payload_dict, tenant_id)
+    try:
+        conn = _get_redis_pool()
+        q = Queue("default", connection=conn)
+        q.enqueue(
+            process_whatsapp_message,
+            payload_dict,
+            tenant_id,
+            retry=Retry(max=3, interval=[10, 30, 60]),
+        )
+    except Exception as exc:
+        raise AppException(
+            code="REDIS_UNAVAILABLE",
+            message=f"Redis no disponible: {exc}",
+            status_code=503,
+        ) from exc
 
 
 @router.get("/webhooks/whatsapp", response_class=PlainTextResponse)
