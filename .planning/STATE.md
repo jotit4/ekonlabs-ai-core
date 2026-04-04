@@ -11,13 +11,13 @@
 
 ## Current Position
 
-**Current Phase:** 9 — Copy & LLM Settings (in progress)
-**Current Plan:** 09-02 (next to execute)
-**Phase Status:** In progress (1/2 plans complete)
-**Milestone Status:** In progress
+**Current Phase:** 9 — Copy & LLM Settings (complete)
+**Current Plan:** All plans complete
+**Phase Status:** Complete (2/2 plans complete)
+**Milestone Status:** Complete — v1.1 Production Hardening done
 
 ```
-Progress: [████████░░] 85% — 4.5 of 5 phases complete
+Progress: [██████████] 100% — 5 of 5 phases complete
 ```
 
 ---
@@ -30,7 +30,7 @@ Progress: [████████░░] 85% — 4.5 of 5 phases complete
 | 6 | RAG Quality | Complete |
 | 7 | Infrastructure Reliability | Complete |
 | 8 | Security & Configuration | Complete |
-| 9 | Copy & LLM Settings | In progress (1/2) |
+| 9 | Copy & LLM Settings | Complete |
 
 ---
 
@@ -39,7 +39,7 @@ Progress: [████████░░] 85% — 4.5 of 5 phases complete
 - Requirements mapped: 25/25
 - Phases defined: 5
 - Plans written: 14
-- Plans complete: 13
+- Plans complete: 14
 
 ---
 
@@ -82,6 +82,8 @@ Progress: [████████░░] 85% — 4.5 of 5 phases complete
 - [09-plan] 09-01 and 09-02 are serialized (Wave 2 depends on Wave 1) because both modify generation.py — prevents edit conflicts
 - [09-plan] LOW_CONFIDENCE_PAUSE_RESPONSE rewrite removes false escalation promise; notification_service is a deferred stub — cannot promise "te contactaremos"
 - [09-plan] DEFAULT_SYSTEM_PROMPT: fix accents (recepción, médica, información, clínica, diagnósticos) AND align imperatives to voseo (Ayudás, Respondé, Sé conciso, cálido)
+- [09-02] temperature reduced 0.7→0.3 for deterministic medical responses; request_timeout=20 prevents worker blocking
+- [09-02] DEFAULT_SYSTEM_PROMPT fully corrected with accents and Argentine voseo imperatives
 
 ### Active Constraints
 
@@ -108,9 +110,9 @@ None.
 
 ## Session Continuity
 
-**Last session:** 2026-04-04 — Executed 09-01: rewrote ANTI_DIAGNOSTIC_RESPONSE (COPY-01), LOW_CONFIDENCE_PAUSE_RESPONSE (COPY-02), SHADOW_MODE_REDIRECT_RESPONSE (COPY-03); added 3 content-assertion tests; 329 tests pass.
-**Resume from:** Execute 09-02 (system prompt + LLM settings)
+**Last session:** 2026-04-04 — Executed 09-02: fixed DEFAULT_SYSTEM_PROMPT accents+voseo (COPY-04), tuned _llm to temperature=0.3+request_timeout=20 (COPY-05); added 3 tests; 332 tests pass. v1.1 Production Hardening milestone complete (14/14 plans).
+**Resume from:** Milestone complete — ready for deployment review / ISADI first client handoff
 
 ---
 
-*Last updated: 2026-04-04T18:52:12Z | v1.1 Production Hardening*
+*Last updated: 2026-04-04T18:55:00Z | v1.1 Production Hardening — COMPLETE*

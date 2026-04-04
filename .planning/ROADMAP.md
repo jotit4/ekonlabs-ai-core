@@ -13,8 +13,8 @@
 - [ ] **Phase 5: Intent Detection Fixes** — Fix slot selection, keyword coverage, routing edge cases, and state flag for slot ambiguity
 - [x] **Phase 6: RAG Quality** — Similarity threshold, confidence scoring, dedup on re-ingest, chunk size, multi-turn query, prompt injection hardening
 - [x] **Phase 7: Infrastructure Reliability** — Message dedup, Redis 503 on failure, RQ retry policy, connection pool, booking race window
-- [ ] **Phase 8: Security & Configuration** — Fail-fast secrets, admin API key auth, .env.example, Redis PING at startup
-- [ ] **Phase 9: Copy & LLM Settings** — Hardcoded response rewrites, Argentine Spanish tone, temperature + timeout tuning
+- [x] **Phase 8: Security & Configuration** — Fail-fast secrets, admin API key auth, .env.example, Redis PING at startup
+- [x] **Phase 9: Copy & LLM Settings** — Hardcoded response rewrites, Argentine Spanish tone, temperature + timeout tuning
 
 ---
 
@@ -77,7 +77,12 @@ Plans:
   2. `POST /api/v1/tenants` returns 401 when called without a valid `X-API-Key` header
   3. `.env.example` lists `ADMIN_API_KEY`, `DEFAULT_SLOT_DURATION_MINUTES`, and `SCHEDULING_LOOKAHEAD_HOURS`
   4. Starting the application with a misconfigured `REDIS_URL` fails at boot with a clear error, not at first request
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [x] 08-01-PLAN.md — Config hardening: remove blank defaults from secrets, add ADMIN_API_KEY field, update .env.example (SEC-01, SEC-03)
+- [x] 08-02-PLAN.md — Admin API auth: X-API-Key guard on POST /tenants and PATCH /tenants/{id}/rules (SEC-02)
+- [x] 08-03-PLAN.md — Redis startup PING in lifespan — hard fail on misconfigured REDIS_URL (SEC-04)
 
 ### Phase 9: Copy & LLM Settings
 **Goal**: All patient-facing hardcoded responses use natural Argentine Spanish and the LLM is tuned for determinism and responsiveness
@@ -88,7 +93,11 @@ Plans:
   2. The low-confidence pause response tells the patient to call the clinic directly — it contains no promise of human escalation
   3. The shadow mode response specifies "por teléfono o de forma presencial" (not "canales habituales")
   4. LLM responses are generated with temperature 0.3 and a 20-second timeout is enforced on the OpenAI call
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [x] 09-01-PLAN.md — Patient-facing copy rewrites: ANTI_DIAGNOSTIC_RESPONSE, LOW_CONFIDENCE_PAUSE_RESPONSE, SHADOW_MODE_REDIRECT_RESPONSE (COPY-01, COPY-02, COPY-03)
+- [x] 09-02-PLAN.md — System prompt accents + voseo fix + ChatOpenAI temperature=0.3 + request_timeout=20 (COPY-04, COPY-05)
 
 ---
 
@@ -99,8 +108,8 @@ Plans:
 | 5. Intent Detection Fixes | 3/3 | Complete | 2026-04-04 |
 | 6. RAG Quality | 3/3 | Complete | 2026-04-04 |
 | 7. Infrastructure Reliability | 3/3 | Complete | 2026-04-04 |
-| 8. Security & Configuration | 0/0 | Not started | - |
-| 9. Copy & LLM Settings | 0/0 | Not started | - |
+| 8. Security & Configuration | 3/3 | Complete | 2026-04-04 |
+| 9. Copy & LLM Settings | 2/2 | Complete | 2026-04-04 |
 
 ---
 
