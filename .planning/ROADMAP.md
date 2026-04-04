@@ -1,0 +1,132 @@
+# Roadmap — v1.1 Production Hardening
+
+**Milestone:** v1.1 Production Hardening
+**Goal:** Fix audit findings so ekonlabs-ai-core deploys for first paying client (ISADI) with confidence
+**Timeline:** 1 week (5 working days, ~1 day per phase)
+**Phases:** 5 (numbered 5–9, continuing from v1.0 which ended at Phase 4)
+**Coverage:** 25/25 requirements mapped
+
+---
+
+## Phases
+
+- [ ] **Phase 5: Intent Detection Fixes** — Fix slot selection, keyword coverage, routing edge cases, and state flag for slot ambiguity
+- [ ] **Phase 6: RAG Quality** — Similarity threshold, confidence scoring, dedup on re-ingest, chunk size, multi-turn query, prompt injection hardening
+- [ ] **Phase 7: Infrastructure Reliability** — Message dedup, Redis 503 on failure, RQ retry policy, connection pool, booking race window
+- [ ] **Phase 8: Security & Configuration** — Fail-fast secrets, admin API key auth, .env.example, Redis PING at startup
+- [ ] **Phase 9: Copy & LLM Settings** — Hardcoded response rewrites, Argentine Spanish tone, temperature + timeout tuning
+
+---
+
+## Phase Details
+
+### Phase 5: Intent Detection Fixes
+**Goal**: The intent detection layer correctly classifies Argentine patient messages without false matches, defaulting, or silent failures
+**Depends on**: Nothing (pure logic fixes, no external dependencies)
+**Requirements**: INTENT-01, INTENT-02, INTENT-03, INTENT-04, INTENT-05, INTENT-06, INTENT-07, INTENT-08
+**Success Criteria** (what must be TRUE):
+  1. Sending "dale" or "anotame" after slot presentation confirms the booking without ambiguity
+  2. Sending "1" to select a slot does not false-match on messages containing "14:30" or "21 de abril"
+  3. Sending "tengo fiebre y quiero turno" routes to scheduling, not anti-diagnostic
+  4. When `is_paused=True`, the operator phone receives a notification (or a log entry clearly records the handoff event) — the response does not promise escalation that never happens
+**Plans**: 3 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — Keyword fixes: BOOKING_CONFIRM_KEYWORDS, scheduling dead code, PAIN_URGENCY_KEYWORDS (INTENT-02, INTENT-05, INTENT-06)
+- [ ] 05-02-PLAN.md — Slot ambiguity trio: _detect_slot_index None return, word-boundary regex, booking_ambiguous_slot state flag + generation clarification (INTENT-01, INTENT-03, INTENT-08)
+- [ ] 05-03-PLAN.md — Graph routing + handoff node: scheduling-intent override for anti-diagnostic, handoff_node wiring (INTENT-04, INTENT-07)
+
+### Phase 6: RAG Quality
+**Goal**: RAG retrieval returns only relevant, deduplicated context and handles missing context gracefully without pausing the thread
+**Depends on**: Phase 5 (agent state must be stable before tuning retrieval behavior)
+**Requirements**: RAG-01, RAG-02, RAG-03, RAG-04, RAG-05, RAG-06
+**Success Criteria** (what must be TRUE):
+  1. After re-uploading a knowledge base document, the chunk count in Supabase does not increase (old chunks are replaced)
+  2. A follow-up question like "¿y cuánto sale?" retrieves correct context without requiring the patient to repeat the topic
+  3. When no chunk clears the 0.60 similarity threshold, the agent responds using the system prompt alone rather than pausing the thread
+  4. RAG context injected into the prompt is wrapped in XML delimiters and an explicit anti-injection instruction is present
+**Plans**: TBD
+
+### Phase 7: Infrastructure Reliability
+**Goal**: The webhook layer and job queue handle duplicate deliveries, transient failures, and connection pressure without data loss or false errors
+**Depends on**: Phase 5, Phase 6 (agent behavior stabilized before infrastructure layer is tightened)
+**Requirements**: INFRA-01, INFRA-02, INFRA-03, INFRA-04, INFRA-05
+**Success Criteria** (what must be TRUE):
+  1. Sending the same webhook message ID twice (simulating Meta retry) results in exactly one job enqueued and one response sent
+  2. A Redis unavailability event during enqueue returns HTTP 503 (not 500) so Meta retries delivery
+  3. A transient OpenAI timeout on a job automatically retries up to 3 times with backoff before failing permanently
+  4. The booked appointment slot matches the slot shown to the patient (race window eliminated)
+**Plans**: TBD
+
+### Phase 8: Security & Configuration
+**Goal**: The application fails fast on missing secrets, admin endpoints require authentication, and all required env vars are documented
+**Depends on**: Phase 7 (infrastructure must be stable before locking down configuration)
+**Requirements**: SEC-01, SEC-02, SEC-03, SEC-04
+**Success Criteria** (what must be TRUE):
+  1. Starting the application without `OPENAI_API_KEY` set produces a clear startup error and the process exits — it does not boot with a blank key
+  2. `POST /api/v1/tenants` returns 401 when called without a valid `X-API-Key` header
+  3. `.env.example` lists `ADMIN_API_KEY`, `DEFAULT_SLOT_DURATION_MINUTES`, and `SCHEDULING_LOOKAHEAD_HOURS`
+  4. Starting the application with a misconfigured `REDIS_URL` fails at boot with a clear error, not at first request
+**Plans**: TBD
+
+### Phase 9: Copy & LLM Settings
+**Goal**: All patient-facing hardcoded responses use natural Argentine Spanish and the LLM is tuned for determinism and responsiveness
+**Depends on**: Phase 5, Phase 8 (intent and config must be stable; copy changes depend on correct routing)
+**Requirements**: COPY-01, COPY-02, COPY-03, COPY-04, COPY-05
+**Success Criteria** (what must be TRUE):
+  1. The anti-diagnostic response contains "te soy sincero" and contains no gendered slash constructions
+  2. The low-confidence pause response tells the patient to call the clinic directly — it contains no promise of human escalation
+  3. The shadow mode response specifies "por teléfono o de forma presencial" (not "canales habituales")
+  4. LLM responses are generated with temperature 0.3 and a 20-second timeout is enforced on the OpenAI call
+**Plans**: TBD
+
+---
+
+## Progress
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 5. Intent Detection Fixes | 0/3 | Not started | - |
+| 6. RAG Quality | 0/0 | Not started | - |
+| 7. Infrastructure Reliability | 0/0 | Not started | - |
+| 8. Security & Configuration | 0/0 | Not started | - |
+| 9. Copy & LLM Settings | 0/0 | Not started | - |
+
+---
+
+## Coverage Map
+
+| Requirement | Phase |
+|-------------|-------|
+| INTENT-01 | Phase 5 |
+| INTENT-02 | Phase 5 |
+| INTENT-03 | Phase 5 |
+| INTENT-04 | Phase 5 |
+| INTENT-05 | Phase 5 |
+| INTENT-06 | Phase 5 |
+| INTENT-07 | Phase 5 |
+| INTENT-08 | Phase 5 |
+| RAG-01 | Phase 6 |
+| RAG-02 | Phase 6 |
+| RAG-03 | Phase 6 |
+| RAG-04 | Phase 6 |
+| RAG-05 | Phase 6 |
+| RAG-06 | Phase 6 |
+| INFRA-01 | Phase 7 |
+| INFRA-02 | Phase 7 |
+| INFRA-03 | Phase 7 |
+| INFRA-04 | Phase 7 |
+| INFRA-05 | Phase 7 |
+| SEC-01 | Phase 8 |
+| SEC-02 | Phase 8 |
+| SEC-03 | Phase 8 |
+| SEC-04 | Phase 8 |
+| COPY-01 | Phase 9 |
+| COPY-02 | Phase 9 |
+| COPY-03 | Phase 9 |
+| COPY-04 | Phase 9 |
+| COPY-05 | Phase 9 |
+
+---
+
+*Last updated: 2026-04-04 | Milestone: v1.1 Production Hardening*
