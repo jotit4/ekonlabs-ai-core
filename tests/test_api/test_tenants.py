@@ -139,3 +139,27 @@ def test_patch_tenant_rules_returns_422_on_invalid_uuid(client):
     body = response.json()
     assert body["status"] == "error"
     assert body["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_create_tenant_returns_401_without_api_key(client):
+    """POST /tenants without X-API-Key returns 401."""
+    response = client.post(
+        "/api/v1/tenants",
+        json={
+            "name": "Clinica Sonrisa",
+            "whatsapp_number": "+5491122334455",
+            "timezone": "America/Argentina/Buenos_Aires",
+            "shadow_mode_enabled": False,
+            "status": "active",
+        },
+    )
+    assert response.status_code == 401
+
+
+def test_patch_tenant_rules_returns_401_without_api_key(client):
+    """PATCH /tenants/{id}/rules without X-API-Key returns 401."""
+    response = client.patch(
+        f"/api/v1/tenants/{FAKE_TENANT_ID}/rules",
+        json={"system_prompt_override": "Eres formal."},
+    )
+    assert response.status_code == 401
