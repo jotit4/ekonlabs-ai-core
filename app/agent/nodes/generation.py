@@ -24,8 +24,8 @@ EMPATHY_MODIFIER = (
 )
 
 ANTI_DIAGNOSTIC_RESPONSE = (
-    "Entiendo tu consulta, pero debo ser honesto/a contigo: "
-    "no estoy habilitado/a para dar diagnósticos, recetas ni consejos médicos. "
+    "Entiendo tu consulta, pero te soy sincero: "
+    "no estoy habilitado para dar diagnósticos, recetas ni consejos médicos. "
     "Eso requiere la evaluación presencial de un profesional de la salud. "
     "Lo que sí puedo hacer es ayudarte a agendar una cita con el médico "
     "lo antes posible. ¿Te gustaría que busquemos un turno disponible para hoy o mañana?"
@@ -59,14 +59,13 @@ BOOKING_NOT_FOUND = (
 
 SHADOW_MODE_REDIRECT_RESPONSE = (
     "Por el momento la gestión de turnos está siendo atendida directamente por nuestro equipo. "
-    "Por favor, contactá a la clínica por los canales habituales para coordinar tu cita. "
+    "Por favor, comunicate con la clínica por teléfono o de forma presencial para coordinar tu cita. "
     "¡Quedamos a tu disposición para cualquier otra consulta!"
 )
 
 LOW_CONFIDENCE_PAUSE_RESPONSE = (
-    "En este momento no cuento con información suficiente para responderte con certeza. "
-    "Tu consulta fue derivada a nuestro equipo para que un especialista te asista. "
-    "Te contactaremos a la brevedad. Disculpá el inconveniente. 🙏"
+    "No tengo información suficiente para responder tu consulta. "
+    "Te recomendamos llamar directamente a la clínica para que puedan ayudarte. 🙏"
 )
 
 DEFAULT_CONFIDENCE_THRESHOLD: float = 0.5
