@@ -15,6 +15,7 @@
 - [x] **Phase 7: Infrastructure Reliability** — Message dedup, Redis 503 on failure, RQ retry policy, connection pool, booking race window
 - [x] **Phase 8: Security & Configuration** — Fail-fast secrets, admin API key auth, .env.example, Redis PING at startup
 - [x] **Phase 9: Copy & LLM Settings** — Hardcoded response rewrites, Argentine Spanish tone, temperature + timeout tuning
+- [ ] **Phase 10: Evolution API Integration** — Add Evolution API as WhatsApp provider alongside Meta, keeping both integrations functional via provider config flag
 
 ---
 
@@ -101,6 +102,25 @@ Plans:
 
 ---
 
+### Phase 10: Evolution API Integration
+**Goal**: The system can receive and send WhatsApp messages via Evolution API as an alternative to Meta Cloud API, selectable per-deployment via a config flag, with both providers coexisting in the codebase
+**Depends on**: Phase 9 (stable codebase before adding new provider layer)
+**Requirements**: EVOL-01, EVOL-02, EVOL-03, EVOL-04, EVOL-05
+**Success Criteria** (what must be TRUE):
+  1. Setting `WHATSAPP_PROVIDER=evolution` routes all incoming webhooks through the Evolution handler
+  2. Setting `WHATSAPP_PROVIDER=meta` keeps existing Meta behavior unchanged
+  3. A message sent via Evolution webhook reaches the LangGraph agent and produces a reply sent back via Evolution API
+  4. Meta webhook endpoint continues to pass all existing tests unchanged
+  5. Evolution API base URL, API key, and instance name are configurable via env vars
+**Plans**: 3 plans
+
+Plans:
+- [ ] 10-01-PLAN.md — Config fields (WHATSAPP_PROVIDER, EVOLUTION_*) + evolution_service.py send layer (EVOL-05, EVOL-02)
+- [ ] 10-02-PLAN.md — Evolution webhook endpoint + payload normalizer + endpoint tests (EVOL-01, EVOL-04)
+- [ ] 10-03-PLAN.md — tasks.py provider dispatch + full regression gate (EVOL-03, EVOL-04)
+
+---
+
 ## Progress
 
 | Phase | Plans Complete | Status | Completed |
@@ -110,6 +130,7 @@ Plans:
 | 7. Infrastructure Reliability | 3/3 | Complete | 2026-04-04 |
 | 8. Security & Configuration | 3/3 | Complete | 2026-04-04 |
 | 9. Copy & LLM Settings | 2/2 | Complete | 2026-04-04 |
+| 10. Evolution API Integration | 0/? | Planned | — |
 
 ---
 
@@ -145,6 +166,11 @@ Plans:
 | COPY-03 | Phase 9 |
 | COPY-04 | Phase 9 |
 | COPY-05 | Phase 9 |
+| EVOL-01 | Phase 10 |
+| EVOL-02 | Phase 10 |
+| EVOL-03 | Phase 10 |
+| EVOL-04 | Phase 10 |
+| EVOL-05 | Phase 10 |
 
 ---
 
