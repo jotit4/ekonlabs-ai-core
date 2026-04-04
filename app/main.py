@@ -7,6 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+from redis import Redis
 
 from app.core.database import get_supabase_client, ping_supabase
 from app.core.exceptions import AppException
@@ -43,6 +44,18 @@ async def lifespan(application: FastAPI):
             )
     except asyncio.TimeoutError:
         logger.warning("Supabase ping timeout after 3s — continuing startup")
+
+    # Verificar Redis — falla en startup si REDIS_URL está mal configurado.
+    redis_client = Redis.from_url(settings.REDIS_URL, socket_connect_timeout=3)
+    try:
+        redis_client.ping()
+        logger.info("Redis connection verified")
+    except Exception as exc:
+        logger.error("Redis PING failed at startup — verifique REDIS_URL", error=str(exc))
+        raise
+    finally:
+        redis_client.close()
+
     yield
 
 
