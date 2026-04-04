@@ -437,3 +437,63 @@ def test_booking_node_clear_digit_books():
 
     assert result["booking_intent"] is True
     assert result.get("booking_ambiguous_slot") is not True
+
+
+# ── Plan 07-02: INFRA-05 Race Window Fix (state slots) ──────────────────────
+
+def test_confirm_uses_state_slots_without_calendar_call():
+    """When state['available_slots'] is populated, booking_node books from state
+    and does NOT call calendar_service.get_available_slots (INFRA-05 race fix)."""
+    from app.agent.nodes.booking import booking_node
+
+    with (
+        patch("app.agent.nodes.booking.tenant_service") as mock_ts,
+        patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant()
+        mock_cs.create_event.return_value = _EVENT_ID
+
+        result = booking_node(_base_state("el 1", available_slots=_FAKE_SLOTS))
+
+    mock_cs.get_available_slots.assert_not_called()
+    assert result["booking_intent"] is True
+    assert result["booking_action"] == "confirm"
+    assert result.get("booked_slot") == _FAKE_SLOTS[0]
+    assert result.get("calendar_event_id") == _EVENT_ID
+
+
+def test_confirm_fallback_calls_calendar_when_no_state_slots():
+    """When state has no available_slots, booking_node falls back to calendar call."""
+    from app.agent.nodes.booking import booking_node
+
+    with (
+        patch("app.agent.nodes.booking.tenant_service") as mock_ts,
+        patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant()
+        mock_cs.get_available_slots.return_value = _FAKE_SLOTS
+        mock_cs.create_event.return_value = _EVENT_ID
+
+        result = booking_node(_base_state("el 2"))  # no available_slots key
+
+    mock_cs.get_available_slots.assert_called_once()
+    assert result["booking_intent"] is True
+    assert result.get("booked_slot") == _FAKE_SLOTS[1]
+
+
+def test_confirm_fallback_calls_calendar_when_state_slots_empty():
+    """When state has available_slots=[], booking_node falls back to calendar call."""
+    from app.agent.nodes.booking import booking_node
+
+    with (
+        patch("app.agent.nodes.booking.tenant_service") as mock_ts,
+        patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant()
+        mock_cs.get_available_slots.return_value = _FAKE_SLOTS
+        mock_cs.create_event.return_value = _EVENT_ID
+
+        result = booking_node(_base_state("el 1", available_slots=[]))
+
+    mock_cs.get_available_slots.assert_called_once()
+    assert result["booking_intent"] is True
