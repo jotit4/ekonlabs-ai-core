@@ -11,7 +11,7 @@
 ## Phases
 
 - [ ] **Phase 5: Intent Detection Fixes** — Fix slot selection, keyword coverage, routing edge cases, and state flag for slot ambiguity
-- [ ] **Phase 6: RAG Quality** — Similarity threshold, confidence scoring, dedup on re-ingest, chunk size, multi-turn query, prompt injection hardening
+- [x] **Phase 6: RAG Quality** — Similarity threshold, confidence scoring, dedup on re-ingest, chunk size, multi-turn query, prompt injection hardening
 - [ ] **Phase 7: Infrastructure Reliability** — Message dedup, Redis 503 on failure, RQ retry policy, connection pool, booking race window
 - [ ] **Phase 8: Security & Configuration** — Fail-fast secrets, admin API key auth, .env.example, Redis PING at startup
 - [ ] **Phase 9: Copy & LLM Settings** — Hardcoded response rewrites, Argentine Spanish tone, temperature + timeout tuning
@@ -45,7 +45,12 @@ Plans:
   2. A follow-up question like "¿y cuánto sale?" retrieves correct context without requiring the patient to repeat the topic
   3. When no chunk clears the 0.60 similarity threshold, the agent responds using the system prompt alone rather than pausing the thread
   4. RAG context injected into the prompt is wrapped in XML delimiters and an explicit anti-injection instruction is present
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 06-01-PLAN.md — Similarity threshold + dedup DELETE + chunk size reduction (RAG-01, RAG-03, RAG-04)
+- [ ] 06-02-PLAN.md — Remove binary confidence pause + multi-turn query builder (RAG-02, RAG-05)
+- [ ] 06-03-PLAN.md — XML delimiters + anti-injection instruction in RAG context injection (RAG-06)
 
 ### Phase 7: Infrastructure Reliability
 **Goal**: The webhook layer and job queue handle duplicate deliveries, transient failures, and connection pressure without data loss or false errors
@@ -86,8 +91,8 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 5. Intent Detection Fixes | 0/3 | Not started | - |
-| 6. RAG Quality | 0/0 | Not started | - |
+| 5. Intent Detection Fixes | 3/3 | Complete | 2026-04-04 |
+| 6. RAG Quality | 3/3 | Complete | 2026-04-04 |
 | 7. Infrastructure Reliability | 0/0 | Not started | - |
 | 8. Security & Configuration | 0/0 | Not started | - |
 | 9. Copy & LLM Settings | 0/0 | Not started | - |
