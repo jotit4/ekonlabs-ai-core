@@ -98,8 +98,8 @@ None.
 
 ## Session Continuity
 
-**Last session:** 2026-04-04 — 07-02 complete: INFRA-05 race window fix in booking_node (34/34 tests pass). 07-03 (webhook dedup SET NX) is next.
-**Resume from:** `/gsd:execute-phase 7` (plan 07-03)
+**Last session:** 2026-04-04 — 07-01 TDD complete: Redis pool + 503 + Retry hardening in _enqueue_task (14/14 tests pass). 07-02 and 07-03 remain.
+**Resume from:** `/gsd:execute-phase 7` (plan 07-02)
 
 ---
 
