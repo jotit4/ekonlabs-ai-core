@@ -218,7 +218,10 @@ def booking_node(state: ConversationState) -> dict:
                 "calendar_event_id": None,
             }
 
-        slots = calendar_service.get_available_slots(
+        # INFRA-05: Read cached slots from state first to eliminate the race window.
+        # scheduling_node stores available_slots in state when presenting options.
+        # Only re-fetch if state slots are absent or empty (e.g., conversation resumed).
+        slots = state.get("available_slots") or calendar_service.get_available_slots(
             calendar_id=calendar_id,
             credentials_dict=credentials_dict,
             duration_minutes=settings.DEFAULT_SLOT_DURATION_MINUTES,
