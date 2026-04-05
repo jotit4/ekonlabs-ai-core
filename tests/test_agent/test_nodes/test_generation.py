@@ -175,50 +175,50 @@ def test_generation_node_calls_llm_when_not_medical_query():
 
 
 def test_generation_node_scheduling_intent_with_slots():
-    """Con scheduling_intent=True y slots → respuesta contiene las opciones con emojis."""
+    """RESP-01: scheduling_intent=True con slots → LLM llamado, displays en contexto, sin emojis numerados."""
     from app.agent.nodes.generation import generation_node
 
     slots = [
         {"start": "2026-03-30T10:00:00+00:00", "end": "2026-03-30T11:00:00+00:00", "display": "Lunes 30 de Marzo — 10:00 a 11:00 hs"},
         {"start": "2026-03-30T11:00:00+00:00", "end": "2026-03-30T12:00:00+00:00", "display": "Lunes 30 de Marzo — 11:00 a 12:00 hs"},
     ]
-    mock_llm = _make_mock_llm()
+    mock_llm = _make_mock_llm("Tenés estos turnos disponibles: Lunes 30 de Marzo — 10:00 a 11:00 hs o Lunes 30 de Marzo — 11:00 a 12:00 hs")
 
     with patch("app.agent.nodes.generation._llm", mock_llm):
         result = generation_node(_base_state(scheduling_intent=True, available_slots=slots))
 
-    # El LLM NO debe ser llamado — respuesta determinista
-    mock_llm.invoke.assert_not_called()
-    assert "messages" in result
-    assert len(result["messages"]) == 1
-    response_content = result["messages"][0].content
-    # La respuesta debe mencionar los turnos
-    assert "Lunes 30 de Marzo — 10:00 a 11:00 hs" in response_content
-    assert "Lunes 30 de Marzo — 11:00 a 12:00 hs" in response_content
-    assert "1️⃣" in response_content
-    assert "2️⃣" in response_content
+    # RESP-01: LLM debe ser llamado
+    mock_llm.invoke.assert_called_once()
+    # Los displays deben estar inyectados en el contexto del sistema
+    system_msg = mock_llm.invoke.call_args[0][0][0]
+    assert "Lunes 30 de Marzo — 10:00 a 11:00 hs" in system_msg.content
+    assert "Lunes 30 de Marzo — 11:00 a 12:00 hs" in system_msg.content
+    # RESP-01: sin lista numerada con emojis en el contexto
+    assert "1️⃣" not in system_msg.content
+    assert "2️⃣" not in system_msg.content
+    assert isinstance(result["messages"][0], AIMessage)
 
 
 def test_generation_node_scheduling_intent_without_slots():
-    """Con scheduling_intent=True y available_slots=[] → respuesta de disculpa."""
-    from app.agent.nodes.generation import SCHEDULING_NO_SLOTS_RESPONSE, generation_node
+    """RESP-04: scheduling_intent=True sin slots → LLM llamado (no string hardcodeado)."""
+    from app.agent.nodes.generation import generation_node
 
-    mock_llm = _make_mock_llm()
+    mock_llm = _make_mock_llm("Por ahora no encontré turnos disponibles. Te recomiendo llamar a la clínica.")
 
     with patch("app.agent.nodes.generation._llm", mock_llm):
         result = generation_node(_base_state(scheduling_intent=True, available_slots=[]))
 
-    # El LLM NO debe ser llamado
-    mock_llm.invoke.assert_not_called()
-    assert result["messages"][0].content == SCHEDULING_NO_SLOTS_RESPONSE
+    # RESP-04: LLM debe ser llamado
+    mock_llm.invoke.assert_called_once()
+    assert isinstance(result["messages"][0], AIMessage)
 
 
 def test_generation_node_booking_confirmed_returns_deterministic_response():
-    """booking_intent=True + booking_action='confirm' + event_id presente → respuesta de confirmación sin LLM."""
-    from app.agent.nodes.generation import BOOKING_CONFIRMED_TEMPLATE, generation_node
+    """RESP-02: booking confirm + event_id → LLM llamado, display inyectado en contexto."""
+    from app.agent.nodes.generation import generation_node
 
-    mock_llm = _make_mock_llm()
     slot = {"start": "2026-03-30T10:00:00-03:00", "end": "2026-03-30T11:00:00-03:00", "display": "Lunes 30 de Marzo — 10:00 a 11:00 hs"}
+    mock_llm = _make_mock_llm(f"¡Perfecto! Tu turno {slot['display']} está confirmado.")
     state = _base_state(
         booking_intent=True,
         booking_action="confirm",
@@ -229,16 +229,17 @@ def test_generation_node_booking_confirmed_returns_deterministic_response():
     with patch("app.agent.nodes.generation._llm", mock_llm):
         result = generation_node(state)
 
-    mock_llm.invoke.assert_not_called()
-    expected = BOOKING_CONFIRMED_TEMPLATE.format(display=slot["display"])
-    assert result["messages"][0].content == expected
+    mock_llm.invoke.assert_called_once()
+    system_msg = mock_llm.invoke.call_args[0][0][0]
+    assert slot["display"] in system_msg.content
+    assert isinstance(result["messages"][0], AIMessage)
 
 
 def test_generation_node_booking_failed_no_slots_response():
-    """booking_intent=True + booking_action='confirm' + calendar_event_id=None → respuesta de fallo."""
-    from app.agent.nodes.generation import BOOKING_FAILED_NO_SLOTS, generation_node
+    """RESP-02: booking confirm + no event_id → LLM llamado (no hardcoded string)."""
+    from app.agent.nodes.generation import generation_node
 
-    mock_llm = _make_mock_llm()
+    mock_llm = _make_mock_llm("Lo siento, ya no hay disponibilidad en ese horario.")
     state = _base_state(
         booking_intent=True,
         booking_action="confirm",
@@ -248,15 +249,15 @@ def test_generation_node_booking_failed_no_slots_response():
     with patch("app.agent.nodes.generation._llm", mock_llm):
         result = generation_node(state)
 
-    mock_llm.invoke.assert_not_called()
-    assert result["messages"][0].content == BOOKING_FAILED_NO_SLOTS
+    mock_llm.invoke.assert_called_once()
+    assert isinstance(result["messages"][0], AIMessage)
 
 
 def test_generation_node_booking_cancelled_response():
-    """booking_intent=True + booking_action='cancel' + event_id presente → respuesta de cancelación."""
-    from app.agent.nodes.generation import BOOKING_CANCELLED, generation_node
+    """RESP-03: booking cancel + event_id → LLM llamado (no hardcoded string)."""
+    from app.agent.nodes.generation import generation_node
 
-    mock_llm = _make_mock_llm()
+    mock_llm = _make_mock_llm("Tu turno fue cancelado exitosamente.")
     state = _base_state(
         booking_intent=True,
         booking_action="cancel",
@@ -266,15 +267,15 @@ def test_generation_node_booking_cancelled_response():
     with patch("app.agent.nodes.generation._llm", mock_llm):
         result = generation_node(state)
 
-    mock_llm.invoke.assert_not_called()
-    assert result["messages"][0].content == BOOKING_CANCELLED
+    mock_llm.invoke.assert_called_once()
+    assert isinstance(result["messages"][0], AIMessage)
 
 
 def test_generation_node_booking_not_found_response():
-    """booking_intent=True + booking_action='cancel' + calendar_event_id=None → 'no encontré turno'."""
-    from app.agent.nodes.generation import BOOKING_NOT_FOUND, generation_node
+    """RESP-03: booking cancel + no event_id → LLM llamado (no hardcoded string)."""
+    from app.agent.nodes.generation import generation_node
 
-    mock_llm = _make_mock_llm()
+    mock_llm = _make_mock_llm("No encontré un turno para cancelar.")
     state = _base_state(
         booking_intent=True,
         booking_action="cancel",
@@ -284,8 +285,8 @@ def test_generation_node_booking_not_found_response():
     with patch("app.agent.nodes.generation._llm", mock_llm):
         result = generation_node(state)
 
-    mock_llm.invoke.assert_not_called()
-    assert result["messages"][0].content == BOOKING_NOT_FOUND
+    mock_llm.invoke.assert_called_once()
+    assert isinstance(result["messages"][0], AIMessage)
 
 
 def test_generation_node_shadow_mode_returns_redirect_without_llm():
@@ -420,31 +421,30 @@ def test_generation_node_shadow_mode_takes_priority_over_confidence_check():
 
 
 def test_generation_node_booking_bypass_takes_priority_over_confidence_check():
-    """booking_intent=True tiene prioridad sobre la evaluación de confidence."""
-    from app.agent.nodes.generation import BOOKING_FAILED_NO_SLOTS, generation_node
+    """booking_intent=True → LLM llamado para booking path; is_paused no seteado."""
+    from app.agent.nodes.generation import generation_node
 
-    mock_llm = _make_mock_llm()
+    mock_llm = _make_mock_llm("Lo siento, ya no hay disponibilidad.")
     state = _base_state(
         booking_intent=True,
         booking_action="confirm",
-        calendar_event_id=None,  # fallo de booking
+        calendar_event_id=None,
     )
-    # Sin rag_context PERO booking bypass activo → no evalúa confidence
     with patch("app.agent.nodes.generation._llm", mock_llm):
         result = generation_node(state)
 
-    mock_llm.invoke.assert_not_called()
-    assert result["messages"][0].content == BOOKING_FAILED_NO_SLOTS
+    mock_llm.invoke.assert_called_once()
+    assert isinstance(result["messages"][0], AIMessage)
     assert result.get("is_paused") is None or result.get("is_paused") is False
 
 
 # ── Plan 05-02: Slot Selection Ambiguity Fix ─────────────────────────────────
 
 def test_booking_ambiguous_slot_returns_clarification():
-    """booking_ambiguous_slot=True → respuesta con 'preferís' en voseo, sin llamar al LLM."""
+    """RESP-05: booking_ambiguous_slot=True → LLM llamado con instrucción de clarificación."""
     from app.agent.nodes.generation import generation_node
 
-    mock_llm = MagicMock()
+    mock_llm = _make_mock_llm("¿Cuál de los turnos preferís? Podés decirme 1, 2 o 3.")
     with patch("app.agent.nodes.generation._llm", mock_llm):
         state = _base_state(
             messages=[HumanMessage(content="confirmo")],
@@ -454,21 +454,20 @@ def test_booking_ambiguous_slot_returns_clarification():
         )
         result = generation_node(state)
 
-    mock_llm.invoke.assert_not_called()
-    assert "preferís" in result["messages"][0].content
+    mock_llm.invoke.assert_called_once()
+    assert isinstance(result["messages"][0], AIMessage)
 
 
 def test_booking_clear_confirm_not_clarification():
-    """booking_intent=True, booking_action='confirm', event_id y booked_slot presentes
-    → retorna BOOKING_CONFIRMED_TEMPLATE, NO la clarificación de ambigüedad."""
-    from app.agent.nodes.generation import BOOKING_CONFIRMED_TEMPLATE, generation_node
+    """RESP-02: booking confirm claro (no ambiguo) → LLM llamado, display en contexto."""
+    from app.agent.nodes.generation import generation_node
 
-    mock_llm = _make_mock_llm()
     slot = {
         "start": "2026-03-30T10:00:00-03:00",
         "end": "2026-03-30T11:00:00-03:00",
         "display": "Lunes 30 de Marzo — 10:00 a 11:00 hs",
     }
+    mock_llm = _make_mock_llm(f"¡Perfecto! Tu turno {slot['display']} está confirmado.")
     state = _base_state(
         booking_intent=True,
         booking_action="confirm",
@@ -479,17 +478,17 @@ def test_booking_clear_confirm_not_clarification():
     with patch("app.agent.nodes.generation._llm", mock_llm):
         result = generation_node(state)
 
-    mock_llm.invoke.assert_not_called()
-    expected = BOOKING_CONFIRMED_TEMPLATE.format(display=slot["display"])
-    assert result["messages"][0].content == expected
-    assert "preferís" not in result["messages"][0].content
+    mock_llm.invoke.assert_called_once()
+    system_msg = mock_llm.invoke.call_args[0][0][0]
+    assert slot["display"] in system_msg.content
+    assert isinstance(result["messages"][0], AIMessage)
 
 
-def test_booking_ambiguous_no_llm_call():
-    """Con booking_ambiguous_slot=True, _llm.invoke nunca debe ser invocado."""
+def test_booking_ambiguous_calls_llm():
+    """RESP-05: booking_ambiguous_slot=True → _llm.invoke ES llamado (LLM genera la clarificación)."""
     from app.agent.nodes.generation import generation_node
 
-    mock_llm = MagicMock()
+    mock_llm = _make_mock_llm("¿Cuál turno preferís? Decime 1, 2 o 3.")
     with patch("app.agent.nodes.generation._llm", mock_llm):
         state = _base_state(
             booking_intent=True,
@@ -498,7 +497,7 @@ def test_booking_ambiguous_no_llm_call():
         )
         generation_node(state)
 
-    mock_llm.invoke.assert_not_called()
+    mock_llm.invoke.assert_called_once()
 
 
 # ── Plan 06-02: RAG-02 — Remove confidence gate ──────────────────────────────
@@ -730,3 +729,105 @@ def test_llm_model_is_gpt_4_1_mini():
     assert _llm.model_name == "gpt-4.1-mini", (
         f"Expected model 'gpt-4.1-mini', got '{_llm.model_name}'"
     )
+
+
+# ── Plan 13-01: RESP-01/04 — Scheduling path LLM generation ──────────────────
+
+
+def test_scheduling_slots_system_context_contains_all_displays():
+    """RESP-01: system context passed to LLM contains all slot display strings verbatim."""
+    from app.agent.nodes.generation import generation_node
+
+    slots = [
+        {"display": "Martes 31 — 09:00 a 10:00 hs"},
+        {"display": "Martes 31 — 10:00 a 11:00 hs"},
+        {"display": "Martes 31 — 11:00 a 12:00 hs"},
+    ]
+    mock_llm = _make_mock_llm("Tenés tres opciones disponibles para el martes.")
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        generation_node(_base_state(scheduling_intent=True, available_slots=slots))
+
+    system_msg = mock_llm.invoke.call_args[0][0][0]
+    for slot in slots:
+        assert slot["display"] in system_msg.content, f"Missing slot display: {slot['display']}"
+
+
+def test_scheduling_no_slots_system_context_instructs_actionable_step():
+    """RESP-04: system context for no-slots path instructs LLM to offer actionable next step."""
+    from app.agent.nodes.generation import generation_node
+
+    mock_llm = _make_mock_llm("Lamentablemente no hay turnos. Llamá a la clínica.")
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        generation_node(_base_state(scheduling_intent=True, available_slots=[]))
+
+    system_msg = mock_llm.invoke.call_args[0][0][0]
+    content_lower = system_msg.content.lower()
+    assert "accionable" in content_lower or "llamar" in content_lower or "paso siguiente" in content_lower
+
+
+# ── Plan 13-02: RESP-02/03/05/06/07 — Booking path + hardcoded bypasses ──────
+
+
+def test_resp02_booking_confirm_display_in_system_context():
+    """RESP-02: booked_slot['display'] aparece verbatim en el contexto del sistema pasado al LLM."""
+    from app.agent.nodes.generation import generation_node
+
+    display = "Miércoles 15 de Abril — 14:00 a 15:00 hs"
+    slot = {"start": "2026-04-15T14:00:00-03:00", "end": "2026-04-15T15:00:00-03:00", "display": display}
+    mock_llm = _make_mock_llm(f"Tu turno {display} está confirmado.")
+    state = _base_state(booking_intent=True, booking_action="confirm", booked_slot=slot, calendar_event_id="evt99")
+
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        generation_node(state)
+
+    system_msg = mock_llm.invoke.call_args[0][0][0]
+    assert display in system_msg.content, f"display '{display}' not injected verbatim in context"
+
+
+def test_resp03_booking_cancel_success_calls_llm():
+    """RESP-03: booking cancel success → LLM llamado."""
+    from app.agent.nodes.generation import generation_node
+
+    mock_llm = _make_mock_llm("Tu turno fue cancelado.")
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        result = generation_node(_base_state(booking_intent=True, booking_action="cancel", calendar_event_id="evt1"))
+
+    mock_llm.invoke.assert_called_once()
+    assert isinstance(result["messages"][0], AIMessage)
+
+
+def test_resp05_ambiguous_slot_context_instructs_number_selection():
+    """RESP-05: contexto para slot ambiguo instruye al paciente elegir 1, 2 o 3."""
+    from app.agent.nodes.generation import generation_node
+
+    mock_llm = _make_mock_llm("¿Cuál preferís? Decime 1, 2 o 3.")
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        generation_node(_base_state(booking_intent=True, booking_ambiguous_slot=True))
+
+    system_msg = mock_llm.invoke.call_args[0][0][0]
+    content_lower = system_msg.content.lower()
+    assert "1, 2" in system_msg.content or "número" in content_lower or "elegir" in content_lower
+
+
+def test_resp06_shadow_mode_hardcoded_no_llm():
+    """RESP-06: shadow_mode_active → SHADOW_MODE_REDIRECT_RESPONSE devuelto; _llm NO llamado."""
+    from app.agent.nodes.generation import SHADOW_MODE_REDIRECT_RESPONSE, generation_node
+
+    mock_llm = _make_mock_llm()
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        result = generation_node(_base_state(shadow_mode_active=True))
+
+    mock_llm.invoke.assert_not_called()
+    assert result["messages"][0].content == SHADOW_MODE_REDIRECT_RESPONSE
+
+
+def test_resp07_anti_diagnostic_hardcoded_no_llm():
+    """RESP-07: is_medical_query=True → ANTI_DIAGNOSTIC_RESPONSE devuelto; _llm NO llamado."""
+    from app.agent.nodes.generation import ANTI_DIAGNOSTIC_RESPONSE, generation_node
+
+    mock_llm = _make_mock_llm()
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        result = generation_node(_base_state(is_medical_query=True))
+
+    mock_llm.invoke.assert_not_called()
+    assert result["messages"][0].content == ANTI_DIAGNOSTIC_RESPONSE

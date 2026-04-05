@@ -123,6 +123,85 @@ DEFAULT_CONFIDENCE_THRESHOLD: float = 0.5
 _llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.5, request_timeout=20)
 
 
+def _build_scheduling_context(state: ConversationState, system_prompt_base: str) -> str:
+    """Build system content for scheduling-intent LLM calls.
+
+    Slots available: injects slot display strings as plain-text bullet list.
+    No slots: instructs LLM to deliver actionable no-availability message.
+    """
+    available_slots: list[dict] = state.get("available_slots") or []
+    if available_slots:
+        slots_text = "\n".join(
+            f"- {slot['display']}" for slot in available_slots[:3]
+        )
+        return (
+            f"{system_prompt_base}\n\n"
+            "ACCIÓN REQUERIDA — PRESENTACIÓN DE TURNOS DISPONIBLES\n"
+            "Presentá los siguientes turnos al paciente en prosa natural con voseo argentino. "
+            "No uses listas numeradas con emojis. Incluí el texto de cada turno exactamente "
+            "como aparece abajo, sin reformatearlo ni parafrasearlo:\n\n"
+            f"{slots_text}"
+        )
+    else:
+        return (
+            f"{system_prompt_base}\n\n"
+            "ACCIÓN REQUERIDA — SIN TURNOS DISPONIBLES\n"
+            "No hay turnos disponibles en los próximos días. "
+            "Informá al paciente con calidez y ofrecé un paso siguiente accionable "
+            "(por ejemplo: llamar a la clínica directamente o consultar en otro momento). "
+            "Usá voseo argentino."
+        )
+
+
+def _build_booking_context(state: ConversationState, system_prompt_base: str) -> str:
+    """Build system content for booking-intent LLM calls."""
+    if state.get("booking_ambiguous_slot", False):
+        return (
+            f"{system_prompt_base}\n\n"
+            "ACCIÓN REQUERIDA — SELECCIÓN AMBIGUA DE TURNO\n"
+            "El paciente quiso confirmar un turno pero no especificó cuál de las opciones eligió. "
+            "Pedile amablemente que especifique eligiendo el número 1, 2 o 3. Usá voseo argentino."
+        )
+    booking_action: str = state.get("booking_action", "confirm")
+    event_id = state.get("calendar_event_id")
+    booked_slot: dict = state.get("booked_slot") or {}
+    if booking_action == "cancel":
+        if event_id:
+            return (
+                f"{system_prompt_base}\n\n"
+                "ACCIÓN REQUERIDA — CANCELACIÓN DE TURNO EXITOSA\n"
+                "El turno del paciente fue cancelado exitosamente. "
+                "Confirmá la cancelación con calidez en voseo argentino."
+            )
+        else:
+            return (
+                f"{system_prompt_base}\n\n"
+                "ACCIÓN REQUERIDA — TURNO NO ENCONTRADO PARA CANCELAR\n"
+                "No se encontró un turno reservado a nombre del paciente para cancelar. "
+                "Informá al paciente y sugerí que llame directamente a la clínica. "
+                "Usá voseo argentino."
+            )
+    else:  # confirm
+        if event_id and booked_slot:
+            display = booked_slot.get("display", "")
+            return (
+                f"{system_prompt_base}\n\n"
+                "ACCIÓN REQUERIDA — TURNO CONFIRMADO EXITOSAMENTE\n"
+                "El turno fue reservado. Incluí el siguiente texto de turno en tu respuesta "
+                "exactamente como aparece, sin modificarlo ni parafrasearlo:\n\n"
+                f"{display}\n\n"
+                "Envolvé este dato en una respuesta cálida en voseo argentino."
+            )
+        else:
+            return (
+                f"{system_prompt_base}\n\n"
+                "ACCIÓN REQUERIDA — TURNO NO DISPONIBLE\n"
+                "El turno no pudo confirmarse porque ya no hay disponibilidad en ese horario. "
+                "Informá al paciente con calidez y ofrecé buscar otras opciones. "
+                "Usá voseo argentino."
+            )
+
+
 def generation_node(state: ConversationState) -> dict:
     """Genera respuesta del agente inyectando System Prompt + contexto RAG.
 
@@ -152,51 +231,7 @@ def generation_node(state: ConversationState) -> dict:
         )
         return {"messages": [AIMessage(content=SHADOW_MODE_REDIRECT_RESPONSE)]}
 
-    # Booking bypass — si hay confirmación/cancelación de turno, respuesta determinista sin LLM
-    booking_intent: bool = state.get("booking_intent", False)
-    if booking_intent:
-        # Check for ambiguous slot selection first — patient confirmed without specifying slot number
-        if state.get("booking_ambiguous_slot", False):
-            logger.info(
-                "generation_node.done",
-                tenant_id=tenant_id,
-                response_type="booking_clarification",
-            )
-            return {"messages": [AIMessage(content=(
-                "No pude identificar cuál turno preferís. "
-                "¿Podés decirme el número? Por ejemplo: 1, 2 o 3."
-            ))]}
-
-        booking_action: str = state.get("booking_action", "confirm")
-        event_id = state.get("calendar_event_id")
-        booked_slot: dict = state.get("booked_slot") or {}
-
-        if booking_action == "cancel":
-            if event_id:
-                response_text = BOOKING_CANCELLED
-                response_type = "booking_cancelled"
-            else:
-                response_text = BOOKING_NOT_FOUND
-                response_type = "booking_not_found"
-        else:  # confirm
-            if event_id and booked_slot:
-                response_text = BOOKING_CONFIRMED_TEMPLATE.format(display=booked_slot.get("display", ""))
-                response_type = "booking_confirmed"
-            else:
-                response_text = BOOKING_FAILED_NO_SLOTS
-                response_type = "booking_failed"
-
-        logger.info(
-            "generation_node.done",
-            tenant_id=tenant_id,
-            is_medical_query=False,
-            booking_intent=True,
-            scheduling_intent=False,
-            response_type=response_type,
-        )
-        return {"messages": [AIMessage(content=response_text)]}
-
-    # Anti-diagnostic bypass — si es consulta medica, responder con mensaje determinista sin LLM
+    # Anti-diagnostic bypass — guardrail legal: precede a todo llamado al LLM (RESP-07)
     is_medical_query: bool = state.get("is_medical_query", False)
     if is_medical_query:
         logger.info(
@@ -208,33 +243,57 @@ def generation_node(state: ConversationState) -> dict:
         )
         return {"messages": [AIMessage(content=ANTI_DIAGNOSTIC_RESPONSE)]}
 
-    # Scheduling bypass — si hay intención de agendamiento, responder con slots disponibles
+    # Booking path — LLM genera confirmaciones/cancelaciones de turno (RESP-02, RESP-03, RESP-05)
+    booking_intent: bool = state.get("booking_intent", False)
+    if booking_intent:
+        system_prompt_base: str = state.get("system_prompt") or DEFAULT_SYSTEM_PROMPT
+        system_content = _build_booking_context(state, system_prompt_base)
+        booking_action_for_log: str = state.get("booking_action", "confirm")
+        event_id_for_log = state.get("calendar_event_id")
+        booked_slot_for_log: dict = state.get("booked_slot") or {}
+        if state.get("booking_ambiguous_slot", False):
+            response_type = "booking_clarification"
+        elif booking_action_for_log == "cancel":
+            response_type = "booking_cancelled" if event_id_for_log else "booking_not_found"
+        else:
+            response_type = "booking_confirmed" if (event_id_for_log and booked_slot_for_log) else "booking_failed"
+        messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+        try:
+            response = _llm.invoke(messages_for_llm)
+            logger.info(
+                "generation_node.done",
+                tenant_id=tenant_id,
+                is_medical_query=False,
+                booking_intent=True,
+                scheduling_intent=False,
+                response_type=response_type,
+            )
+            return {"messages": [response]}
+        except Exception as exc:
+            logger.error("generation_node.error", tenant_id=tenant_id, error=str(exc))
+            raise
+
+    # Scheduling path — LLM genera presentación de turnos en prosa natural (RESP-01, RESP-04)
     scheduling_intent: bool = state.get("scheduling_intent", False)
     if scheduling_intent:
-        available_slots: list[dict] = state.get("available_slots") or []
-        if available_slots:
-            emojis = ["1️⃣", "2️⃣", "3️⃣"]
-            options_lines = "\n".join(
-                f"{emojis[i]} {slot['display']}" for i, slot in enumerate(available_slots[:3])
+        system_prompt_base: str = state.get("system_prompt") or DEFAULT_SYSTEM_PROMPT
+        available_slots_for_log: list[dict] = state.get("available_slots") or []
+        response_type = "scheduling_slots" if available_slots_for_log else "scheduling_no_slots"
+        system_content = _build_scheduling_context(state, system_prompt_base)
+        messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+        try:
+            response = _llm.invoke(messages_for_llm)
+            logger.info(
+                "generation_node.done",
+                tenant_id=tenant_id,
+                is_medical_query=False,
+                scheduling_intent=True,
+                response_type=response_type,
             )
-            response_text = (
-                f"Encontré estos turnos disponibles para vos:\n\n"
-                f"{options_lines}\n\n"
-                "¿Cuál te viene mejor? Podés elegir el número o decirme si preferís otro horario."
-            )
-            response_type = "scheduling_slots"
-        else:
-            response_text = SCHEDULING_NO_SLOTS_RESPONSE
-            response_type = "scheduling_no_slots"
-
-        logger.info(
-            "generation_node.done",
-            tenant_id=tenant_id,
-            is_medical_query=False,
-            scheduling_intent=True,
-            response_type=response_type,
-        )
-        return {"messages": [AIMessage(content=response_text)]}
+            return {"messages": [response]}
+        except Exception as exc:
+            logger.error("generation_node.error", tenant_id=tenant_id, error=str(exc))
+            raise
 
     system_prompt: str = state.get("system_prompt") or DEFAULT_SYSTEM_PROMPT
     rag_context: str = state.get("rag_context", "")
