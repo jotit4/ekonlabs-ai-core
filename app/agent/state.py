@@ -23,3 +23,7 @@ class ConversationState(TypedDict):
     calendar_event_id: NotRequired[str | None] # event_id returned by create_event / found by find_event_by_phone
     selected_slot_index: NotRequired[int]      # 0, 1 or 2 — which option the patient chose
     booking_ambiguous_slot: NotRequired[bool]  # Set by booking_node when slot selection is ambiguous; triggers clarification in generation_node
+    # Phase 15 — Patient name collection
+    patient_name: NotRequired[str | None]          # Patient's full name once captured; absent = not yet collected
+    name_collection_active: NotRequired[bool]       # True while agent is waiting for patient to provide name
+    slot_presented_at: NotRequired[str | None]      # ISO timestamp when slots were presented; used for 30-min TTL check
