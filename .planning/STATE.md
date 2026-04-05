@@ -5,19 +5,19 @@
 **Project:** ekonlabs-ai-core
 **Core Value:** A patient writes on WhatsApp at 11pm. The agent responds immediately, answers questions about services, and books an appointment directly into the clinic's Google Calendar.
 **Active Milestone:** v1.2 Human-Feeling Agent
-**Current Focus:** Make the agent feel human — LLM-generated responses, patient name collection, natural conversation
+**Current Focus:** Make the agent feel human — LLM-generated responses, patient name collection, LLM-driven RAG via tool calling, full character brief system prompt
 
 ---
 
 ## Current Position
 
-**Current Phase:** Not started (defining requirements)
+**Current Phase:** Phase 11 — System Prompt & Model (not started)
 **Current Plan:** —
-**Phase Status:** Defining requirements
+**Phase Status:** Not started
 **Milestone Status:** In progress — v1.2 started 2026-04-05
 
 ```
-Progress: [░░░░░░░░░░] 0% — 0 of ? phases complete
+Progress: [░░░░░░░░░░] 0% — 0 of 5 phases complete
 ```
 
 ---
@@ -31,15 +31,21 @@ Progress: [░░░░░░░░░░] 0% — 0 of ? phases complete
 | 7 | Infrastructure Reliability | Complete |
 | 8 | Security & Configuration | Complete |
 | 9 | Copy & LLM Settings | Complete |
+| 10 | Evolution API Integration | Complete |
+| 11 | System Prompt & Model | Not started |
+| 12 | State Schema Extension | Not started |
+| 13 | LLM-Generated Responses | Not started |
+| 14 | LLM-Driven RAG via Tool Calling | Not started |
+| 15 | Patient Name Collection | Not started |
 
 ---
 
 ## Performance Metrics
 
-- Requirements mapped: 25/25
-- Phases defined: 5
-- Plans written: 14
-- Plans complete: 14
+- Requirements mapped: 22/22
+- Phases defined: 5 (v1.2)
+- Plans written: 0
+- Plans complete: 0
 
 ---
 
@@ -47,72 +53,55 @@ Progress: [░░░░░░░░░░] 0% — 0 of ? phases complete
 
 ### Key Decisions
 
-- Phase numbering starts at 5 (v1.0 ended at Phase 4)
-- Brownfield hardening only — no new features in this milestone
-- Phase order: intent first (most demo-visible), then RAG, infra, security, copy last
-- Copy and LLM tuning (Phase 9) depends on Phase 5 (correct routing must exist before copy is finalized)
-- [05-01] Used space-padded query matching to prevent "va" from false-matching inside "reservar"
-- [05-01] Did NOT add "ardor de" to triage keywords — would match "ardor de estomago"; used "ardor en" instead
-- [05-01] Renamed _has_scheduling_intent → has_scheduling_intent (public) for future graph.py import
-- [05-02] Phrase keys "el N" moved from PHRASE_KEYS to separate regex check with word-boundary to prevent "el 2" matching "el 21"
-- [05-02] _detect_slot_index returns None (not 0) on no match — callers must handle None explicitly
-- [05-03] _route_after_anti_diagnostic checks has_scheduling_intent before returning "generation" — scheduling intent takes precedence over is_medical_query
-- [05-03] handoff_node returns {} — does not mutate state; notification_service remains deferred stub
-- [05-03] Test phrase "tengo fiebre sin querer turno" replaced with "tengo fiebre alta desde ayer" because "turno" is a scheduling keyword
-- [06-01] _SIMILARITY_THRESHOLD = 0.60 added to rag_service.py; search_knowledge filters rows below threshold
-- [06-01] search_tool returns "" (not Spanish fallback string) when results are empty — generation_node sees rag_context="" and decides independently
-- [06-01] ingest_document issues DELETE WHERE tenant_id=%s AND source_filename=%s before INSERT — same transaction, atomic
-- [06-01] _CHUNK_SIZE reduced from 1000 to 400; _CHUNK_OVERLAP from 200 to 60
-- [06-02] Binary confidence score block removed from generation_node — empty rag_context no longer sets is_paused=True
-- [06-02] rag_retrieval_node builds query from last 2 human messages (not just latest) for follow-up handling
-- [06-03] RAG context injected with XML delimiters <clinic_knowledge> and explicit anti-injection instruction
-- [07-01] _redis_pool module-level lazy init replaces Redis.from_url() per request in _enqueue_task (pool pattern follows rag_service._get_pool)
-- [07-01] Redis failure in _enqueue_task raises AppException(code="REDIS_UNAVAILABLE", status_code=503) — Meta retries on 503
-- [07-01] q.enqueue called with retry=Retry(max=3, interval=[10, 30, 60]) for transient failure resilience
-- [07-02] booking_node confirmation path uses state.get("available_slots") or calendar call — eliminates race window between slot presentation and booking
-- [07-03] receive_whatsapp_webhook checks Redis SET NX (key=webhook:dedup:{message_id}, ex=86400) before enqueue — duplicate deliveries return 200 without re-processing
-- [07-03] Dedup check placed after display_phone extraction, before tenant resolution — skipped for status receipts with no messages array
-- [08-plan] 08-01 + 08-03 are Wave 1 (independent); 08-02 is Wave 2 (depends on 08-01 for ADMIN_API_KEY in config and conftest)
-- [08-plan] _require_admin_api_key uses Optional[str] = Header(default=None) to return 401 (not 422) when X-API-Key is absent
-- [08-02] FastAPI 0.135+ resolves Depends before path param validation — test_patch_tenant_rules_returns_422_on_invalid_uuid requires X-API-Key header to reach the 422 path (plan assumption was incorrect)
-- [08-plan] Redis PING uses socket_connect_timeout=3; client is closed in finally block; APP_ENV=test guard skips it
-- [08-01] Required secret fields in Settings now enforce fail-fast at startup (no blank = "" defaults); ADMIN_API_KEY added as required field for upcoming SEC-02 admin endpoint protection
-- [08-03] Redis PING added to lifespan after Supabase check; hard-raises on bad REDIS_URL; client closed in finally block
-- [08-03] Test suite auto-fixed: 08-01 added ADMIN_API_KEY auth to tenant endpoints but 6 tenant tests were missing X-API-Key header — all fixed
-- [09-plan] 09-01 and 09-02 are serialized (Wave 2 depends on Wave 1) because both modify generation.py — prevents edit conflicts
-- [09-plan] LOW_CONFIDENCE_PAUSE_RESPONSE rewrite removes false escalation promise; notification_service is a deferred stub — cannot promise "te contactaremos"
-- [09-plan] DEFAULT_SYSTEM_PROMPT: fix accents (recepción, médica, información, clínica, diagnósticos) AND align imperatives to voseo (Ayudás, Respondé, Sé conciso, cálido)
-- [09-02] temperature reduced 0.7→0.3 for deterministic medical responses; request_timeout=20 prevents worker blocking
-- [09-02] DEFAULT_SYSTEM_PROMPT fully corrected with accents and Argentine voseo imperatives
+- Phase numbering starts at 11 (v1.1 ended at Phase 10)
+- Build order follows architectural risk gradient: prompt/model (no risk) → state schema (no behavior change) → generation restructure (medium risk) → tool binding (medium risk) → name collection (highest complexity, goes last)
+- graph.py topology must NOT change — all v1.2 changes live in nodes and state
+- Anti-diagnostic and shadow mode bypasses stay hardcoded — they are hard gates that must be reached before any LLM call, regardless of persona strength
+- Inline tool execution chosen over ToolNode graph node to avoid graph topology changes
+- RESP-06 and RESP-07 (hardcoded stays) are in Phase 13 as explicit confirmation that those paths are preserved during the generation_node restructure
+- NAME-01 is Phase 12 (isolated state schema change) — separated from NAME-02 through NAME-07 (Phase 15) because schema must exist before name collection logic is built
+- LLM temperature changed from 0.3 to 0.5 for natural phrasing variability
+- Model changed from gpt-4o-mini to gpt-4.1-mini (same cost tier, 30% better tool calls, stronger instruction-following)
+- RAG pre-fetch node becomes a no-op (returns {}) — graph edge preserved, behavior moved to inline tool call in generation_node
+- Patient name collection uses 2-turn flow: Turn 1 = booking_node defers + generation_node asks for name; Turn 2 = generation_node captures name + calls calendar_service.create_event() inline
+- After 2 failed name captures, is_paused=True routes to human handoff
+- slot_presented_at enables 30-minute TTL check to prevent stale slot confirmation
 
 ### Active Constraints
 
 - Argentine Spanish (voseo) required for all patient-facing copy
-- Anti-diagnostic guardrail is non-negotiable — must not be weakened by any fix
-- Multi-tenant isolation must be preserved across every change
+- Anti-diagnostic guardrail is non-negotiable — must not be weakened by any change
+- Multi-tenant isolation must be preserved — make_search_tool(tenant_id) remains the only tenant injection point
 - 1-week timeline (5 working days, ~1 day per phase)
+- No new pip packages required — all tooling ships in already-installed langgraph and langchain-openai
+- langgraph must be re-pinned to >=1.0.0 (current loose pin hides breaking default change in handle_tool_errors)
+
+### Open Product Questions (require client or product input before Phase 11)
+
+1. Agent name and persona — What is the agent's name? (e.g. Valentina, Camila) This gates the system prompt redesign.
+2. Patient name requirement — First name only, or first + last? What happens if patient gives only a first name?
+3. Name confirmation step — Should the agent confirm the name back before creating the calendar event, or is single-collection sufficient?
+4. Tone register — Informal-warm voseo or slightly more formal? Determines several prompt decisions.
+5. Slot TTL threshold — Research recommends 30 minutes (per REQUIREMENTS.md NAME-07). Confirm with clinic.
 
 ### Blockers
 
-None.
+None — roadmap defined, ready to plan Phase 11.
 
 ### Notes
 
-- ISADI is the first paying client — this milestone gates the first real deployment
-- Phase 5 complete: 3 plans executed (05-01 keyword fixes, 05-02 slot ambiguity, 05-03 graph routing + handoff)
-- RAG-02 fix changes agent behavior when no context is found — must not introduce false positives
-- Phase 6 plans: 06-01 (threshold+dedup+chunk size), 06-02 (confidence fix+multi-turn), 06-03 (XML injection hardening)
-- 06-01 and 06-02 are Wave 1 (independent); 06-03 is Wave 2 (depends on 06-02 for generation.py state)
-- Phase 7 plans: 07-01 (pool+503+retry in _enqueue_task), 07-02 (booking race fix), 07-03 (webhook dedup via SET NX)
-- 07-01 and 07-02 are Wave 1 (independent); 07-03 is Wave 2 (depends on 07-01 for _get_redis_pool)
+- v1.1 Production Hardening complete (14/14 plans, all 6 phases 5-10 done as of 2026-04-05)
+- ISADI is the first paying client — v1.2 gates the human-feeling demo for client approval
+- Phase 13 is the highest-risk phase — audit all existing generation_node tests before writing any production code (ARCHITECTURE.md Risk 7)
+- Phase 15 introduces calendar operations in generation_node — wrap in try/except; log as response_type="booking_from_generation"
 
 ---
 
 ## Session Continuity
 
-**Last session:** 2026-04-04 — Executed 09-02: fixed DEFAULT_SYSTEM_PROMPT accents+voseo (COPY-04), tuned _llm to temperature=0.3+request_timeout=20 (COPY-05); added 3 tests; 332 tests pass. v1.1 Production Hardening milestone complete (14/14 plans).
-**Resume from:** Milestone complete — ready for deployment review / ISADI first client handoff
+**Last session:** 2026-04-05 — v1.2 roadmap defined (22/22 requirements mapped, 5 phases 11–15)
+**Resume from:** Phase 11 — System Prompt & Model — run /gsd:plan-phase 11
 
 ---
 
-*Last updated: 2026-04-04T18:55:00Z | v1.1 Production Hardening — COMPLETE*
+*Last updated: 2026-04-05T00:00:00Z | v1.2 Human-Feeling Agent — ROADMAP DEFINED*

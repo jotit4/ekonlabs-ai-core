@@ -66,34 +66,34 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PROMPT-01 | — | Pending |
-| PROMPT-02 | — | Pending |
-| PROMPT-03 | — | Pending |
-| PROMPT-04 | — | Pending |
-| RESP-01 | — | Pending |
-| RESP-02 | — | Pending |
-| RESP-03 | — | Pending |
-| RESP-04 | — | Pending |
-| RESP-05 | — | Pending |
-| RESP-06 | — | Pending |
-| RESP-07 | — | Pending |
-| NAME-01 | — | Pending |
-| NAME-02 | — | Pending |
-| NAME-03 | — | Pending |
-| NAME-04 | — | Pending |
-| NAME-05 | — | Pending |
-| NAME-06 | — | Pending |
-| NAME-07 | — | Pending |
-| RAG-01 | — | Pending |
-| RAG-02 | — | Pending |
-| RAG-03 | — | Pending |
-| RAG-04 | — | Pending |
+| PROMPT-01 | Phase 11 | Pending |
+| PROMPT-02 | Phase 11 | Pending |
+| PROMPT-03 | Phase 11 | Pending |
+| PROMPT-04 | Phase 11 | Pending |
+| NAME-01 | Phase 12 | Pending |
+| RESP-01 | Phase 13 | Pending |
+| RESP-02 | Phase 13 | Pending |
+| RESP-03 | Phase 13 | Pending |
+| RESP-04 | Phase 13 | Pending |
+| RESP-05 | Phase 13 | Pending |
+| RESP-06 | Phase 13 | Pending |
+| RESP-07 | Phase 13 | Pending |
+| RAG-01 | Phase 14 | Pending |
+| RAG-02 | Phase 14 | Pending |
+| RAG-03 | Phase 14 | Pending |
+| RAG-04 | Phase 14 | Pending |
+| NAME-02 | Phase 15 | Pending |
+| NAME-03 | Phase 15 | Pending |
+| NAME-04 | Phase 15 | Pending |
+| NAME-05 | Phase 15 | Pending |
+| NAME-06 | Phase 15 | Pending |
+| NAME-07 | Phase 15 | Pending |
 
 **Coverage:**
 - v1.2 requirements: 22 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 22 ⚠️
+- Mapped to phases: 22
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-04-05*
-*Last updated: 2026-04-05 after initial definition*
+*Last updated: 2026-04-05 after roadmap definition*
