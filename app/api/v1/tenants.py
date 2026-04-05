@@ -95,6 +95,26 @@ async def upload_knowledge_text_endpoint(
     )
 
 
+@router.delete("/admin/conversations/{tenant_id}/{phone_number}")
+async def clear_conversation_history(
+    tenant_id: UUID,
+    phone_number: str,
+    _: None = Depends(_require_admin_api_key),
+) -> JSONResponse:
+    """Borra el historial de conversación de un número específico. Para uso en testing."""
+    from app.core.database import get_supabase_client
+    sb = get_supabase_client()
+    result = sb.table("conversations").delete().eq("tenant_id", str(tenant_id)).eq("phone_number", phone_number).execute()
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "status": "success",
+            "data": {"phone_number": phone_number, "rows_deleted": len(result.data)},
+            "meta": {"timestamp": datetime.now(timezone.utc).isoformat()},
+        },
+    )
+
+
 @router.delete("/admin/dedup-cache")
 async def clear_dedup_cache(
     _: None = Depends(_require_admin_api_key),
