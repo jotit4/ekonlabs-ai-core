@@ -105,13 +105,14 @@ def ingest_text(tenant_id: str, text: str, source_filename: str) -> int:
                         (tenant_id, source_filename),
                     )
                     for idx, (chunk, vector) in enumerate(zip(chunks, vectors)):
+                        vector_str = "[" + ",".join(str(x) for x in vector) + "]"
                         cur.execute(
                             """
                             INSERT INTO public.knowledge_chunks
                                 (tenant_id, content, embedding, source_filename, chunk_index)
-                            VALUES (%s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s::vector, %s, %s)
                             """,
-                            (tenant_id, chunk, vector, source_filename, idx),
+                            (tenant_id, chunk, vector_str, source_filename, idx),
                         )
         finally:
             _release_db_connection(conn)
@@ -170,13 +171,14 @@ def ingest_document(tenant_id: str, file_path: str, source_filename: str) -> int
                         (tenant_id, source_filename),
                     )
                     for idx, (chunk, vector) in enumerate(zip(chunks, vectors)):
+                        vector_str = "[" + ",".join(str(x) for x in vector) + "]"
                         cur.execute(
                             """
                             INSERT INTO public.knowledge_chunks
                                 (tenant_id, content, embedding, source_filename, chunk_index)
-                            VALUES (%s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s::vector, %s, %s)
                             """,
-                            (tenant_id, chunk.page_content, vector, source_filename, idx),
+                            (tenant_id, chunk.page_content, vector_str, source_filename, idx),
                         )
         finally:
             _release_db_connection(conn)
@@ -213,13 +215,14 @@ def search_knowledge(tenant_id: str, query: str, k: int = 3) -> list[dict]:
     try:
         embedder = _get_embedder()
         query_vector = embedder.embed_query(query)
+        # Serializar como string para que PostgreSQL pueda castearlo a vector.
+        # psycopg2 sin register_vector envía listas Python como ARRAY, incompatible con ::vector.
+        query_vector_str = "[" + ",".join(str(x) for x in query_vector) + "]"
 
         conn = _get_db_connection()
         try:
             with conn:
                 with conn.cursor() as cur:
-                    # Explicit ::vector cast required when using Supabase connection pooler
-                    # (transaction mode) — register_vector() adapter doesn't persist across pool connections.
                     cur.execute(
                         """
                         SELECT content, source_filename, 1 - (embedding <=> %s::vector) AS similarity
@@ -228,7 +231,7 @@ def search_knowledge(tenant_id: str, query: str, k: int = 3) -> list[dict]:
                         ORDER BY embedding <=> %s::vector
                         LIMIT %s
                         """,
-                        (query_vector, tenant_id, query_vector, k),
+                        (query_vector_str, tenant_id, query_vector_str, k),
                     )
                     rows = cur.fetchall()
         finally:
