@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     GOOGLE_CALENDAR_CREDENTIALS_PATH: str = ""
     DEFAULT_SLOT_DURATION_MINUTES: int = 60
     SCHEDULING_LOOKAHEAD_HOURS: int = 72
+    # LangSmith tracing (optional — set to enable)
+    LANGCHAIN_TRACING_V2: str = "false"
+    LANGCHAIN_API_KEY: str = ""
+    LANGCHAIN_PROJECT: str = "ekonlabs-ai-core"
     # WhatsApp Provider Selection
     WHATSAPP_PROVIDER: str = "meta"          # "meta" | "evolution"
     # Evolution API (required only when WHATSAPP_PROVIDER=evolution)
