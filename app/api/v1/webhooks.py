@@ -1,7 +1,7 @@
 """WhatsApp webhook endpoints — GET challenge verification + POST message reception."""
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -41,17 +41,49 @@ def _success_response() -> dict:
     }
 
 
-def _enqueue_task(payload_dict: dict, tenant_id: str) -> None:
-    """Encola la tarea de procesamiento en RQ.
+_BUFFER_WINDOW_SECONDS = 15
 
-    Usa pool de conexión Redis a nivel de módulo (INFRA-04).
-    Redis failure → AppException(status_code=503) para que Meta reintente (INFRA-02).
-    Retry automático x3 con backoff para fallas transitorias (INFRA-03).
+
+def _enqueue_task(payload_dict: dict, tenant_id: str) -> None:
+    """Encola la tarea de procesamiento en RQ con buffering de mensajes.
+
+    Si ya hay un job pendiente para el mismo (tenant_id, phone_number), acumula
+    el texto del nuevo mensaje en una lista Redis y no encola otro job.
+    Si no hay job pendiente, encola con delay de BUFFER_WINDOW_SECONDS.
     """
     try:
         conn = _get_redis_pool()
+
+        # Extraer phone_number del payload para armar las keys de buffer
+        try:
+            phone = payload_dict["entry"][0]["changes"][0]["value"]["messages"][0]["from"]
+        except (KeyError, IndexError, TypeError):
+            phone = "unknown"
+
+        pending_key = f"buffer_pending:{tenant_id}:{phone}"
+        buffer_key = f"buffer_msgs:{tenant_id}:{phone}"
+
+        # Acumular el texto del mensaje en el buffer Redis
+        try:
+            msg_text = payload_dict["entry"][0]["changes"][0]["value"]["messages"][0]["text"]["body"]
+        except (KeyError, IndexError, TypeError):
+            msg_text = ""
+
+        if msg_text:
+            conn.rpush(buffer_key, msg_text)
+            conn.expire(buffer_key, 120)  # TTL de seguridad
+
+        # Si ya hay un job pendiente, no encolamos otro — el job existente procesará todos los msgs
+        if conn.exists(pending_key):
+            logger.debug("buffer.message_accumulated", tenant_id=tenant_id, phone=phone)
+            return
+
+        # Marcar que hay un job pendiente (expira cuando el job corre)
+        conn.set(pending_key, "1", ex=_BUFFER_WINDOW_SECONDS + 5)
+
         q = Queue("default", connection=conn)
-        q.enqueue(
+        q.enqueue_in(
+            timedelta(seconds=_BUFFER_WINDOW_SECONDS),
             process_whatsapp_message,
             payload_dict,
             tenant_id,

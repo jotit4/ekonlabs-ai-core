@@ -1,5 +1,9 @@
 """Tareas asíncronas procesadas por RQ Worker."""
+import random
+import time
+
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from redis import Redis
 
 from app.agent.graph import graph as conversation_graph
 from app.agent.state import ConversationState
@@ -12,6 +16,9 @@ from app.core.config import settings
 from app.services.whatsapp_service import send_message as send_whatsapp_message
 
 logger = get_logger(__name__)
+
+_HUMAN_DELAY_MIN = 15
+_HUMAN_DELAY_MAX = 20
 
 # ---------------------------------------------------------------------------
 # Slash commands — Story 4.2
@@ -162,6 +169,23 @@ def process_whatsapp_message(payload: dict, tenant_id: str) -> None:
 
     phone_number, message_text = msg_info
 
+    # --- 1c. Leer buffer de mensajes acumulados durante la ventana de 15s ---
+    try:
+        _redis = Redis.from_url(settings.REDIS_URL)
+        buffer_key = f"buffer_msgs:{tenant_id}:{phone_number}"
+        pending_key = f"buffer_pending:{tenant_id}:{phone_number}"
+        buffered = _redis.lrange(buffer_key, 0, -1)
+        if buffered:
+            extra_texts = [m.decode() if isinstance(m, bytes) else m for m in buffered]
+            # Unir todos los mensajes acumulados (incluyendo el del payload actual)
+            all_texts = [message_text] + [t for t in extra_texts if t != message_text]
+            message_text = " ".join(all_texts)
+            _redis.delete(buffer_key)
+        _redis.delete(pending_key)
+        logger.debug("buffer.flushed", tenant_id=tenant_id, phone=phone_number, merged_text=message_text)
+    except Exception as exc:
+        logger.warning("buffer.read_error", error=str(exc))
+
     # --- 1b. Detección de mensaje saliente — Story 4.1 + Story 4.2 ---
     # Si messages[0]["from"] == display_phone_number → mensaje enviado por la clínica.
     # Dos casos posibles:
@@ -293,6 +317,11 @@ def process_whatsapp_message(payload: dict, tenant_id: str) -> None:
             break
 
     if ai_text:
+        # Delay humano: simula tiempo de escritura antes de enviar
+        delay = random.uniform(_HUMAN_DELAY_MIN, _HUMAN_DELAY_MAX)
+        logger.debug("human_delay.sleeping", seconds=round(delay, 1), tenant_id=tenant_id)
+        time.sleep(delay)
+
         provider = payload.get("provider", "meta")
 
         if provider == "evolution":
