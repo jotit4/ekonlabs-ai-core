@@ -237,6 +237,9 @@ def search_knowledge(tenant_id: str, query: str, k: int = 3) -> list[dict]:
         finally:
             _release_db_connection(conn)
 
+        if rows:
+            logger.debug("rag.search.scores", scores=[round(float(r[2]), 4) for r in rows], tenant_id=tenant_id)
+
         return [
             {"content": row[0], "source_filename": row[1], "similarity": float(row[2])}
             for row in rows
