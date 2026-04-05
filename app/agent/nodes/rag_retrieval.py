@@ -29,15 +29,15 @@ def rag_retrieval_node(state: ConversationState) -> ConversationState:
     """
     tenant_id = state["tenant_id"]
 
-    # RAG-05: Build query from last 2 human turns for better follow-up handling
+    # Usar solo el último mensaje humano para la búsqueda vectorial.
+    # El historial completo ya está en state["messages"] para el LLM —
+    # no tiene sentido re-buscar turnos ya respondidos.
     messages = state.get("messages") or []
-    last_2_human: list[str] = []
+    query = ""
     for msg in reversed(messages):
         if getattr(msg, "type", None) == "human" and getattr(msg, "content", ""):
-            last_2_human.append(msg.content)
-            if len(last_2_human) == 2:
-                break
-    query = " ".join(reversed(last_2_human)).strip()
+            query = msg.content
+            break
 
     if not query:
         logger.debug("rag_retrieval.no_query", tenant_id=tenant_id)
