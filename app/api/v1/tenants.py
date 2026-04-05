@@ -1,14 +1,17 @@
 import asyncio
+import tempfile
+import os
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, UploadFile, File, status
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.models.tenant import TenantCreate, TenantRulesUpdate
 from app.services.tenant_service import create_tenant, update_tenant_rules
+from app.services.rag_service import ingest_document
 
 router = APIRouter()
 
@@ -34,6 +37,38 @@ async def create_tenant_endpoint(
         content={
             "status": "success",
             "data": tenant.model_dump(mode="json"),
+            "meta": {"timestamp": datetime.now(timezone.utc).isoformat()},
+        },
+    )
+
+
+@router.post("/tenants/{tenant_id}/knowledge")
+async def upload_knowledge_endpoint(
+    tenant_id: UUID,
+    file: UploadFile = File(...),
+    _: None = Depends(_require_admin_api_key),
+) -> JSONResponse:
+    """Sube un PDF y genera embeddings RAG para el tenant."""
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Solo se aceptan archivos PDF")
+
+    content = await file.read()
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        chunks = await asyncio.to_thread(
+            ingest_document, str(tenant_id), tmp_path, file.filename
+        )
+    finally:
+        os.unlink(tmp_path)
+
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "status": "success",
+            "data": {"chunks_inserted": chunks, "filename": file.filename},
             "meta": {"timestamp": datetime.now(timezone.utc).isoformat()},
         },
     )
