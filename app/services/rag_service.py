@@ -160,14 +160,14 @@ def search_knowledge(tenant_id: str, query: str, k: int = 3) -> list[dict]:
         try:
             with conn:
                 with conn.cursor() as cur:
-                    # Note: after register_vector(), psycopg2 adapts Python lists to
-                    # pgvector type automatically — NO explicit ::vector cast needed.
+                    # Explicit ::vector cast required when using Supabase connection pooler
+                    # (transaction mode) — register_vector() adapter doesn't persist across pool connections.
                     cur.execute(
                         """
-                        SELECT content, source_filename, 1 - (embedding <=> %s) AS similarity
+                        SELECT content, source_filename, 1 - (embedding <=> %s::vector) AS similarity
                         FROM public.knowledge_chunks
                         WHERE tenant_id = %s
-                        ORDER BY embedding <=> %s
+                        ORDER BY embedding <=> %s::vector
                         LIMIT %s
                         """,
                         (query_vector, tenant_id, query_vector, k),
