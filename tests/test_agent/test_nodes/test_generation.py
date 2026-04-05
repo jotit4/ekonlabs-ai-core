@@ -686,11 +686,11 @@ def test_default_system_prompt_has_correct_accents():
     assert "médica" in DEFAULT_SYSTEM_PROMPT
 
 
-def test_llm_temperature_is_0_3():
-    """COPY-05: _llm singleton uses temperature=0.3 for deterministic responses."""
+def test_llm_temperature_is_0_5():
+    """PROMPT-04: _llm singleton uses temperature=0.5 for natural phrasing variability."""
     from app.agent.nodes.generation import _llm
 
-    assert _llm.temperature == 0.3
+    assert _llm.temperature == 0.5
 
 
 def test_llm_request_timeout_is_20():
@@ -698,3 +698,35 @@ def test_llm_request_timeout_is_20():
     from app.agent.nodes.generation import _llm
 
     assert _llm.request_timeout == 20
+
+
+# ── Plan 11-01: PROMPT-01/02/03/04 — System Prompt & Model ──────────────────
+
+
+def test_default_system_prompt_meets_length_requirement():
+    """PROMPT-01: DEFAULT_SYSTEM_PROMPT is at least 1600 chars (~400 tokens)."""
+    from app.agent.nodes.generation import DEFAULT_SYSTEM_PROMPT
+
+    assert len(DEFAULT_SYSTEM_PROMPT) >= 1600, (
+        f"DEFAULT_SYSTEM_PROMPT too short: {len(DEFAULT_SYSTEM_PROMPT)} chars "
+        "(need ≥1600 chars / ~400 tokens)"
+    )
+
+
+def test_default_system_prompt_contains_search_knowledge_tool_instruction():
+    """PROMPT-02: DEFAULT_SYSTEM_PROMPT explicitly instructs LLM to call search_knowledge_tool."""
+    from app.agent.nodes.generation import DEFAULT_SYSTEM_PROMPT
+
+    assert "search_knowledge_tool" in DEFAULT_SYSTEM_PROMPT, (
+        "DEFAULT_SYSTEM_PROMPT must contain 'search_knowledge_tool' instruction "
+        "for clinic-specific knowledge retrieval"
+    )
+
+
+def test_llm_model_is_gpt_4_1_mini():
+    """PROMPT-03: _llm singleton uses gpt-4.1-mini (not gpt-4o-mini)."""
+    from app.agent.nodes.generation import _llm
+
+    assert _llm.model_name == "gpt-4.1-mini", (
+        f"Expected model 'gpt-4.1-mini', got '{_llm.model_name}'"
+    )
