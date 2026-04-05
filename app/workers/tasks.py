@@ -169,15 +169,16 @@ def process_whatsapp_message(payload: dict, tenant_id: str) -> None:
 
     phone_number, message_text = msg_info
 
-    # --- 1c. Leer buffer de mensajes acumulados durante la ventana de 15s ---
+    # --- 1c. Ventana de buffering: esperar para acumular mensajes rápidos ---
+    from app.api.v1.webhooks import _BUFFER_WINDOW_SECONDS
     try:
+        time.sleep(_BUFFER_WINDOW_SECONDS)
         _redis = Redis.from_url(settings.REDIS_URL)
         buffer_key = f"buffer_msgs:{tenant_id}:{phone_number}"
         pending_key = f"buffer_pending:{tenant_id}:{phone_number}"
         buffered = _redis.lrange(buffer_key, 0, -1)
         if buffered:
             extra_texts = [m.decode() if isinstance(m, bytes) else m for m in buffered]
-            # Unir todos los mensajes acumulados (incluyendo el del payload actual)
             all_texts = [message_text] + [t for t in extra_texts if t != message_text]
             message_text = " ".join(all_texts)
             _redis.delete(buffer_key)

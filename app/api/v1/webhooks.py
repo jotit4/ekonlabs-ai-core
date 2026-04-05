@@ -81,9 +81,9 @@ def _enqueue_task(payload_dict: dict, tenant_id: str) -> None:
         # Marcar que hay un job pendiente (expira cuando el job corre)
         conn.set(pending_key, "1", ex=_BUFFER_WINDOW_SECONDS + 5)
 
+        # Encolamos inmediatamente — el job duerme la ventana de buffer antes de procesar
         q = Queue("default", connection=conn)
-        q.enqueue_in(
-            timedelta(seconds=_BUFFER_WINDOW_SECONDS),
+        q.enqueue(
             process_whatsapp_message,
             payload_dict,
             tenant_id,
