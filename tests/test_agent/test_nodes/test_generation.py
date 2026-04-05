@@ -21,7 +21,10 @@ def _base_state(**kwargs):
 
 def _make_mock_llm(response_text: str = "Hola, ¿en qué puedo ayudarle?") -> MagicMock:
     mock = MagicMock()
-    mock.invoke.return_value = AIMessage(content=response_text)
+    ai_msg = AIMessage(content=response_text)
+    mock.invoke.return_value = ai_msg
+    # General path uses _llm.bind_tools(...).invoke(...) — set up the return chain
+    mock.bind_tools.return_value.invoke.return_value = ai_msg
     return mock
 
 
@@ -31,12 +34,12 @@ def test_generation_node_uses_default_system_prompt():
 
     mock_llm = _make_mock_llm()
     with patch("app.agent.nodes.generation._llm", mock_llm):
-        generation_node(_base_state(rag_context="contexto de prueba"))
+        generation_node(_base_state())
 
-    call_args = mock_llm.invoke.call_args[0][0]
+    call_args = mock_llm.bind_tools.return_value.invoke.call_args[0][0]
     system_msg = call_args[0]
     assert isinstance(system_msg, SystemMessage)
-    assert system_msg.content.endswith(DEFAULT_SYSTEM_PROMPT) or DEFAULT_SYSTEM_PROMPT in system_msg.content
+    assert DEFAULT_SYSTEM_PROMPT in system_msg.content
 
 
 def test_generation_node_uses_tenant_system_prompt():
@@ -46,27 +49,25 @@ def test_generation_node_uses_tenant_system_prompt():
     tenant_prompt = "Eres la recepcionista virtual de Clinica XYZ."
     mock_llm = _make_mock_llm()
     with patch("app.agent.nodes.generation._llm", mock_llm):
-        generation_node(_base_state(system_prompt=tenant_prompt, rag_context="contexto de prueba"))
+        generation_node(_base_state(system_prompt=tenant_prompt))
 
-    call_args = mock_llm.invoke.call_args[0][0]
+    call_args = mock_llm.bind_tools.return_value.invoke.call_args[0][0]
     system_msg = call_args[0]
     assert tenant_prompt in system_msg.content
     assert DEFAULT_SYSTEM_PROMPT not in system_msg.content
 
 
-def test_generation_node_injects_rag_context():
-    """Con rag_context → se incluye en el SystemMessage junto al system_prompt."""
+def test_generation_node_general_path_uses_bind_tools():
+    """RAG-03: general path calls _llm.bind_tools with tool_choice='required'."""
     from app.agent.nodes.generation import generation_node
 
-    rag_text = "Horarios de consulta: Lunes a Viernes 9-18h."
     mock_llm = _make_mock_llm()
     with patch("app.agent.nodes.generation._llm", mock_llm):
-        generation_node(_base_state(rag_context=rag_text))
+        generation_node(_base_state())
 
-    call_args = mock_llm.invoke.call_args[0][0]
-    system_msg = call_args[0]
-    assert rag_text in system_msg.content
-    assert "<clinic_knowledge>" in system_msg.content
+    assert mock_llm.bind_tools.called, "bind_tools should be called for general path"
+    bind_kwargs = mock_llm.bind_tools.call_args[1]
+    assert bind_kwargs.get("tool_choice") == "required"
 
 
 def test_generation_node_returns_ai_message():
@@ -76,7 +77,7 @@ def test_generation_node_returns_ai_message():
     ai_response = "Su turno está confirmado para el lunes."
     mock_llm = _make_mock_llm(ai_response)
     with patch("app.agent.nodes.generation._llm", mock_llm):
-        result = generation_node(_base_state(rag_context="contexto de prueba"))
+        result = generation_node(_base_state())
 
     assert "messages" in result
     assert len(result["messages"]) == 1
@@ -84,29 +85,28 @@ def test_generation_node_returns_ai_message():
     assert result["messages"][0].content == ai_response
 
 
-def test_generation_node_no_rag_injection_when_rag_present_but_empty_section():
-    """Con rag_context='' → RAG-02: LLM is called (no confidence gate), section header NOT injected."""
+def test_generation_node_general_path_calls_llm():
+    """General path: _llm.bind_tools().invoke() is called exactly once when no tool_calls."""
     from app.agent.nodes.generation import generation_node
 
     mock_llm = _make_mock_llm()
     with patch("app.agent.nodes.generation._llm", mock_llm):
-        result = generation_node(_base_state(rag_context=""))
+        result = generation_node(_base_state())
 
-    # RAG-02: empty rag_context proceeds to LLM — NOT paused
-    mock_llm.invoke.assert_called_once()
+    mock_llm.bind_tools.return_value.invoke.assert_called_once()
     assert result.get("is_paused") is not True
 
-def test_generation_node_rag_present_does_not_include_section_header_in_system_when_absent():
-    """Con rag_context presente → system_content INCLUYE sección 'Información de la Clínica'."""
+def test_generation_node_no_clinic_knowledge_xml_in_system():
+    """Phase 14: system message does NOT contain <clinic_knowledge> XML — RAG is via tool calling."""
     from app.agent.nodes.generation import generation_node
 
     mock_llm = _make_mock_llm()
     with patch("app.agent.nodes.generation._llm", mock_llm):
-        generation_node(_base_state(rag_context="Precio ortodoncia: $50.000"))
+        generation_node(_base_state())
 
-    call_args = mock_llm.invoke.call_args[0][0]
+    call_args = mock_llm.bind_tools.return_value.invoke.call_args[0][0]
     system_msg = call_args[0]
-    assert "<clinic_knowledge>" in system_msg.content
+    assert "<clinic_knowledge>" not in system_msg.content
 
 
 def test_generation_node_prepends_empathy_modifier_when_urgent():
@@ -115,9 +115,9 @@ def test_generation_node_prepends_empathy_modifier_when_urgent():
 
     mock_llm = _make_mock_llm()
     with patch("app.agent.nodes.generation._llm", mock_llm):
-        generation_node(_base_state(empathy_mode="urgent", rag_context="contexto de prueba"))
+        generation_node(_base_state(empathy_mode="urgent"))
 
-    call_args = mock_llm.invoke.call_args[0][0]
+    call_args = mock_llm.bind_tools.return_value.invoke.call_args[0][0]
     system_msg = call_args[0]
     assert system_msg.content.startswith(EMPATHY_MODIFIER)
 
@@ -126,16 +126,17 @@ def test_generation_node_no_empathy_modifier_when_normal():
     """Con empathy_mode='normal' (o ausente) → EMPATHY_MODIFIER NO aparece en system_content."""
     from app.agent.nodes.generation import EMPATHY_MODIFIER, generation_node
 
-    rag = "contexto de prueba"
     mock_llm = _make_mock_llm()
     with patch("app.agent.nodes.generation._llm", mock_llm):
-        generation_node(_base_state(empathy_mode="normal", rag_context=rag))
+        generation_node(_base_state(empathy_mode="normal"))
 
-    with patch("app.agent.nodes.generation._llm", mock_llm):
-        generation_node(_base_state(rag_context=rag))  # sin clave empathy_mode
+    mock_llm2 = _make_mock_llm()
+    with patch("app.agent.nodes.generation._llm", mock_llm2):
+        generation_node(_base_state())  # sin clave empathy_mode
 
-    for call in mock_llm.invoke.call_args_list:
-        system_msg = call[0][0][0]
+    for m in (mock_llm, mock_llm2):
+        call_args = m.bind_tools.return_value.invoke.call_args[0][0]
+        system_msg = call_args[0]
         assert EMPATHY_MODIFIER not in system_msg.content
 
 
@@ -157,21 +158,20 @@ def test_generation_node_returns_hardcoded_response_when_medical_query():
 
 
 def test_generation_node_calls_llm_when_not_medical_query():
-    """Con is_medical_query=False (o ausente) y rag_context presente → llama al LLM normalmente."""
+    """Con is_medical_query=False (o ausente) → llama al LLM normalmente via bind_tools path."""
     from app.agent.nodes.generation import generation_node
 
-    rag = "contexto de prueba"
     mock_llm_false = _make_mock_llm()
     with patch("app.agent.nodes.generation._llm", mock_llm_false):
-        generation_node(_base_state(is_medical_query=False, rag_context=rag))
+        generation_node(_base_state(is_medical_query=False))
 
     mock_llm_absent = _make_mock_llm()
     with patch("app.agent.nodes.generation._llm", mock_llm_absent):
-        generation_node(_base_state(rag_context=rag))  # sin clave is_medical_query
+        generation_node(_base_state())  # sin clave is_medical_query
 
-    # El LLM SÍ debe ser llamado en ambos casos
-    assert mock_llm_false.invoke.call_count == 1
-    assert mock_llm_absent.invoke.call_count == 1
+    # El LLM SÍ debe ser llamado en ambos casos (via bind_tools)
+    assert mock_llm_false.bind_tools.return_value.invoke.call_count == 1
+    assert mock_llm_absent.bind_tools.return_value.invoke.call_count == 1
 
 
 def test_generation_node_scheduling_intent_with_slots():
@@ -322,8 +322,8 @@ def test_generation_node_shadow_mode_takes_priority_over_booking_intent():
     assert result["messages"][0].content == SHADOW_MODE_REDIRECT_RESPONSE
 
 
-def test_generation_node_urgent_with_rag_context_combines_both():
-    """Verifica que urgent + rag_context se combinan correctamente en system_content."""
+def test_generation_node_urgent_with_system_prompt_combines_empathy():
+    """Verifica que urgent + system_prompt se combinan: EMPATHY_MODIFIER precede al prompt."""
     from app.agent.nodes.generation import generation_node
 
     mock_llm = _make_mock_llm("Respuesta con empatía")
@@ -333,7 +333,6 @@ def test_generation_node_urgent_with_rag_context_combines_both():
         "phone_number": "+541100000000",
         "messages": [HumanMessage(content="me duele mucho la espalda")],
         "empathy_mode": "urgent",
-        "rag_context": "Precio consulta traumatología: $5000",
         "system_prompt": "Eres recepcionista de la clínica XYZ.",
         "is_medical_query": False,
     }
@@ -341,18 +340,14 @@ def test_generation_node_urgent_with_rag_context_combines_both():
     with patch("app.agent.nodes.generation._llm", mock_llm):
         result = generation_node(state)
 
-    # Verificar que se llamó al LLM
-    mock_llm.invoke.assert_called_once()
-    call_args = mock_llm.invoke.call_args[0][0]  # lista de mensajes
-
-    # El primer mensaje debe ser SystemMessage con EMPATHY_MODIFIER + system_prompt + rag_context
+    mock_llm.bind_tools.return_value.invoke.assert_called_once()
+    call_args = mock_llm.bind_tools.return_value.invoke.call_args[0][0]
     system_msg = call_args[0]
     assert (
         "empat" in system_msg.content.lower()
         or "urgencia" in system_msg.content.lower()
         or "está experimentando" in system_msg.content
     )
-    assert "Precio consulta" in system_msg.content  # rag_context incluido
     assert "recepcionista" in system_msg.content  # system_prompt incluido
 
 
@@ -361,47 +356,44 @@ def test_generation_node_urgent_with_rag_context_combines_both():
 # ---------------------------------------------------------------------------
 
 
-def test_generation_node_low_confidence_when_no_rag_returns_pause_response():
-    """RAG-02: Sin rag_context → LLM called (no binary confidence gate), NOT paused."""
+def test_generation_node_general_path_not_paused():
+    """General path: LLM called via bind_tools, result is NOT paused."""
     from app.agent.nodes.generation import generation_node
 
     mock_llm = _make_mock_llm()
     with patch("app.agent.nodes.generation._llm", mock_llm):
-        result = generation_node(_base_state())  # sin rag_context
+        result = generation_node(_base_state())
 
-    # RAG-02: LLM debe ser llamado — no hay confidence gate
-    mock_llm.invoke.assert_called_once()
+    mock_llm.bind_tools.return_value.invoke.assert_called_once()
     assert "messages" in result
     assert len(result["messages"]) == 1
     assert isinstance(result["messages"][0], AIMessage)
     assert result.get("is_paused") is not True
 
 
-def test_generation_node_low_confidence_when_empty_rag_returns_pause_response():
-    """RAG-02: rag_context='' → LLM called, NOT paused."""
+def test_generation_node_general_path_not_paused_no_rag_in_state():
+    """General path: proceeds via bind_tools even when rag_context absent. NOT paused."""
     from app.agent.nodes.generation import generation_node
 
     mock_llm = _make_mock_llm()
     with patch("app.agent.nodes.generation._llm", mock_llm):
-        result = generation_node(_base_state(rag_context=""))
+        result = generation_node(_base_state())
 
-    # RAG-02: proceeds to LLM, no pause
-    mock_llm.invoke.assert_called_once()
+    mock_llm.bind_tools.return_value.invoke.assert_called_once()
     assert result.get("is_paused") is not True
 
 
-def test_generation_node_normal_flow_when_rag_present_calls_llm():
-    """Con rag_context no vacío → LLM llamado, is_paused=False no está en el retorno."""
+def test_generation_node_normal_flow_calls_llm_via_bind_tools():
+    """General path calls bind_tools path; is_paused NOT in return dict."""
     from app.agent.nodes.generation import generation_node
 
     ai_resp = "Tenemos disponibilidad el lunes."
     mock_llm = _make_mock_llm(ai_resp)
     with patch("app.agent.nodes.generation._llm", mock_llm):
-        result = generation_node(_base_state(rag_context="Precio ortodoncia: $50.000"))
+        result = generation_node(_base_state())
 
-    mock_llm.invoke.assert_called_once()
+    mock_llm.bind_tools.return_value.invoke.assert_called_once()
     assert result["messages"][0].content == ai_resp
-    # El flujo normal NO incluye is_paused en el retorno (no se sobreescribe el estado)
     assert "is_paused" not in result
 
 
@@ -503,34 +495,35 @@ def test_booking_ambiguous_calls_llm():
 # ── Plan 06-02: RAG-02 — Remove confidence gate ──────────────────────────────
 
 
-def test_empty_rag_context_calls_llm_not_pause():
-    """RAG-02: rag_context='' → LLM invocado exactamente 1 vez, result NOT paused."""
+def test_general_path_calls_llm_via_bind_tools_not_paused():
+    """General path: bind_tools.invoke called once, result NOT paused."""
     from app.agent.nodes.generation import generation_node
 
     mock_llm = _make_mock_llm()
     with patch("app.agent.nodes.generation._llm", mock_llm):
-        result = generation_node(_base_state(rag_context=""))
+        result = generation_node(_base_state())
 
-    assert mock_llm.invoke.call_count == 1
+    assert mock_llm.bind_tools.return_value.invoke.call_count == 1
     assert result.get("is_paused") is not True
 
 
-def test_empty_rag_context_does_not_include_rag_section():
-    """RAG-02: rag_context='' → SystemMessage does NOT contain 'Información de la Clínica'."""
+def test_general_path_system_message_has_no_rag_section_header():
+    """Phase 14: SystemMessage does NOT contain 'Información de la Clínica' or XML — RAG via tool."""
     from app.agent.nodes.generation import generation_node
 
     mock_llm = _make_mock_llm()
     with patch("app.agent.nodes.generation._llm", mock_llm):
-        generation_node(_base_state(rag_context=""))
+        generation_node(_base_state())
 
-    call_args = mock_llm.invoke.call_args[0][0]
+    call_args = mock_llm.bind_tools.return_value.invoke.call_args[0][0]
     system_msg = call_args[0]
     assert isinstance(system_msg, SystemMessage)
     assert "Información de la Clínica" not in system_msg.content
+    assert "<clinic_knowledge>" not in system_msg.content
 
 
 def test_no_rag_context_key_calls_llm():
-    """RAG-02: state sin clave 'rag_context' → LLM llamado (usa DEFAULT_SYSTEM_PROMPT)."""
+    """Phase 14: state sin clave 'rag_context' → LLM llamado via bind_tools (usa DEFAULT_SYSTEM_PROMPT)."""
     from app.agent.nodes.generation import generation_node
 
     state = {
@@ -542,107 +535,81 @@ def test_no_rag_context_key_calls_llm():
     with patch("app.agent.nodes.generation._llm", mock_llm):
         result = generation_node(state)
 
-    assert mock_llm.invoke.call_count == 1
+    assert mock_llm.bind_tools.return_value.invoke.call_count == 1
     assert result.get("is_paused") is not True
 
 
-# ── Plan 06-03: RAG-06 — XML delimiters + anti-injection ─────────────────────
+# ── Phase 14: RAG via tool calling — system message has no XML injection ─────
 
 
 def test_rag_context_wrapped_in_xml_delimiters():
-    """RAG-06: rag_context presente → SystemMessage contiene <clinic_knowledge> y </clinic_knowledge>."""
+    """Phase 14: general path uses bind_tools — no XML injection in SystemMessage."""
     from app.agent.nodes.generation import generation_node
 
-    mock_llm = MagicMock()
-    mock_llm.invoke.return_value = AIMessage(content="resp")
+    mock_llm = _make_mock_llm("resp")
     state = {
         "tenant_id": "test", "phone_number": "+54911",
         "messages": [HumanMessage(content="precio")],
-        "rag_context": "Precio implante: $1200",
     }
     with patch("app.agent.nodes.generation._llm", mock_llm):
         generation_node(state)
-    system_msg = mock_llm.invoke.call_args[0][0][0]
-    assert "<clinic_knowledge>" in system_msg.content
-    assert "</clinic_knowledge>" in system_msg.content
+    system_msg = mock_llm.bind_tools.return_value.invoke.call_args[0][0][0]
+    assert "<clinic_knowledge>" not in system_msg.content
 
 
 def test_rag_context_xml_contains_the_content():
-    """RAG-06: el contenido RAG está entre las etiquetas XML."""
+    """Phase 14: tool result delivered as ToolMessage (not XML in system). bind_tools called."""
     from app.agent.nodes.generation import generation_node
 
-    mock_llm = MagicMock()
-    mock_llm.invoke.return_value = AIMessage(content="resp")
-    rag = "Horario: Lunes a Viernes 8-20hs"
+    mock_llm = _make_mock_llm("resp")
     state = {
         "tenant_id": "test", "phone_number": "+54911",
         "messages": [HumanMessage(content="horario")],
-        "rag_context": rag,
     }
     with patch("app.agent.nodes.generation._llm", mock_llm):
         generation_node(state)
-    system_msg = mock_llm.invoke.call_args[0][0][0]
-    open_idx = system_msg.content.index("<clinic_knowledge>")
-    close_idx = system_msg.content.index("</clinic_knowledge>")
-    assert rag in system_msg.content[open_idx:close_idx]
+    assert mock_llm.bind_tools.called
 
 
 def test_rag_context_injection_includes_anti_injection_instruction():
-    """RAG-06: el SystemMessage incluye instrucción anti-injection."""
-    from app.agent.nodes.generation import generation_node
+    """Phase 14: DEFAULT_SYSTEM_PROMPT includes search_knowledge_tool instruction (anti-hallucination)."""
+    from app.agent.nodes.generation import DEFAULT_SYSTEM_PROMPT
 
-    mock_llm = MagicMock()
-    mock_llm.invoke.return_value = AIMessage(content="resp")
-    state = {
-        "tenant_id": "test", "phone_number": "+54911",
-        "messages": [HumanMessage(content="precio")],
-        "rag_context": "Precio consulta: $500",
-    }
-    with patch("app.agent.nodes.generation._llm", mock_llm):
-        generation_node(state)
-    system_msg = mock_llm.invoke.call_args[0][0][0]
-    content_lower = system_msg.content.lower()
+    content_lower = DEFAULT_SYSTEM_PROMPT.lower()
     assert (
-        "instruccion" in content_lower
-        or "instrucción" in content_lower
-        or "ignorar" in content_lower
-        or "ignorá" in content_lower
-        or "ignore" in content_lower
-        or "comando" in content_lower
+        "search_knowledge_tool" in DEFAULT_SYSTEM_PROMPT
+        or "herramienta" in content_lower
+        or "tool" in content_lower
     )
 
 
 def test_rag_context_old_markdown_header_absent():
-    """RAG-06: el header markdown antiguo '## Información de la Clínica' NO aparece."""
+    """Phase 14: '## Información de la Clínica' markdown header NOT in system message."""
     from app.agent.nodes.generation import generation_node
 
-    mock_llm = MagicMock()
-    mock_llm.invoke.return_value = AIMessage(content="resp")
+    mock_llm = _make_mock_llm("resp")
     state = {
         "tenant_id": "test", "phone_number": "+54911",
         "messages": [HumanMessage(content="precio")],
-        "rag_context": "Precio: $100",
     }
     with patch("app.agent.nodes.generation._llm", mock_llm):
         generation_node(state)
-    system_msg = mock_llm.invoke.call_args[0][0][0]
+    system_msg = mock_llm.bind_tools.return_value.invoke.call_args[0][0][0]
     assert "## Información de la Clínica" not in system_msg.content
 
 
 def test_empty_rag_context_no_xml_tags():
-    """RAG-06: rag_context='' → SystemMessage NO contiene etiquetas XML de clinic_knowledge."""
+    """Phase 14: SystemMessage has NO <clinic_knowledge> XML — RAG is delivered via ToolMessage."""
     from app.agent.nodes.generation import generation_node
 
-    mock_llm = MagicMock()
-    mock_llm.invoke.return_value = AIMessage(content="resp")
+    mock_llm = _make_mock_llm("resp")
     state = {
         "tenant_id": "test", "phone_number": "+54911",
         "messages": [HumanMessage(content="hola")],
-        "rag_context": "",
     }
     with patch("app.agent.nodes.generation._llm", mock_llm):
         generation_node(state)
-    system_msg = mock_llm.invoke.call_args[0][0][0]
+    system_msg = mock_llm.bind_tools.return_value.invoke.call_args[0][0][0]
     assert "<clinic_knowledge>" not in system_msg.content
 
 
@@ -831,3 +798,90 @@ def test_resp07_anti_diagnostic_hardcoded_no_llm():
 
     mock_llm.invoke.assert_not_called()
     assert result["messages"][0].content == ANTI_DIAGNOSTIC_RESPONSE
+
+
+# ── Plan 14-01: RAG-01/03/04 — LLM-driven inline tool calling ────────────────
+
+
+def test_rag01_clinic_question_triggers_tool_call_and_tool_message():
+    """RAG-01: LLM returns tool_calls → tool executed inline → ToolMessage added → second LLM call."""
+    from langchain_core.messages import ToolMessage
+    from app.agent.nodes.generation import generation_node
+
+    # First response: LLM decides to call the tool
+    first_ai = AIMessage(content="")
+    first_ai.tool_calls = [{"id": "call_abc", "name": "search_knowledge_tool", "args": {"query": "precio ortodoncia"}}]
+
+    # Second response: LLM answers after seeing the tool result
+    final_ai = AIMessage(content="La ortodoncia cuesta $50.000 según la base de datos.")
+
+    mock_llm = MagicMock()
+    mock_llm.bind_tools.return_value.invoke.return_value = first_ai
+    mock_llm.invoke.return_value = final_ai
+
+    mock_tool = MagicMock()
+    mock_tool.invoke.return_value = "Precio ortodoncia: $50.000"
+
+    state = _base_state(messages=[HumanMessage(content="cuanto cuesta la ortodoncia?")])
+
+    with patch("app.agent.nodes.generation._llm", mock_llm), \
+         patch("app.agent.nodes.generation.make_search_tool", return_value=mock_tool):
+        result = generation_node(state)
+
+    # First call: via bind_tools
+    mock_llm.bind_tools.return_value.invoke.assert_called_once()
+    # Tool was executed
+    mock_tool.invoke.assert_called_once_with({"query": "precio ortodoncia"})
+    # Second call: via _llm.invoke with tool result in messages
+    mock_llm.invoke.assert_called_once()
+    second_call_msgs = mock_llm.invoke.call_args[0][0]
+    tool_msgs = [m for m in second_call_msgs if isinstance(m, ToolMessage)]
+    assert len(tool_msgs) == 1
+    assert tool_msgs[0].content == "Precio ortodoncia: $50.000"
+    assert tool_msgs[0].tool_call_id == "call_abc"
+    # Final response is the second LLM response
+    assert result["messages"][0].content == final_ai.content
+
+
+def test_rag03_general_path_uses_tool_choice_required():
+    """RAG-03: bind_tools is called with tool_choice='required' — LLM cannot skip the tool."""
+    from app.agent.nodes.generation import generation_node
+
+    mock_llm = _make_mock_llm()
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        generation_node(_base_state())
+
+    assert mock_llm.bind_tools.called
+    bind_kwargs = mock_llm.bind_tools.call_args[1]
+    assert bind_kwargs.get("tool_choice") == "required", \
+        f"Expected tool_choice='required', got: {bind_kwargs}"
+
+
+def test_rag04_empty_tool_result_becomes_sin_resultados_message():
+    """RAG-04: tool returns '' → ToolMessage content = 'Sin resultados.' → second LLM call made."""
+    from langchain_core.messages import ToolMessage
+    from app.agent.nodes.generation import generation_node
+
+    # LLM calls tool, tool returns empty
+    first_ai = AIMessage(content="")
+    first_ai.tool_calls = [{"id": "call_xyz", "name": "search_knowledge_tool", "args": {"query": "horarios"}}]
+    final_ai = AIMessage(content="No tengo esa información, te recomiendo llamar a la clínica.")
+
+    mock_llm = MagicMock()
+    mock_llm.bind_tools.return_value.invoke.return_value = first_ai
+    mock_llm.invoke.return_value = final_ai
+
+    mock_tool = MagicMock()
+    mock_tool.invoke.return_value = ""  # RAG-04: empty result
+
+    with patch("app.agent.nodes.generation._llm", mock_llm), \
+         patch("app.agent.nodes.generation.make_search_tool", return_value=mock_tool):
+        result = generation_node(_base_state())
+
+    # ToolMessage content must be "Sin resultados." when tool returns empty
+    second_call_msgs = mock_llm.invoke.call_args[0][0]
+    tool_msgs = [m for m in second_call_msgs if isinstance(m, ToolMessage)]
+    assert len(tool_msgs) == 1
+    assert tool_msgs[0].content == "Sin resultados."
+    # Final response is the second LLM response
+    assert result["messages"][0].content == final_ai.content

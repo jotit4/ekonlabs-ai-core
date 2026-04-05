@@ -20,6 +20,8 @@ _AI_REPLY = AIMessage(content="Respuesta de la IA")
 def _mock_llm():
     mock = MagicMock()
     mock.invoke.return_value = _AI_REPLY
+    # General path uses _llm.bind_tools(...).invoke(...) — set up the return chain
+    mock.bind_tools.return_value.invoke.return_value = _AI_REPLY
     return mock
 
 
@@ -168,7 +170,9 @@ def test_graph_medical_query_bypasses_rag_and_llm():
 
 
 def test_graph_scheduling_intent_bypasses_rag():
-    """Con mensaje de agendamiento, el grafo usa scheduling_node y NO llama a rag_retrieval."""
+    """Con mensaje de agendamiento, el grafo usa scheduling_node y NO llama a rag_retrieval.
+    RESP-01: LLM SÍ es invocado con los slots en el contexto del sistema (prosa natural).
+    """
     from app.agent.graph import graph
     from app.agent.nodes.generation import ANTI_DIAGNOSTIC_RESPONSE
 
@@ -203,19 +207,19 @@ def test_graph_scheduling_intent_bypasses_rag():
 
     # rag_retrieval NO debe ser invocado (scheduling_intent=True va directo a generation)
     mock_search.assert_not_called()
-    # El LLM NO debe ser invocado (generation responde con slots deterministas)
-    mock_llm.invoke.assert_not_called()
-    # La respuesta debe contener los turnos disponibles
+    # RESP-01: LLM SÍ debe ser invocado con los slots en el contexto del sistema
+    mock_llm.invoke.assert_called_once()
+    system_msg = mock_llm.invoke.call_args[0][0][0]
+    assert "Lunes 30 de Marzo — 10:00 a 11:00 hs" in system_msg.content
+    assert "1️⃣" not in system_msg.content
     ai_messages = [m for m in result["messages"] if getattr(m, "type", None) == "ai"]
     assert len(ai_messages) >= 1
-    assert "Lunes 30 de Marzo" in ai_messages[-1].content
     assert ai_messages[-1].content != ANTI_DIAGNOSTIC_RESPONSE
 
 
 def test_graph_booking_confirm_bypasses_scheduling_and_rag():
     """Con mensaje de confirmación de turno, booking_node crea el evento y saltea scheduling y rag."""
     from app.agent.graph import graph
-    from app.agent.nodes.generation import BOOKING_CONFIRMED_TEMPLATE
 
     mock_llm = _mock_llm()
     mock_search = _mock_search_tool()
@@ -245,14 +249,14 @@ def test_graph_booking_confirm_bypasses_scheduling_and_rag():
 
         result = graph.invoke(state, config={"configurable": {"thread_id": "tenant:phone"}})
 
-    # LLM y RAG no deben ser invocados
-    mock_llm.invoke.assert_not_called()
+    # Phase 13: booking path calls LLM to generate confirmation response
+    mock_llm.invoke.assert_called_once()
+    # RAG no debe ser invocado (booking bypasses rag_retrieval)
     mock_search.assert_not_called()
-    # La respuesta debe ser la confirmación de booking
+    # La respuesta es un AIMessage generado por el LLM
     ai_messages = [m for m in result["messages"] if getattr(m, "type", None) == "ai"]
     assert len(ai_messages) >= 1
-    expected = BOOKING_CONFIRMED_TEMPLATE.format(display=fake_slot["display"])
-    assert ai_messages[-1].content == expected
+    assert isinstance(ai_messages[-1], AIMessage)
 
 
 def test_graph_shadow_mode_returns_redirect_without_rag_or_llm():
@@ -312,8 +316,8 @@ def test_graph_normal_query_uses_rag_and_llm():
     ):
         result = graph.invoke(state, config={"configurable": {"thread_id": "tenant:phone"}})
 
-    # El LLM SÍ debe ser invocado
-    mock_llm.invoke.assert_called_once()
+    # Phase 14: el LLM SÍ debe ser invocado via bind_tools (general path)
+    mock_llm.bind_tools.return_value.invoke.assert_called_once()
     # La respuesta no debe ser la hardcoded anti-diagnóstico
     ai_messages = [m for m in result["messages"] if getattr(m, "type", None) == "ai"]
     assert len(ai_messages) >= 1

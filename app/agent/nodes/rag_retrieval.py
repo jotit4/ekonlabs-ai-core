@@ -9,51 +9,17 @@ from app.agent.tools.search_tool import make_search_tool
 logger = structlog.get_logger(__name__)
 
 
-def rag_retrieval_node(state: ConversationState) -> ConversationState:
-    """Retrieve relevant knowledge chunks for the latest user message.
+def rag_retrieval_node(state: ConversationState) -> dict:
+    """Phase 14 no-op — RAG retrieval moved to inline tool calling in generation_node.
 
-    Extracts the most recent human message from the conversation state,
-    searches the tenant's knowledge base using pgvector cosine similarity,
-    and stores the retrieved context in `state["rag_context"]` for use by
-    the generation node (Story 2.3).
-
-    The tenant_id is always taken from the state — the LLM never influences
-    which tenant's knowledge is searched, preserving multi-tenant isolation.
+    The graph edge rag_retrieval → generation is preserved. This node returns {}
+    so the state is unchanged. The LLM in generation_node calls search_knowledge_tool
+    directly via bind_tools, and the result is added as a ToolMessage to state["messages"].
 
     Args:
-        state: Current ConversationState containing tenant_id and messages.
+        state: Current ConversationState (not modified).
 
     Returns:
-        Updated ConversationState with `rag_context` key populated.
-        If no user messages exist or retrieval fails, `rag_context` is set to "".
+        Empty dict — no state fields updated.
     """
-    tenant_id = state["tenant_id"]
-
-    # Usar solo el último mensaje humano para la búsqueda vectorial.
-    # El historial completo ya está en state["messages"] para el LLM —
-    # no tiene sentido re-buscar turnos ya respondidos.
-    messages = state.get("messages") or []
-    query = ""
-    for msg in reversed(messages):
-        if getattr(msg, "type", None) == "human" and getattr(msg, "content", ""):
-            query = msg.content
-            break
-
-    if not query:
-        logger.debug("rag_retrieval.no_query", tenant_id=tenant_id)
-        return {"rag_context": ""}
-
-    try:
-        search_tool = make_search_tool(tenant_id)
-        rag_context: str = search_tool.invoke({"query": query})
-        logger.info(
-            "rag_retrieval.done",
-            tenant_id=tenant_id,
-            query_preview=query[:80],
-            context_len=len(rag_context),
-        )
-    except Exception as exc:
-        logger.warning("rag_retrieval.error", tenant_id=tenant_id, error=str(exc))
-        rag_context = ""
-
-    return {"rag_context": rag_context}
+    return {}
