@@ -2,7 +2,7 @@
 set -e
 
 # Start RQ worker in background
-rq worker --url "$REDIS_URL" default &
+rq worker --url "$REDIS_URL" --with-scheduler default &
 WORKER_PID=$!
 
 # Start FastAPI (foreground — si muere, muere el contenedor)
