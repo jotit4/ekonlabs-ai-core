@@ -14,7 +14,7 @@
 - [x] **Phase 12: State Schema Extension** — Add three new ConversationState fields that enable multi-turn patient name collection
 - [x] **Phase 13: LLM-Generated Responses** — Restructure generation_node so the LLM writes all patient-facing text; hardcoded bypasses stay intact
 - [x] **Phase 14: LLM-Driven RAG via Tool Calling** — Bind search_knowledge_tool to the LLM inline; make rag_retrieval_node a no-op
-- [ ] **Phase 15: Patient Name Collection** — Full multi-turn name collection flow before booking confirmation, with calendar title passthrough
+- [x] **Phase 15: Patient Name Collection** — Full multi-turn name collection flow before booking confirmation, with calendar title passthrough
 
 ---
 
@@ -74,7 +74,7 @@
   3. During name collection, sending a booking confirmation keyword (e.g. "listo", "dale") does not create a duplicate booking or bypass the name request
   4. If the patient does not provide a name after 2 prompts, `is_paused=True` is set and the conversation routes to human handoff
   5. The slot validity is re-checked against Google Calendar if more than 30 minutes have passed since `slot_presented_at`
-**Plans**: TBD
+**Plans**: 15-01-PLAN.md, 15-02-PLAN.md
 
 ---
 
@@ -86,7 +86,7 @@
 | 12. State Schema Extension | 1/1 | Complete | 2026-04-05 |
 | 13. LLM-Generated Responses | 2/2 | Complete | 2026-04-05 |
 | 14. LLM-Driven RAG via Tool Calling | 1/1 | Complete | 2026-04-05 |
-| 15. Patient Name Collection | 0/? | Not started | — |
+| 15. Patient Name Collection | 2/2 | Complete | 2026-04-05 |
 
 ---
 
@@ -134,4 +134,4 @@ Phases 5–10 are complete. See git history for plan files.
 
 ---
 
-*Last updated: 2026-04-05 | Milestone: v1.2 Human-Feeling Agent*
+*Last updated: 2026-04-05 | Milestone: v1.2 Human-Feeling Agent — COMPLETE*
