@@ -10,12 +10,12 @@
 
 ## Phases
 
-- [ ] **Phase 5: Intent Detection Fixes** — Fix slot selection, keyword coverage, routing edge cases, and state flag for slot ambiguity
+- [x] **Phase 5: Intent Detection Fixes** — Fix slot selection, keyword coverage, routing edge cases, and state flag for slot ambiguity
 - [x] **Phase 6: RAG Quality** — Similarity threshold, confidence scoring, dedup on re-ingest, chunk size, multi-turn query, prompt injection hardening
 - [x] **Phase 7: Infrastructure Reliability** — Message dedup, Redis 503 on failure, RQ retry policy, connection pool, booking race window
 - [x] **Phase 8: Security & Configuration** — Fail-fast secrets, admin API key auth, .env.example, Redis PING at startup
 - [x] **Phase 9: Copy & LLM Settings** — Hardcoded response rewrites, Argentine Spanish tone, temperature + timeout tuning
-- [ ] **Phase 10: Evolution API Integration** — Add Evolution API as WhatsApp provider alongside Meta, keeping both integrations functional via provider config flag
+- [x] **Phase 10: Evolution API Integration** — Add Evolution API as WhatsApp provider alongside Meta, keeping both integrations functional via provider config flag
 
 ---
 
@@ -115,9 +115,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 10-01-PLAN.md — Config fields (WHATSAPP_PROVIDER, EVOLUTION_*) + evolution_service.py send layer (EVOL-05, EVOL-02)
-- [ ] 10-02-PLAN.md — Evolution webhook endpoint + payload normalizer + endpoint tests (EVOL-01, EVOL-04)
-- [ ] 10-03-PLAN.md — tasks.py provider dispatch + full regression gate (EVOL-03, EVOL-04)
+- [x] 10-01-PLAN.md — Config fields (WHATSAPP_PROVIDER, EVOLUTION_*) + evolution_service.py send layer (EVOL-05, EVOL-02)
+- [x] 10-02-PLAN.md — Evolution webhook endpoint + payload normalizer + endpoint tests (EVOL-01, EVOL-04)
+- [x] 10-03-PLAN.md — tasks.py provider dispatch + full regression gate (EVOL-03, EVOL-04)
 
 ---
 

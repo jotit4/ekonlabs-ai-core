@@ -4,20 +4,20 @@
 
 **Project:** ekonlabs-ai-core
 **Core Value:** A patient writes on WhatsApp at 11pm. The agent responds immediately, answers questions about services, and books an appointment directly into the clinic's Google Calendar.
-**Active Milestone:** v1.1 Production Hardening
-**Current Focus:** Fix audit findings to deploy for first paying client (ISADI)
+**Active Milestone:** v1.2 Human-Feeling Agent
+**Current Focus:** Make the agent feel human — LLM-generated responses, patient name collection, natural conversation
 
 ---
 
 ## Current Position
 
-**Current Phase:** 9 — Copy & LLM Settings (complete)
-**Current Plan:** All plans complete
-**Phase Status:** Complete (2/2 plans complete)
-**Milestone Status:** Complete — v1.1 Production Hardening done
+**Current Phase:** Not started (defining requirements)
+**Current Plan:** —
+**Phase Status:** Defining requirements
+**Milestone Status:** In progress — v1.2 started 2026-04-05
 
 ```
-Progress: [██████████] 100% — 5 of 5 phases complete
+Progress: [░░░░░░░░░░] 0% — 0 of ? phases complete
 ```
 
 ---
