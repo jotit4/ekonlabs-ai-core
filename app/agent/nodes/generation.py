@@ -1,12 +1,16 @@
 """Nodo: generar respuesta IA con contexto RAG + System Prompt del Tenant."""
 from __future__ import annotations
 
+import re
+from datetime import datetime, timezone, timedelta
+
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from app.agent.tools.search_tool import make_search_tool
 from langchain_openai import ChatOpenAI
 
 from app.agent.state import ConversationState
 from app.core.logging import get_logger
+from app.services import calendar_service, tenant_service
 
 logger = get_logger(__name__)
 
@@ -118,6 +122,183 @@ LOW_CONFIDENCE_PAUSE_RESPONSE = (
 )
 
 DEFAULT_CONFIDENCE_THRESHOLD: float = 0.5
+
+
+def _extract_patient_name(text: str) -> str | None:
+    """Extract patient name from message using prefix-stripping heuristic.
+
+    Strips common Argentine Spanish name-introduction phrases then validates
+    the remainder looks like a name (1–4 words, no digits, all Unicode letters).
+    Returns the name as-is (original casing preserved), or None.
+    """
+    cleaned = text.strip()
+    lower = cleaned.lower()
+    for prefix in ("me llamo ", "soy ", "mi nombre es ", "mi nombre: ", "nombre: "):
+        if lower.startswith(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+            break
+    words = cleaned.split()
+    if not (2 <= len(words) <= 4):
+        return None
+    if any(c.isdigit() for c in cleaned):
+        return None
+    if not re.match(r"^[\w\s\-\.\']+$", cleaned, re.UNICODE):
+        return None
+    return cleaned
+
+
+def _is_slot_expired(state: ConversationState) -> bool:
+    """Return True if >30 minutes have passed since slot_presented_at (NAME-07)."""
+    slot_presented_at = state.get("slot_presented_at")
+    if not slot_presented_at:
+        return False
+    try:
+        presented = datetime.fromisoformat(slot_presented_at)
+        if presented.tzinfo is None:
+            presented = presented.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - presented) > timedelta(minutes=30)
+    except (ValueError, TypeError):
+        return False
+
+
+def _handle_name_collection(state: ConversationState, tenant_id: str) -> dict:
+    """Handle the name collection turns when name_collection_active=True.
+
+    Turn 1 (name_attempts == 0): Ask for name, set name_attempts=1.
+    Turn 2+ (name_attempts >= 1): Try to extract name from last human message.
+      - Name found → create calendar event inline, confirm booking (NAME-06).
+      - No name, attempts < 2 → ask again, increment name_attempts.
+      - No name, attempts >= 2 → is_paused=True for human handoff (NAME-05).
+    Slot expiry → inform patient, clear name_collection_active (NAME-07).
+    """
+    name_attempts: int = state.get("name_attempts") or 0
+    booked_slot: dict = state.get("booked_slot") or {}
+    system_prompt_base: str = state.get("system_prompt") or DEFAULT_SYSTEM_PROMPT
+
+    # NAME-07: slot expiry check
+    if _is_slot_expired(state):
+        system_content = (
+            f"{system_prompt_base}\n\n"
+            "ACCIÓN REQUERIDA — TURNO EXPIRADO\n"
+            "El turno que el paciente había seleccionado expiró (pasaron más de 30 minutos). "
+            "Informá al paciente con calidez y ofrecé buscar nuevas opciones. "
+            "Usá voseo argentino."
+        )
+        messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+        response = _llm.invoke(messages_for_llm)
+        logger.info(
+            "generation_node.done",
+            tenant_id=tenant_id,
+            response_type="name_collection_slot_expired",
+        )
+        return {
+            "messages": [response],
+            "name_collection_active": False,
+            "booking_intent": False,
+        }
+
+    # Extract name from last human message (only if agent has already asked)
+    if name_attempts >= 1:
+        messages = state.get("messages") or []
+        last_human_text = ""
+        for msg in reversed(messages):
+            if getattr(msg, "type", None) == "human" and getattr(msg, "content", ""):
+                last_human_text = msg.content
+                break
+
+        patient_name = _extract_patient_name(last_human_text)
+
+        if patient_name:
+            # NAME-06: create event inline with patient name in title
+            phone_number = state["phone_number"]
+            try:
+                tenant_config = tenant_service.get_tenant_config(tenant_id)
+                cal_id = tenant_config.calendar_id
+                creds = tenant_config.calendar_credentials or {}
+                event_id = calendar_service.create_event(
+                    calendar_id=cal_id,
+                    credentials_dict=creds,
+                    start_iso=booked_slot["start"],
+                    end_iso=booked_slot["end"],
+                    phone_number=phone_number,
+                    title=f"Turno — {patient_name}",
+                )
+            except Exception as exc:
+                logger.error(
+                    "generation_node.name_collection_event_error",
+                    tenant_id=tenant_id,
+                    error=str(exc),
+                )
+                raise
+
+            display = booked_slot.get("display", "")
+            system_content = (
+                f"{system_prompt_base}\n\n"
+                "ACCIÓN REQUERIDA — TURNO CONFIRMADO CON NOMBRE\n"
+                f"El turno fue reservado a nombre de {patient_name}. "
+                "Incluí el siguiente texto de turno en tu respuesta exactamente como aparece:\n\n"
+                f"{display}\n\n"
+                "Dirigite al paciente por su nombre. Usá voseo argentino cálido."
+            )
+            messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+            response = _llm.invoke(messages_for_llm)
+            logger.info(
+                "generation_node.done",
+                tenant_id=tenant_id,
+                response_type="booking_from_generation",
+            )
+            return {
+                "messages": [response],
+                "patient_name": patient_name,
+                "name_collection_active": False,
+                "calendar_event_id": event_id,
+            }
+
+        # NAME-05: no name after 2 attempts → human handoff
+        if name_attempts >= 2:
+            system_content = (
+                f"{system_prompt_base}\n\n"
+                "ACCIÓN REQUERIDA — DERIVAR A RECEPCIÓN HUMANA\n"
+                "El paciente no pudo proporcionar su nombre después de dos intentos. "
+                "Informá con calidez que lo va a atender un miembro del equipo. "
+                "Usá voseo argentino."
+            )
+            messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+            response = _llm.invoke(messages_for_llm)
+            logger.info(
+                "generation_node.done",
+                tenant_id=tenant_id,
+                response_type="name_collection_handoff",
+            )
+            return {
+                "messages": [response],
+                "is_paused": True,
+                "name_collection_active": False,
+            }
+
+    # Ask for name (Turn 1, or re-ask on Turn 2 when no name found)
+    slot_display = booked_slot.get("display", "")
+    system_content = (
+        f"{system_prompt_base}\n\n"
+        "ACCIÓN REQUERIDA — SOLICITAR NOMBRE DEL PACIENTE\n"
+        "El paciente seleccionó el siguiente turno:\n\n"
+        f"{slot_display}\n\n"
+        "Antes de confirmar, necesitás su nombre completo (nombre y apellido) para registrar "
+        "el turno en el sistema. Pedíselo de forma amable y natural en voseo argentino."
+    )
+    messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+    response = _llm.invoke(messages_for_llm)
+    logger.info(
+        "generation_node.done",
+        tenant_id=tenant_id,
+        response_type="name_collection_ask",
+        name_attempts=name_attempts,
+    )
+    return {
+        "messages": [response],
+        "name_attempts": name_attempts + 1,
+    }
+
 
 # Module-level singleton — initialized once at import time.
 # Tests must patch at: app.agent.nodes.generation._llm
@@ -243,6 +424,10 @@ def generation_node(state: ConversationState) -> dict:
             response_type="hardcoded_medical",
         )
         return {"messages": [AIMessage(content=ANTI_DIAGNOSTIC_RESPONSE)]}
+
+    # NAME-04/05/06/07: Name collection gate — intercepts before booking to collect patient name
+    if state.get("name_collection_active") and not state.get("patient_name"):
+        return _handle_name_collection(state, tenant_id)
 
     # Booking path — LLM genera confirmaciones/cancelaciones de turno (RESP-02, RESP-03, RESP-05)
     booking_intent: bool = state.get("booking_intent", False)

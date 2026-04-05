@@ -27,3 +27,4 @@ class ConversationState(TypedDict):
     patient_name: NotRequired[str | None]          # Patient's full name once captured; absent = not yet collected
     name_collection_active: NotRequired[bool]       # True while agent is waiting for patient to provide name
     slot_presented_at: NotRequired[str | None]      # ISO timestamp when slots were presented; used for 30-min TTL check
+    name_attempts: NotRequired[int]                 # Times agent has asked for patient name; absent = 0

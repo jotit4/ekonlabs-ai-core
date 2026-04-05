@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from datetime import datetime, timezone
 
 from app.agent.state import ConversationState
 from app.core.config import settings
@@ -247,12 +248,33 @@ def booking_node(state: ConversationState) -> dict:
         actual_idx = selected_idx if selected_idx < len(slots) else 0
         chosen_slot = slots[actual_idx]
 
+        # NAME-02: Defer event creation until patient name is collected
+        if not state.get("patient_name"):
+            logger.info(
+                "booking_node.name_collection_deferred",
+                tenant_id=tenant_id,
+                slot_display=chosen_slot.get("display", ""),
+                query_preview=query[:80],
+            )
+            return {
+                "booking_intent": True,
+                "booking_action": "confirm",
+                "name_collection_active": True,
+                "booked_slot": chosen_slot,
+                "selected_slot_index": actual_idx,
+                "slot_presented_at": datetime.now(timezone.utc).isoformat(),
+                "calendar_event_id": None,
+            }
+
+        # NAME-03: Patient name present — create event with name in title
+        patient_name: str = state["patient_name"]
         event_id = calendar_service.create_event(
             calendar_id=calendar_id,
             credentials_dict=credentials_dict,
             start_iso=chosen_slot["start"],
             end_iso=chosen_slot["end"],
             phone_number=phone_number,
+            title=f"Turno — {patient_name}",
         )
 
     except Exception as exc:

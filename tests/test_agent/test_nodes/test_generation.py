@@ -885,3 +885,118 @@ def test_rag04_empty_tool_result_becomes_sin_resultados_message():
     assert tool_msgs[0].content == "Sin resultados."
     # Final response is the second LLM response
     assert result["messages"][0].content == final_ai.content
+
+
+# ── Plan 15-02: NAME-04/05/06/07 — Generation name collection path ────────────
+
+
+_NAME_SLOT = {
+    "start": "2026-04-10T10:00:00-03:00",
+    "end": "2026-04-10T11:00:00-03:00",
+    "display": "Jueves 10 de Abril — 10:00 a 11:00 hs",
+}
+_NAME_EVENT_ID = "gcal_name_evt_001"
+
+
+def _name_state(last_message: str, name_attempts: int = 0, slot_presented_minutes_ago: int = 0) -> dict:
+    """Build state for name collection tests."""
+    from datetime import datetime, timezone, timedelta
+    slot_ts = (datetime.now(timezone.utc) - timedelta(minutes=slot_presented_minutes_ago)).isoformat()
+    return {
+        "tenant_id": _TENANT_ID,
+        "phone_number": _PHONE,
+        "messages": [HumanMessage(content=last_message)],
+        "name_collection_active": True,
+        "booked_slot": _NAME_SLOT,
+        "slot_presented_at": slot_ts,
+        "name_attempts": name_attempts,
+        "booking_intent": True,
+    }
+
+
+def _mock_tenant_with_calendar():
+    mock = MagicMock()
+    mock.calendar_id = "clinic@group.calendar.google.com"
+    mock.calendar_credentials = {"type": "service_account"}
+    return mock
+
+
+def test_name04_first_ask_increments_attempts():
+    """NAME-04: Turn 1 — name_attempts=0 → generation_node asks for name and returns name_attempts=1."""
+    from app.agent.nodes.generation import generation_node
+
+    with patch("app.agent.nodes.generation._llm", _make_mock_llm("¿Me podés dar tu nombre completo?")):
+        result = generation_node(_name_state("el primero", name_attempts=0))
+    assert result.get("name_attempts") == 1
+    assert "messages" in result
+
+
+def test_name04_name_provided_confirms_booking():
+    """NAME-04: Turn 2 — patient provides name → generation_node creates event and confirms."""
+    from app.agent.nodes.generation import generation_node
+
+    with (
+        patch("app.agent.nodes.generation._llm", _make_mock_llm("Perfecto, Juan.")),
+        patch("app.agent.nodes.generation.tenant_service") as mock_ts,
+        patch("app.agent.nodes.generation.calendar_service") as mock_cs,
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant_with_calendar()
+        mock_cs.create_event.return_value = _NAME_EVENT_ID
+
+        result = generation_node(_name_state("Juan Pérez", name_attempts=1))
+
+    assert result.get("patient_name") == "Juan Pérez"
+    assert result.get("calendar_event_id") == _NAME_EVENT_ID
+    assert result.get("name_collection_active") is False
+    mock_cs.create_event.assert_called_once()
+
+
+def test_name06_event_title_contains_patient_name():
+    """NAME-06: calendar event created with title='Turno — {patient_name}'."""
+    from app.agent.nodes.generation import generation_node
+
+    with (
+        patch("app.agent.nodes.generation._llm", _make_mock_llm("Listo, María.")),
+        patch("app.agent.nodes.generation.tenant_service") as mock_ts,
+        patch("app.agent.nodes.generation.calendar_service") as mock_cs,
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant_with_calendar()
+        mock_cs.create_event.return_value = _NAME_EVENT_ID
+
+        generation_node(_name_state("me llamo María López", name_attempts=1))
+
+    call_kwargs = mock_cs.create_event.call_args[1]
+    assert call_kwargs.get("title") == "Turno — María López"
+
+
+def test_name04_booking_keyword_asks_again():
+    """NAME-04: Turn 2 — unrecognizable input → asks again, name_attempts increments to 2."""
+    from app.agent.nodes.generation import generation_node
+
+    with patch("app.agent.nodes.generation._llm", _make_mock_llm("¿Podés decirme tu nombre?")):
+        # Single-word inputs and inputs with punctuation are not treated as full names
+        result = generation_node(_name_state("dale", name_attempts=1))
+    assert result.get("name_attempts") == 2
+    assert result.get("patient_name") is None
+
+
+def test_name05_no_name_after_two_attempts_triggers_handoff():
+    """NAME-05: name_attempts=2 and no name → is_paused=True for human handoff."""
+    from app.agent.nodes.generation import generation_node
+
+    with patch("app.agent.nodes.generation._llm", _make_mock_llm("Te paso con un asesor.")):
+        # Use message with punctuation to ensure it's not extracted as a name
+        result = generation_node(_name_state("no, prefiero no", name_attempts=2))
+    assert result.get("is_paused") is True
+    assert result.get("name_collection_active") is False
+
+
+def test_name07_expired_slot_clears_name_collection():
+    """NAME-07: slot older than 30 minutes → slot expired response, name_collection_active=False."""
+    from app.agent.nodes.generation import generation_node
+
+    with patch("app.agent.nodes.generation._llm", _make_mock_llm("El turno expiró.")):
+        result = generation_node(_name_state("María", name_attempts=1, slot_presented_minutes_ago=31))
+    assert result.get("name_collection_active") is False
+    assert result.get("patient_name") is None
+    assert "messages" in result

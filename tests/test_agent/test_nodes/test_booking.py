@@ -453,13 +453,15 @@ def test_confirm_uses_state_slots_without_calendar_call():
         mock_ts.get_tenant_config.return_value = _mock_tenant()
         mock_cs.create_event.return_value = _EVENT_ID
 
-        result = booking_node(_base_state("el 1", available_slots=_FAKE_SLOTS))
+        result = booking_node(_base_state("el 1", available_slots=_FAKE_SLOTS, patient_name="Test Patient"))
 
     mock_cs.get_available_slots.assert_not_called()
     assert result["booking_intent"] is True
     assert result["booking_action"] == "confirm"
     assert result.get("booked_slot") == _FAKE_SLOTS[0]
     assert result.get("calendar_event_id") == _EVENT_ID
+    call_kwargs = mock_cs.create_event.call_args[1]
+    assert call_kwargs.get("title") == "Turno — Test Patient"
 
 
 def test_confirm_fallback_calls_calendar_when_no_state_slots():
@@ -474,7 +476,7 @@ def test_confirm_fallback_calls_calendar_when_no_state_slots():
         mock_cs.get_available_slots.return_value = _FAKE_SLOTS
         mock_cs.create_event.return_value = _EVENT_ID
 
-        result = booking_node(_base_state("el 2"))  # no available_slots key
+        result = booking_node(_base_state("el 2", patient_name="Test Patient"))  # no available_slots key
 
     mock_cs.get_available_slots.assert_called_once()
     assert result["booking_intent"] is True
@@ -493,7 +495,67 @@ def test_confirm_fallback_calls_calendar_when_state_slots_empty():
         mock_cs.get_available_slots.return_value = _FAKE_SLOTS
         mock_cs.create_event.return_value = _EVENT_ID
 
-        result = booking_node(_base_state("el 1", available_slots=[]))
+        result = booking_node(_base_state("el 1", available_slots=[], patient_name="Test Patient"))
 
     mock_cs.get_available_slots.assert_called_once()
     assert result["booking_intent"] is True
+
+
+# ── Plan 15-01: NAME-02/03 — Booking deferral for name collection ─────────────
+
+
+def test_booking_node_defers_when_no_patient_name():
+    """NAME-02: booking confirm without patient_name → defers, returns name_collection_active=True."""
+    from app.agent.nodes.booking import booking_node
+
+    with (
+        patch("app.agent.nodes.booking.tenant_service") as mock_ts,
+        patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant()
+
+        result = booking_node(_base_state("el primero", available_slots=_FAKE_SLOTS))
+
+    assert result["name_collection_active"] is True
+    assert result["booking_intent"] is True
+    assert result["booking_action"] == "confirm"
+    assert result["booked_slot"] == _FAKE_SLOTS[0]
+    assert result["calendar_event_id"] is None
+    assert result.get("slot_presented_at") is not None
+    mock_cs.create_event.assert_not_called()
+
+
+def test_booking_node_deferral_includes_selected_slot_index():
+    """NAME-02: deferral return includes selected_slot_index so slot is preserved."""
+    from app.agent.nodes.booking import booking_node
+
+    with (
+        patch("app.agent.nodes.booking.tenant_service") as mock_ts,
+        patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant()
+        result = booking_node(_base_state("el 2", available_slots=_FAKE_SLOTS))
+
+    assert result.get("selected_slot_index") == 1
+    assert result.get("name_collection_active") is True
+
+
+def test_booking_node_creates_event_with_patient_name_in_title():
+    """NAME-03: booking confirm with patient_name → create_event called with title='Turno — {name}'."""
+    from app.agent.nodes.booking import booking_node
+
+    with (
+        patch("app.agent.nodes.booking.tenant_service") as mock_ts,
+        patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant()
+        mock_cs.create_event.return_value = _EVENT_ID
+
+        result = booking_node(
+            _base_state("el primero", available_slots=_FAKE_SLOTS, patient_name="Juan Pérez")
+        )
+
+    assert result.get("calendar_event_id") == _EVENT_ID
+    assert result.get("name_collection_active") is not True  # not deferred
+    call_kwargs = mock_cs.create_event.call_args[1]
+    assert call_kwargs.get("title") == "Turno — Juan Pérez"
