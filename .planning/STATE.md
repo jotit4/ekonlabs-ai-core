@@ -11,13 +11,13 @@
 
 ## Current Position
 
-**Current Phase:** Phase 13 — LLM-Generated Responses (complete)
-**Current Plan:** 13-02 complete
+**Current Phase:** Phase 14 — LLM-Driven RAG via Tool Calling (complete)
+**Current Plan:** 14-01 complete
 **Phase Status:** Complete
 **Milestone Status:** In progress — v1.2 started 2026-04-05
 
 ```
-Progress: [██████░░░░] 60% — 3 of 5 phases complete
+Progress: [████████░░] 80% — 4 of 5 phases complete
 ```
 
 ---
@@ -35,7 +35,7 @@ Progress: [██████░░░░] 60% — 3 of 5 phases complete
 | 11 | System Prompt & Model | Complete ✓ |
 | 12 | State Schema Extension | Complete ✓ |
 | 13 | LLM-Generated Responses | Complete ✓ |
-| 14 | LLM-Driven RAG via Tool Calling | Not started |
+| 14 | LLM-Driven RAG via Tool Calling | Complete ✓ |
 | 15 | Patient Name Collection | Not started |
 
 ---
@@ -99,9 +99,9 @@ None — roadmap defined, ready to plan Phase 11.
 
 ## Session Continuity
 
-**Last session:** 2026-04-05 — Phase 13 complete (LLM-generated responses, RESP-01 through RESP-07)
-**Resume from:** Phase 14 — LLM-Driven RAG via Tool Calling
+**Last session:** 2026-04-05 — Phase 14 complete (LLM-driven RAG via tool calling, RAG-01/02/03/04)
+**Resume from:** Phase 15 — Patient Name Collection
 
 ---
 
-*Last updated: 2026-04-05 | v1.2 Human-Feeling Agent — Phase 13 complete*
+*Last updated: 2026-04-05 | v1.2 Human-Feeling Agent — Phase 14 complete*

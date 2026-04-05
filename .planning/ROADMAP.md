@@ -13,7 +13,7 @@
 - [x] **Phase 11: System Prompt & Model** — Replace the system prompt with a full character brief and swap the model to gpt-4.1-mini
 - [x] **Phase 12: State Schema Extension** — Add three new ConversationState fields that enable multi-turn patient name collection
 - [x] **Phase 13: LLM-Generated Responses** — Restructure generation_node so the LLM writes all patient-facing text; hardcoded bypasses stay intact
-- [ ] **Phase 14: LLM-Driven RAG via Tool Calling** — Bind search_knowledge_tool to the LLM inline; make rag_retrieval_node a no-op
+- [x] **Phase 14: LLM-Driven RAG via Tool Calling** — Bind search_knowledge_tool to the LLM inline; make rag_retrieval_node a no-op
 - [ ] **Phase 15: Patient Name Collection** — Full multi-turn name collection flow before booking confirmation, with calendar title passthrough
 
 ---
@@ -62,7 +62,7 @@
   2. `rag_retrieval_node` returns `{}` and does not populate `rag_context`; the graph edge from rag_retrieval to generation is preserved
   3. For non-booking, non-scheduling messages, `tool_choice` is forced (not `"auto"`); the LLM does not answer clinic-specific questions from training data
   4. If the tool returns an empty result, the LLM responds with "no tengo esa información" (or equivalent) — it does not hallucinate clinic data
-**Plans**: TBD
+**Plans**: 14-01-PLAN.md
 
 ### Phase 15: Patient Name Collection
 **Goal**: The agent asks for the patient's full name before confirming any booking, collects it within 2 turns, creates the calendar event with the patient's name in the title, and hands off to human staff if the name is not provided after 2 attempts
@@ -85,7 +85,7 @@
 | 11. System Prompt & Model | 1/1 | Complete | 2026-04-05 |
 | 12. State Schema Extension | 1/1 | Complete | 2026-04-05 |
 | 13. LLM-Generated Responses | 2/2 | Complete | 2026-04-05 |
-| 14. LLM-Driven RAG via Tool Calling | 0/? | Not started | — |
+| 14. LLM-Driven RAG via Tool Calling | 1/1 | Complete | 2026-04-05 |
 | 15. Patient Name Collection | 0/? | Not started | — |
 
 ---
