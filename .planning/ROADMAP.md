@@ -10,8 +10,8 @@
 
 ## Phases
 
-- [ ] **Phase 11: System Prompt & Model** — Replace the system prompt with a full character brief and swap the model to gpt-4.1-mini
-- [ ] **Phase 12: State Schema Extension** — Add three new ConversationState fields that enable multi-turn patient name collection
+- [x] **Phase 11: System Prompt & Model** — Replace the system prompt with a full character brief and swap the model to gpt-4.1-mini
+- [x] **Phase 12: State Schema Extension** — Add three new ConversationState fields that enable multi-turn patient name collection
 - [ ] **Phase 13: LLM-Generated Responses** — Restructure generation_node so the LLM writes all patient-facing text; hardcoded bypasses stay intact
 - [ ] **Phase 14: LLM-Driven RAG via Tool Calling** — Bind search_knowledge_tool to the LLM inline; make rag_retrieval_node a no-op
 - [ ] **Phase 15: Patient Name Collection** — Full multi-turn name collection flow before booking confirmation, with calendar title passthrough
@@ -29,7 +29,7 @@
   2. The system prompt contains an explicit instruction to call `search_knowledge_tool` for any clinic-specific information (prices, schedules, services, policies)
   3. The LLM model identifier in generation.py is `gpt-4.1-mini` (not `gpt-4o-mini`)
   4. The LLM temperature in generation.py is `0.5`
-**Plans**: TBD
+**Plans**: 11-01-PLAN.md
 
 ### Phase 12: State Schema Extension
 **Goal**: ConversationState carries the three new fields required for multi-turn name collection without breaking any existing tests
@@ -39,7 +39,7 @@
   1. `ConversationState` in state.py has `patient_name: NotRequired[str | None]`, `name_collection_active: NotRequired[bool]`, and `slot_presented_at: NotRequired[str | None]`
   2. All existing tests pass unchanged after the schema change (NotRequired fields are absent by default)
   3. A test that instantiates ConversationState without the new fields does not raise a KeyError or TypeError
-**Plans**: TBD
+**Plans**: 12-01-PLAN.md
 
 ### Phase 13: LLM-Generated Responses
 **Goal**: The LLM writes every patient-facing response — slot presentations use natural prose, booking confirmations embed structured data verbatim, and the two deterministic bypasses (shadow mode, anti-diagnostic) remain hardcoded and unchanged
@@ -82,8 +82,8 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 11. System Prompt & Model | 0/? | Not started | — |
-| 12. State Schema Extension | 0/? | Not started | — |
+| 11. System Prompt & Model | 1/1 | Complete | 2026-04-05 |
+| 12. State Schema Extension | 1/1 | Complete | 2026-04-05 |
 | 13. LLM-Generated Responses | 0/? | Not started | — |
 | 14. LLM-Driven RAG via Tool Calling | 0/? | Not started | — |
 | 15. Patient Name Collection | 0/? | Not started | — |
