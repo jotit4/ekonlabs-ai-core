@@ -8,6 +8,8 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, UploadFile, File, status
 from fastapi.responses import JSONResponse
 
+import redis as redis_lib
+
 from app.core.config import settings
 from app.models.tenant import TenantCreate, TenantRulesUpdate
 from app.services.tenant_service import create_tenant, update_tenant_rules
@@ -88,6 +90,24 @@ async def upload_knowledge_text_endpoint(
         content={
             "status": "success",
             "data": {"chunks_inserted": chunks, "filename": source_filename},
+            "meta": {"timestamp": datetime.now(timezone.utc).isoformat()},
+        },
+    )
+
+
+@router.delete("/admin/dedup-cache")
+async def clear_dedup_cache(
+    _: None = Depends(_require_admin_api_key),
+) -> JSONResponse:
+    """Limpia todos los keys dedup:* de Redis. Útil para resetear entre testeos."""
+    r = redis_lib.from_url(settings.REDIS_URL)
+    keys = r.keys("dedup:*")
+    deleted = r.delete(*keys) if keys else 0
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "status": "success",
+            "data": {"keys_deleted": deleted},
             "meta": {"timestamp": datetime.now(timezone.utc).isoformat()},
         },
     )
