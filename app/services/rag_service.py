@@ -68,6 +68,64 @@ def _release_db_connection(conn) -> None:
         pass  # pool already closed or conn already returned
 
 
+def ingest_text(tenant_id: str, text: str, source_filename: str) -> int:
+    """Chunk plain text, embed it, and store all chunks in knowledge_chunks.
+
+    Args:
+        tenant_id: UUID of the tenant that owns this content.
+        text: Raw text content to ingest.
+        source_filename: Logical name stored in the DB (e.g. "isadi-info.txt").
+
+    Returns:
+        Number of chunks inserted.
+
+    Raises:
+        AppException: RAG_INGEST_FAILED on any error.
+    """
+    try:
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=_CHUNK_SIZE,
+            chunk_overlap=_CHUNK_OVERLAP,
+        )
+        chunks = splitter.split_text(text)
+
+        if not chunks:
+            logger.warning("rag.ingest.no_chunks", tenant_id=tenant_id, file=source_filename)
+            return 0
+
+        embedder = _get_embedder()
+        vectors = embedder.embed_documents(chunks)
+
+        conn = _get_db_connection()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM public.knowledge_chunks WHERE tenant_id = %s AND source_filename = %s",
+                        (tenant_id, source_filename),
+                    )
+                    for idx, (chunk, vector) in enumerate(zip(chunks, vectors)):
+                        cur.execute(
+                            """
+                            INSERT INTO public.knowledge_chunks
+                                (tenant_id, content, embedding, source_filename, chunk_index)
+                            VALUES (%s, %s, %s, %s, %s)
+                            """,
+                            (tenant_id, chunk, vector, source_filename, idx),
+                        )
+        finally:
+            _release_db_connection(conn)
+
+        logger.info("rag.ingest.done", tenant_id=tenant_id, file=source_filename, chunks=len(chunks))
+        return len(chunks)
+
+    except AppException:
+        raise
+    except Exception as exc:
+        logger.error("rag.ingest.error", tenant_id=tenant_id, error=str(exc))
+        raise AppException("RAG_INGEST_FAILED", f"Error al ingestar texto: {exc}", 500) from exc
+
+
 def ingest_document(tenant_id: str, file_path: str, source_filename: str) -> int:
     """Load a PDF, chunk it, embed it, and store all chunks in knowledge_chunks.
 

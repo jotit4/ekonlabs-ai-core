@@ -5,13 +5,13 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, UploadFile, File, status
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.models.tenant import TenantCreate, TenantRulesUpdate
 from app.services.tenant_service import create_tenant, update_tenant_rules
-from app.services.rag_service import ingest_document
+from app.services.rag_service import ingest_document, ingest_text
 
 router = APIRouter()
 
@@ -69,6 +69,25 @@ async def upload_knowledge_endpoint(
         content={
             "status": "success",
             "data": {"chunks_inserted": chunks, "filename": file.filename},
+            "meta": {"timestamp": datetime.now(timezone.utc).isoformat()},
+        },
+    )
+
+
+@router.post("/tenants/{tenant_id}/knowledge/text")
+async def upload_knowledge_text_endpoint(
+    tenant_id: UUID,
+    source_filename: str = Body(...),
+    content: str = Body(...),
+    _: None = Depends(_require_admin_api_key),
+) -> JSONResponse:
+    """Ingesta texto plano como knowledge base RAG para el tenant."""
+    chunks = await asyncio.to_thread(ingest_text, str(tenant_id), content, source_filename)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "status": "success",
+            "data": {"chunks_inserted": chunks, "filename": source_filename},
             "meta": {"timestamp": datetime.now(timezone.utc).isoformat()},
         },
     )
