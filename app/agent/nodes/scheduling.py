@@ -161,6 +161,10 @@ def has_scheduling_intent(query: str) -> bool:
     if "disponibilidad" in tokens or "disponible" in tokens:
         return bool(tokens & (_SCHEDULING_CONTEXT_TOKENS | _TIME_HINTS))
 
+    # "para [algo] esta semana/hoy/mañana" — respuesta implícita a oferta de turno
+    if "para" in normalized_query and bool(tokens & _TIME_HINTS):
+        return True
+
     return False
 
 
