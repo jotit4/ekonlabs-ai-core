@@ -73,12 +73,14 @@ def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", ascii_text.lower()).strip()
 
 
-def _detect_slot_index(normalized_query: str) -> int | None:
+def _detect_slot_index(normalized_query: str, available_slots: list[dict] | None = None) -> int | None:
     """Retorna el índice del slot seleccionado (0, 1 o 2), o None si no hay match claro.
 
-    Phrase keys (multi-word) use substring matching — no ambiguity risk.
-    Digit keys ("1", "2", "3") use word-boundary regex to prevent false matches
-    on "14:30" or "21 de abril".
+    Estrategias en orden de prioridad:
+    1. Frases ordinales ("el primero", "el segundo", etc.)
+    2. "el N" con word-boundary para evitar falsos positivos en fechas
+    3. Dígito suelto con word-boundary
+    4. Hora mencionada ("a las 11", "las 10", "9 hs") cruzada contra available_slots
     """
     PHRASE_KEYS = {
         "el primero": 0, "la primera": 0,
@@ -98,6 +100,19 @@ def _detect_slot_index(normalized_query: str) -> int | None:
     for digit, idx in DIGIT_KEYS.items():
         if re.search(rf"\b{digit}\b", normalized_query):
             return idx
+    # Time-based selection: "a las 11", "las 10", "las 9", "11 hs", "10:00", etc.
+    if available_slots:
+        hour_match = re.search(r"\b(\d{1,2})(?::00)?\s*(?:hs|h|hrs)?\b", normalized_query)
+        if hour_match:
+            mentioned_hour = int(hour_match.group(1))
+            for idx, slot in enumerate(available_slots[:3]):
+                try:
+                    from datetime import datetime
+                    slot_dt = datetime.fromisoformat(slot["start"])
+                    if slot_dt.hour == mentioned_hour:
+                        return idx
+                except (ValueError, KeyError):
+                    pass
     return None  # No match — ambiguous selection
 
 
@@ -210,7 +225,8 @@ def booking_node(state: ConversationState) -> dict:
             }
 
         # ── Flujo confirmación ─────────────────────────────────────────────
-        selected_idx = _detect_slot_index(normalized_query)
+        cached_slots = state.get("available_slots") or []
+        selected_idx = _detect_slot_index(normalized_query, cached_slots)
 
         if selected_idx is None:
             logger.info(
@@ -231,7 +247,7 @@ def booking_node(state: ConversationState) -> dict:
         # INFRA-05: Read cached slots from state first to eliminate the race window.
         # scheduling_node stores available_slots in state when presenting options.
         # Only re-fetch if state slots are absent or empty (e.g., conversation resumed).
-        slots = state.get("available_slots") or calendar_service.get_available_slots(
+        slots = cached_slots or calendar_service.get_available_slots(
             calendar_id=calendar_id,
             credentials_dict=credentials_dict,
             duration_minutes=settings.DEFAULT_SLOT_DURATION_MINUTES,
