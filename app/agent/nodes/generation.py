@@ -623,22 +623,34 @@ def generation_node(state: ConversationState) -> dict:
             raise
 
     # v1.3: Service selection path — el paciente no especificó qué servicio quiere
+    # Usa RAG (search_knowledge_tool) para obtener los servicios disponibles
     if state.get("service_selection_pending"):
         system_prompt_base: str = _build_system_prompt(state)
-        services = tenant_service.get_tenant_services(tenant_id)
-        services_list = "\n".join(f"- {svc.name}" for svc in services)
         system_content = (
             f"{system_prompt_base}\n\n"
             "ACCIÓN REQUERIDA — SELECCIÓN DE SERVICIO\n"
             "El paciente quiere sacar un turno pero no especificó para qué servicio. "
-            "Los servicios disponibles son:\n\n"
-            f"{services_list}\n\n"
-            "Preguntale al paciente qué servicio necesita, de forma breve y natural. "
-            "Usá voseo argentino."
+            "Usá search_knowledge_tool para consultar qué servicios ofrece la clínica, "
+            "y luego preguntale al paciente cuál necesita. "
+            "Presentá las opciones de forma natural y breve. Usá voseo argentino."
         )
         messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+        search_tool = make_search_tool(tenant_id)
+        llm_with_tools = _llm.bind_tools([search_tool], tool_choice="required")
         try:
-            response = _llm.invoke(messages_for_llm)
+            first_response = llm_with_tools.invoke(messages_for_llm)
+            tool_calls = getattr(first_response, "tool_calls", None)
+            if isinstance(tool_calls, list) and tool_calls:
+                tool_call = tool_calls[0]
+                tool_result = search_tool.invoke(tool_call["args"])
+                tool_message = ToolMessage(
+                    content=tool_result or "Sin resultados.",
+                    tool_call_id=tool_call["id"],
+                )
+                messages_with_tool = messages_for_llm + [first_response, tool_message]
+                response = _llm.invoke(messages_with_tool)
+            else:
+                response = first_response
             logger.info(
                 "generation_node.done",
                 tenant_id=tenant_id,
