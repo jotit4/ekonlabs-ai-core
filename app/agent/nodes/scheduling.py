@@ -115,7 +115,7 @@ def detect_service(query: str, services: list[Service]) -> Service | None:
         if len(first_word) >= 4 and first_word in normalized_query:
             return svc
 
-    # Match por prefijo: cada palabra del query contra el nombre del servicio
+    # Match por prefijo: cada palabra del query contra el nombre completo del servicio
     # ej: "fisio" matchea "Fisioterapia", "kine" matchea "Kinesiología"
     query_words = normalized_query.split()
     for svc in services:
@@ -123,6 +123,17 @@ def detect_service(query: str, services: list[Service]) -> Service | None:
         for word in query_words:
             if len(word) >= 4 and svc_normalized.startswith(word):
                 return svc
+
+    # Match por prefijo contra CADA PALABRA del nombre del servicio
+    # ej: "traumatologia" matchea "Rehabilitación traumatológica" (segunda palabra)
+    for svc in services:
+        svc_words = _normalize_text(svc.name).split()
+        for svc_word in svc_words:
+            if len(svc_word) < 4:
+                continue
+            for query_word in query_words:
+                if len(query_word) >= 4 and svc_word.startswith(query_word):
+                    return svc
 
     return None
 
