@@ -156,8 +156,17 @@ def booking_node(state: ConversationState) -> dict:
         # Cancelación tiene precedencia sobre confirmación si ambas se detectan
         booking_action = "cancel" if is_cancel else "confirm"
 
-        calendar_id = tenant_config.calendar_id
         credentials_dict = tenant_config.calendar_credentials or {}
+        service_name = state.get("selected_service_name")
+        selected_service_id = state.get("selected_service_id")
+
+        # v1.3: usar calendar_id del servicio si está disponible
+        if selected_service_id:
+            services = tenant_service.get_tenant_services(tenant_id)
+            svc = next((s for s in services if str(s.service_id) == selected_service_id), None)
+            calendar_id = svc.calendar_id if svc else tenant_config.calendar_id
+        else:
+            calendar_id = tenant_config.calendar_id
 
         if not calendar_id:
             logger.warning("booking_node.no_calendar_id", tenant_id=tenant_id)
@@ -268,13 +277,14 @@ def booking_node(state: ConversationState) -> dict:
 
         # NAME-03: Patient name present — create event with name in title
         patient_name: str = state["patient_name"]
+        event_title = f"{service_name} — {patient_name}" if service_name else f"Turno — {patient_name}"
         event_id = calendar_service.create_event(
             calendar_id=calendar_id,
             credentials_dict=credentials_dict,
             start_iso=chosen_slot["start"],
             end_iso=chosen_slot["end"],
             phone_number=phone_number,
-            title=f"Turno — {patient_name}",
+            title=event_title,
         )
 
     except Exception as exc:

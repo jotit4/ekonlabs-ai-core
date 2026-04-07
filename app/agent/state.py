@@ -28,3 +28,7 @@ class ConversationState(TypedDict):
     name_collection_active: NotRequired[bool]       # True while agent is waiting for patient to provide name
     slot_presented_at: NotRequired[str | None]      # ISO timestamp when slots were presented; used for 30-min TTL check
     name_attempts: NotRequired[int]                 # Times agent has asked for patient name; absent = 0
+    # v1.3 — Multi-servicio
+    selected_service_id: NotRequired[str | None]    # UUID del servicio seleccionado por el paciente
+    selected_service_name: NotRequired[str | None]  # Nombre del servicio (para display y título de evento)
+    service_selection_pending: NotRequired[bool]    # True cuando el agente debe preguntar qué servicio quiere el paciente

@@ -1,7 +1,10 @@
+import unicodedata
+import re
+
 from app.core.database import get_supabase_client
 from app.core.exceptions import AppException
 from app.core.logging import get_logger
-from app.models.tenant import TenantCreate, TenantResponse, TenantRulesUpdate
+from app.models.tenant import TenantCreate, TenantResponse, TenantRulesUpdate, Service
 
 logger = get_logger(__name__)
 
@@ -188,6 +191,66 @@ def get_tenant_by_phone(phone_number: str) -> TenantResponse | None:
                 return None
 
     logger.warning("Tenant no encontrado por número de teléfono", phone=phone_number)
+    return None
+
+
+def _normalize_text(text: str) -> str:
+    """Normaliza texto para matching tolerante a tildes y espacios."""
+    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"\s+", " ", ascii_text.lower()).strip()
+
+
+def get_tenant_services(tenant_id: str) -> list[Service]:
+    """Retorna los servicios activos de un tenant ordenados por nombre.
+
+    Fail-safe: retorna [] ante cualquier error (tenant sin servicios no rompe el flujo).
+    """
+    client = get_supabase_client()
+    try:
+        result = (
+            client.table("services")
+            .select("*")
+            .eq("tenant_id", tenant_id)
+            .eq("active", True)
+            .order("name")
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning("get_tenant_services.error", tenant_id=tenant_id, error=str(exc))
+        return []
+
+    data = getattr(result, "data", None) or []
+    services = []
+    for row in data:
+        try:
+            services.append(Service.model_validate(row))
+        except Exception as exc:
+            logger.warning("get_tenant_services.invalid_row", tenant_id=tenant_id, error=str(exc))
+    return services
+
+
+def get_service_by_name(tenant_id: str, name: str) -> "Service | None":
+    """Busca un servicio activo del tenant por nombre normalizado (tolerante a tildes).
+
+    Compara contra todos los servicios activos del tenant usando matching normalizado.
+    Retorna el primer match exacto, luego el primer match por substring.
+    """
+    services = get_tenant_services(tenant_id)
+    if not services:
+        return None
+
+    normalized_query = _normalize_text(name)
+
+    # Exacto primero
+    for svc in services:
+        if _normalize_text(svc.name) == normalized_query:
+            return svc
+
+    # Substring
+    for svc in services:
+        if normalized_query in _normalize_text(svc.name) or _normalize_text(svc.name) in normalized_query:
+            return svc
+
     return None
 
 

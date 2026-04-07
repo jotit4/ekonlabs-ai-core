@@ -50,3 +50,16 @@ class TenantConfig(BaseModel):
 class TenantResponse(TenantConfig):
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class Service(BaseModel):
+    """Servicio / profesional de un tenant con su propio Google Calendar."""
+    service_id: str
+    tenant_id: str
+    name: str                           # ej: "Kinesiología", "Pilates"
+    calendar_id: str
+    professional_name: str | None = None  # ej: "María García"
+    duration_minutes: int = 60
+    active: bool = True
+
+    model_config = ConfigDict(str_strip_whitespace=True)

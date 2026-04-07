@@ -7,6 +7,7 @@ import unicodedata
 from app.agent.state import ConversationState
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.models.tenant import Service
 from app.services import calendar_service, tenant_service
 
 logger = get_logger(__name__)
@@ -86,6 +87,37 @@ def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", ascii_text.lower()).strip()
 
 
+def detect_service(query: str, services: list[Service]) -> Service | None:
+    """Detecta qué servicio menciona el paciente en su mensaje.
+
+    Estrategia:
+        1. Match exacto del nombre del servicio normalizado.
+        2. Match por substring (nombre del servicio contenido en el query).
+        3. Match por palabra clave del nombre del servicio (primera palabra significativa).
+
+    Retorna el primer servicio que matchea, o None si no hay coincidencia clara.
+    """
+    if not services:
+        return None
+
+    normalized_query = _normalize_text(query)
+
+    for svc in services:
+        svc_normalized = _normalize_text(svc.name)
+        # Match exacto
+        if svc_normalized in normalized_query:
+            return svc
+
+    # Match por primera palabra del nombre (ej: "kinesiología" matchea "quiero turno con kinesiólogo")
+    for svc in services:
+        svc_normalized = _normalize_text(svc.name)
+        first_word = svc_normalized.split()[0] if svc_normalized.split() else svc_normalized
+        if len(first_word) >= 4 and first_word in normalized_query:
+            return svc
+
+    return None
+
+
 def has_scheduling_intent(query: str) -> bool:
     """Clasificador determinista con guardas para evitar falsos positivos comunes."""
     normalized_query = _normalize_text(query)
@@ -157,8 +189,53 @@ def scheduling_node(state: ConversationState) -> dict:
             logger.info("scheduling_node.shadow_mode_active", tenant_id=tenant_id)
             return {"scheduling_intent": False, "shadow_mode_active": True}
 
-        calendar_id = tenant_config.calendar_id
-        credentials_dict = tenant_config.calendar_credentials
+        credentials_dict = tenant_config.calendar_credentials or {}
+
+        # v1.3: soporte multi-servicio
+        services = tenant_service.get_tenant_services(tenant_id)
+
+        if len(services) == 0:
+            # Backwards compatible: tenant sin servicios → usar calendar_id del tenant
+            calendar_id = tenant_config.calendar_id
+            selected_service_id = None
+            selected_service_name = None
+            duration_minutes = settings.DEFAULT_SLOT_DURATION_MINUTES
+        elif len(services) == 1:
+            # Un solo servicio → seleccionar automáticamente
+            svc = services[0]
+            calendar_id = svc.calendar_id
+            selected_service_id = str(svc.service_id)
+            selected_service_name = svc.name
+            duration_minutes = svc.duration_minutes
+        else:
+            # Múltiples servicios → intentar detectar del mensaje
+            # Primero revisar si ya hay un servicio seleccionado en el estado
+            existing_service_id = state.get("selected_service_id")
+            if existing_service_id:
+                svc = next((s for s in services if str(s.service_id) == existing_service_id), None)
+            else:
+                svc = detect_service(query, services)
+
+            if svc is None:
+                # No se detectó servicio → pedir al paciente que elija
+                logger.info(
+                    "scheduling_node.done",
+                    tenant_id=tenant_id,
+                    scheduling_intent=True,
+                    service_selection_pending=True,
+                    slots_count=0,
+                    query_preview=query[:80],
+                )
+                return {
+                    "scheduling_intent": True,
+                    "service_selection_pending": True,
+                    "available_slots": [],
+                }
+
+            calendar_id = svc.calendar_id
+            selected_service_id = str(svc.service_id)
+            selected_service_name = svc.name
+            duration_minutes = svc.duration_minutes
 
         if not calendar_id:
             logger.warning(
@@ -176,8 +253,8 @@ def scheduling_node(state: ConversationState) -> dict:
 
         slots = calendar_service.get_available_slots(
             calendar_id=calendar_id,
-            credentials_dict=credentials_dict or {},
-            duration_minutes=settings.DEFAULT_SLOT_DURATION_MINUTES,
+            credentials_dict=credentials_dict,
+            duration_minutes=duration_minutes,
             lookahead_hours=settings.SCHEDULING_LOOKAHEAD_HOURS,
         )
 
@@ -190,6 +267,12 @@ def scheduling_node(state: ConversationState) -> dict:
         tenant_id=tenant_id,
         scheduling_intent=True,
         slots_count=len(slots),
+        selected_service=selected_service_name,
         query_preview=query[:80],
     )
-    return {"scheduling_intent": True, "available_slots": slots}
+    result: dict = {"scheduling_intent": True, "available_slots": slots}
+    if selected_service_id is not None:
+        result["selected_service_id"] = selected_service_id
+    if selected_service_name is not None:
+        result["selected_service_name"] = selected_service_name
+    return result
