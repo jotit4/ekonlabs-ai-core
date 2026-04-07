@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-# Start RQ worker in background
-rq worker --url "$REDIS_URL" default &
+# Start RQ worker via our Python module (ensures LangSmith env vars are propagated)
+python -m app.workers.worker &
 WORKER_PID=$!
 
 # Start FastAPI (foreground — si muere, muere el contenedor)
