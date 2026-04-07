@@ -565,16 +565,14 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
 
         if extracted_name:
             # Nombre encontrado → activar Fase B, pedir DNI
-            slot_display = booked_slot.get("display", "")
             system_content = (
                 f"{system_prompt_base}\n\n"
-                "ACCIÓN REQUERIDA — NOMBRE CAPTURADO, SOLICITAR DNI\n"
-                f"El paciente se llama {extracted_name} y eligió el turno:\n\n"
-                f"{slot_display}\n\n"
-                "Confirmá que recibiste su nombre y pedile el número de DNI (documento nacional de identidad) "
-                "para terminar de registrar el turno. "
-                "Si no lo tiene a mano, decile que puede continuar sin él. "
-                "Usá voseo argentino cálido. Sé breve."
+                "ACCIÓN REQUERIDA — PEDIR DNI\n"
+                f"El paciente te dijo que se llama {extracted_name}. Anotaste su nombre.\n"
+                "Tu único objetivo ahora es pedirle su número de DNI (documento nacional de identidad). "
+                "NO menciones el turno ni preguntes si confirma. Solo pedí el DNI. "
+                "Aclará que si no lo tiene a mano puede seguir sin él. "
+                "Una sola oración, voseo argentino."
             )
             messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
             response = _llm.invoke(messages_for_llm)

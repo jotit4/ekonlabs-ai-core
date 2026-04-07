@@ -231,49 +231,56 @@ def booking_node(state: ConversationState) -> dict:
         selected_idx = _detect_slot_index(normalized_query, cached_slots)
 
         if selected_idx is None:
-            logger.info(
-                "booking_node.done",
-                tenant_id=tenant_id,
-                booking_intent=True,
-                booking_action="confirm",
-                booking_ambiguous_slot=True,
-                query_preview=query[:80],
+            # Si el mensaje no tiene número de slot pero ya hay un slot seleccionado en state
+            # (ej: "si confirmo" después de dar el nombre), reusar el booked_slot existente.
+            existing_booked_slot = state.get("booked_slot")
+            if existing_booked_slot:
+                chosen_slot = existing_booked_slot
+                actual_idx = state.get("selected_slot_index") or 0
+            else:
+                logger.info(
+                    "booking_node.done",
+                    tenant_id=tenant_id,
+                    booking_intent=True,
+                    booking_action="confirm",
+                    booking_ambiguous_slot=True,
+                    query_preview=query[:80],
+                )
+                return {
+                    "booking_intent": True,
+                    "booking_action": "confirm",
+                    "booking_ambiguous_slot": True,
+                    "calendar_event_id": None,
+                }
+        else:
+            # INFRA-05: Read cached slots from state first to eliminate the race window.
+            # scheduling_node stores available_slots in state when presenting options.
+            # Only re-fetch if state slots are absent or empty (e.g., conversation resumed).
+            slots = cached_slots or calendar_service.get_available_slots(
+                calendar_id=calendar_id,
+                credentials_dict=credentials_dict,
+                duration_minutes=settings.DEFAULT_SLOT_DURATION_MINUTES,
+                lookahead_hours=settings.SCHEDULING_LOOKAHEAD_HOURS,
             )
-            return {
-                "booking_intent": True,
-                "booking_action": "confirm",
-                "booking_ambiguous_slot": True,
-                "calendar_event_id": None,
-            }
 
-        # INFRA-05: Read cached slots from state first to eliminate the race window.
-        # scheduling_node stores available_slots in state when presenting options.
-        # Only re-fetch if state slots are absent or empty (e.g., conversation resumed).
-        slots = cached_slots or calendar_service.get_available_slots(
-            calendar_id=calendar_id,
-            credentials_dict=credentials_dict,
-            duration_minutes=settings.DEFAULT_SLOT_DURATION_MINUTES,
-            lookahead_hours=settings.SCHEDULING_LOOKAHEAD_HOURS,
-        )
+            if not slots:
+                logger.info(
+                    "booking_node.done",
+                    tenant_id=tenant_id,
+                    booking_intent=True,
+                    booking_action="confirm",
+                    calendar_event_id=None,
+                    query_preview=query[:80],
+                )
+                return {
+                    "booking_intent": True,
+                    "booking_action": "confirm",
+                    "calendar_event_id": None,
+                }
 
-        if not slots:
-            logger.info(
-                "booking_node.done",
-                tenant_id=tenant_id,
-                booking_intent=True,
-                booking_action="confirm",
-                calendar_event_id=None,
-                query_preview=query[:80],
-            )
-            return {
-                "booking_intent": True,
-                "booking_action": "confirm",
-                "calendar_event_id": None,
-            }
-
-        # Si el índice pedido supera los slots disponibles, usar el primero
-        actual_idx = selected_idx if selected_idx < len(slots) else 0
-        chosen_slot = slots[actual_idx]
+            # Si el índice pedido supera los slots disponibles, usar el primero
+            actual_idx = selected_idx if selected_idx < len(slots) else 0
+            chosen_slot = slots[actual_idx]
 
         # v1.4: lookup paciente existente por phone_number para skip de recolección
         patient_name_state: str | None = state.get("patient_name")
