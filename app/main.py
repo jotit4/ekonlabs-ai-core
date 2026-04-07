@@ -1,4 +1,5 @@
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -21,6 +22,12 @@ from app.api.v1.webhooks import router as webhooks_router
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    # Propagar variables de LangSmith a os.environ para que LangChain las lea
+    if settings.LANGCHAIN_TRACING_V2.lower() == "true":
+        os.environ["LANGCHAIN_TRACING_V2"] = "true"
+        os.environ["LANGCHAIN_API_KEY"] = settings.LANGCHAIN_API_KEY
+        os.environ["LANGCHAIN_PROJECT"] = settings.LANGCHAIN_PROJECT
+
     configure_logging()
     logger = get_logger(__name__)
     if settings.APP_ENV.lower() in {"test", "testing"}:
