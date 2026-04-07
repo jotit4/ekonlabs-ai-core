@@ -4,6 +4,9 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+
 from app.agent.state import ConversationState
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -11,6 +14,8 @@ from app.models.tenant import Service
 from app.services import calendar_service, tenant_service
 
 logger = get_logger(__name__)
+
+_classifier_llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0, request_timeout=10)
 
 
 _NEGATIVE_PATTERNS: frozenset[str] = frozenset({
@@ -161,11 +166,28 @@ def has_scheduling_intent(query: str) -> bool:
     if "disponibilidad" in tokens or "disponible" in tokens:
         return bool(tokens & (_SCHEDULING_CONTEXT_TOKENS | _TIME_HINTS))
 
-    # "para [algo] esta semana/hoy/mañana" — respuesta implícita a oferta de turno
-    if "para" in normalized_query and bool(tokens & _TIME_HINTS):
-        return True
-
     return False
+
+
+def _llm_has_scheduling_intent(messages: list[BaseMessage]) -> bool:
+    """Clasifica intención de agendamiento usando el LLM con contexto conversacional completo.
+
+    Retorna True si el paciente está intentando sacar un turno — considerando
+    el historial completo, no solo el último mensaje. Fail-safe: retorna False ante errores.
+    """
+    try:
+        system = SystemMessage(content=(
+            "Sos un clasificador de intención. Respondé ÚNICAMENTE con 'SI' o 'NO', sin explicación.\n\n"
+            "Pregunta: ¿En esta conversación el paciente está intentando sacar, reservar o "
+            "preguntar por disponibilidad de un turno de atención médica o de salud?\n\n"
+            "Considerá el contexto completo. Si el paciente responde a una oferta de turno "
+            "diciendo para qué servicio o cuándo quiere, eso es intención de agendamiento."
+        ))
+        response = _classifier_llm.invoke([system] + list(messages))
+        return "SI" in response.content.strip().upper()
+    except Exception as exc:
+        logger.warning("scheduling_node.llm_classifier_error", error=str(exc))
+        return False
 
 
 def scheduling_node(state: ConversationState) -> dict:
@@ -192,8 +214,9 @@ def scheduling_node(state: ConversationState) -> dict:
                 query = msg.content
                 break
 
-        # Detectar intención por keywords (clasificador determinista) — sin DB call
-        has_intent = has_scheduling_intent(query)
+        # Detectar intención: determinista primero (sin costo), LLM como fallback con contexto
+        messages = state.get("messages") or []
+        has_intent = has_scheduling_intent(query) or _llm_has_scheduling_intent(messages)
 
         if not has_intent:
             logger.info(
