@@ -10,7 +10,7 @@ from langchain_openai import ChatOpenAI
 
 from app.agent.state import ConversationState
 from app.core.logging import get_logger
-from app.services import calendar_service, tenant_service
+from app.services import calendar_service, patient_service, tenant_service
 
 logger = get_logger(__name__)
 
@@ -298,6 +298,36 @@ def _extract_patient_name(text: str) -> str | None:
     return cleaned
 
 
+def _extract_dni(text: str) -> str | None:
+    """Extrae DNI argentino de un mensaje de WhatsApp.
+
+    Acepta formatos: "32456789", "32.456.789", "mi DNI es 32456789", "documento: 12345678".
+    Retorna el DNI como string de 7-8 dígitos sin puntos, o None si no hay match válido.
+    """
+    cleaned = text.strip().lower()
+    for prefix in (
+        "mi dni es ",
+        "mi dni:",
+        "dni es ",
+        "dni: ",
+        "dni ",
+        "documento nacional ",
+        "documento: ",
+        "documento ",
+        "es el ",
+        "es ",
+        "mi documento es ",
+    ):
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+            break
+    # Eliminar puntos separadores de miles ("32.456.789" → "32456789")
+    cleaned = cleaned.replace(".", "").replace(" ", "")
+    if re.match(r"^\d{7,8}$", cleaned):
+        return cleaned
+    return None
+
+
 def _is_slot_expired(state: ConversationState) -> bool:
     """Return True if >30 minutes have passed since slot_presented_at (NAME-07)."""
     slot_presented_at = state.get("slot_presented_at")
@@ -312,18 +342,120 @@ def _is_slot_expired(state: ConversationState) -> bool:
         return False
 
 
-def _handle_name_collection(state: ConversationState, tenant_id: str) -> dict:
-    """Handle the name collection turns when name_collection_active=True.
+def _finalize_registration(
+    state: ConversationState,
+    tenant_id: str,
+    patient_name: str,
+    dni: str | None,
+) -> dict:
+    """Phase C: create patient record in DB, calendar event, appointment record.
 
-    Turn 1 (name_attempts == 0): Ask for name, set name_attempts=1.
-    Turn 2+ (name_attempts >= 1): Try to extract name from last human message.
-      - Name found → create calendar event inline, confirm booking (NAME-06).
-      - No name, attempts < 2 → ask again, increment name_attempts.
-      - No name, attempts >= 2 → is_paused=True for human handoff (NAME-05).
-    Slot expiry → inform patient, clear name_collection_active (NAME-07).
+    Called after both name and DNI have been collected (or DNI skipped after 2 attempts).
+    Raises on calendar failure (caller's try/except wraps this call from _handle_registration).
+    Appointment creation failure is non-fatal (calendar event already created).
     """
-    name_attempts: int = state.get("name_attempts") or 0
+    phone_number = state["phone_number"]
+    service_name = state.get("selected_service_name")
+    selected_service_id = state.get("selected_service_id")
     booked_slot: dict = state.get("booked_slot") or {}
+    system_prompt_base = _build_system_prompt(state)
+
+    tenant_config = tenant_service.get_tenant_config(tenant_id)
+    creds = tenant_config.calendar_credentials or {}
+
+    # v1.3: usar calendar_id del servicio si está disponible
+    if selected_service_id:
+        services = tenant_service.get_tenant_services(tenant_id)
+        svc = next((s for s in services if str(s.service_id) == selected_service_id), None)
+        cal_id = svc.calendar_id if svc else tenant_config.calendar_id
+    else:
+        cal_id = tenant_config.calendar_id
+
+    # v1.4: crear o actualizar ficha del paciente
+    patient = patient_service.get_or_create_patient(
+        tenant_id=tenant_id,
+        phone_number=phone_number,
+        full_name=patient_name,
+        dni=dni,
+    )
+
+    # Crear evento en Google Calendar
+    event_title = f"{service_name} — {patient_name}" if service_name else f"Turno — {patient_name}"
+    event_id = calendar_service.create_event(
+        calendar_id=cal_id,
+        credentials_dict=creds,
+        start_iso=booked_slot["start"],
+        end_iso=booked_slot["end"],
+        phone_number=phone_number,
+        title=event_title,
+        patient_name=patient_name,
+        dni=dni,
+    )
+
+    # Persistir appointment en DB (fail-safe: no bloquea si falla)
+    try:
+        patient_service.create_appointment(
+            tenant_id=tenant_id,
+            patient_id=patient.patient_id,
+            service_id=selected_service_id,
+            calendar_event_id=event_id,
+            start_iso=booked_slot["start"],
+            end_iso=booked_slot["end"],
+        )
+    except Exception as appt_exc:
+        logger.error(
+            "generation_node.registration_appointment_error",
+            tenant_id=tenant_id,
+            error=str(appt_exc),
+        )
+
+    display = booked_slot.get("display", "")
+    system_content = (
+        f"{system_prompt_base}\n\n"
+        "ACCIÓN REQUERIDA — TURNO CONFIRMADO CON NOMBRE\n"
+        f"El turno fue reservado a nombre de {patient_name}. "
+        "Incluí el siguiente texto de turno en tu respuesta exactamente como aparece:\n\n"
+        f"{display}\n\n"
+        "Dirigite al paciente por su nombre. Usá voseo argentino cálido."
+    )
+    messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+    response = _llm.invoke(messages_for_llm)
+    logger.info(
+        "generation_node.done",
+        tenant_id=tenant_id,
+        response_type="registration_complete",
+        has_dni=bool(dni),
+    )
+    return {
+        "messages": [response],
+        "patient_name": patient_name,
+        "patient_dni": dni,
+        "patient_id": patient.patient_id,
+        "name_collection_active": False,
+        "dni_collection_active": False,
+        "calendar_event_id": event_id,
+    }
+
+
+def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
+    """Gestiona la recolección de datos del paciente: nombre (Fase A) → DNI (Fase B) → evento (Fase C).
+
+    Fase A — Nombre:
+        Turn 1 (name_attempts == 0): Pedir nombre, setear name_attempts=1.
+        Turn 2+ (name_attempts >= 1): Intentar extraer nombre del último mensaje.
+          - Nombre encontrado → activar Fase B (pedir DNI).
+          - Sin nombre tras 2 intentos → is_paused=True (handoff humano).
+
+    Fase B — DNI:
+        Turn 1 (dni_attempts == 0): Pedir DNI, setear dni_attempts=1.
+        Turn 2+ (dni_attempts >= 1): Intentar extraer DNI del último mensaje.
+          - DNI encontrado → Fase C.
+          - Sin DNI tras 2 intentos → Fase C sin DNI (no bloquea el turno).
+
+    Fase C — Finalización: crear ficha + evento en Calendar + appointment en DB.
+
+    Slot expirado (NAME-07): informar al paciente, limpiar flags.
+    """
     system_prompt_base: str = _build_system_prompt(state)
 
     # NAME-07: slot expiry check
@@ -340,15 +472,87 @@ def _handle_name_collection(state: ConversationState, tenant_id: str) -> dict:
         logger.info(
             "generation_node.done",
             tenant_id=tenant_id,
-            response_type="name_collection_slot_expired",
+            response_type="registration_slot_expired",
         )
         return {
             "messages": [response],
             "name_collection_active": False,
+            "dni_collection_active": False,
             "booking_intent": False,
         }
 
-    # Extract name from last human message (only if agent has already asked)
+    patient_name: str | None = state.get("patient_name")
+    booked_slot: dict = state.get("booked_slot") or {}
+
+    # ── Fase B: colección de DNI (nombre ya en state) ─────────────────────────
+    if patient_name and state.get("dni_collection_active") and not state.get("patient_dni"):
+        dni_attempts: int = state.get("dni_attempts") or 0
+
+        if dni_attempts >= 1:
+            messages = state.get("messages") or []
+            last_human_text = ""
+            for msg in reversed(messages):
+                if getattr(msg, "type", None) == "human" and getattr(msg, "content", ""):
+                    last_human_text = msg.content
+                    break
+
+            extracted_dni = _extract_dni(last_human_text)
+
+            if extracted_dni:
+                # DNI encontrado → Fase C
+                try:
+                    return _finalize_registration(state, tenant_id, patient_name, extracted_dni)
+                except Exception as exc:
+                    logger.error(
+                        "generation_node.registration_error",
+                        tenant_id=tenant_id,
+                        error=str(exc),
+                    )
+                    raise
+
+            # Sin DNI tras 2 intentos → Fase C sin DNI (no bloquea el turno)
+            if dni_attempts >= 2:
+                logger.info(
+                    "generation_node.registration_dni_skipped",
+                    tenant_id=tenant_id,
+                )
+                try:
+                    return _finalize_registration(state, tenant_id, patient_name, dni=None)
+                except Exception as exc:
+                    logger.error(
+                        "generation_node.registration_error",
+                        tenant_id=tenant_id,
+                        error=str(exc),
+                    )
+                    raise
+
+        # Pedir DNI (Turn 1, o re-preguntar)
+        slot_display = booked_slot.get("display", "")
+        system_content = (
+            f"{system_prompt_base}\n\n"
+            "ACCIÓN REQUERIDA — SOLICITAR DNI DEL PACIENTE\n"
+            f"El paciente ({patient_name}) eligió el turno:\n\n"
+            f"{slot_display}\n\n"
+            "Pedile su número de DNI (documento nacional de identidad) para terminar de registrar el turno. "
+            "Si no lo tiene a mano, decile que puede continuar sin él. "
+            "Pedíselo de forma natural y breve en voseo argentino."
+        )
+        messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+        response = _llm.invoke(messages_for_llm)
+        logger.info(
+            "generation_node.done",
+            tenant_id=tenant_id,
+            response_type="registration_dni_ask",
+            dni_attempts=dni_attempts,
+        )
+        return {
+            "messages": [response],
+            "dni_attempts": dni_attempts + 1,
+        }
+
+    # ── Fase A: colección de nombre ────────────────────────────────────────────
+    name_attempts: int = state.get("name_attempts") or 0
+
     if name_attempts >= 1:
         messages = state.get("messages") or []
         last_human_text = ""
@@ -357,64 +561,37 @@ def _handle_name_collection(state: ConversationState, tenant_id: str) -> dict:
                 last_human_text = msg.content
                 break
 
-        patient_name = _extract_patient_name(last_human_text)
+        extracted_name = _extract_patient_name(last_human_text)
 
-        if patient_name:
-            # NAME-06: create event inline with patient name in title
-            phone_number = state["phone_number"]
-            service_name = state.get("selected_service_name")
-            selected_service_id = state.get("selected_service_id")
-            try:
-                tenant_config = tenant_service.get_tenant_config(tenant_id)
-                creds = tenant_config.calendar_credentials or {}
-                # v1.3: usar calendar_id del servicio si está disponible
-                if selected_service_id:
-                    services = tenant_service.get_tenant_services(tenant_id)
-                    svc = next((s for s in services if str(s.service_id) == selected_service_id), None)
-                    cal_id = svc.calendar_id if svc else tenant_config.calendar_id
-                else:
-                    cal_id = tenant_config.calendar_id
-                event_title = f"{service_name} — {patient_name}" if service_name else f"Turno — {patient_name}"
-                event_id = calendar_service.create_event(
-                    calendar_id=cal_id,
-                    credentials_dict=creds,
-                    start_iso=booked_slot["start"],
-                    end_iso=booked_slot["end"],
-                    phone_number=phone_number,
-                    title=event_title,
-                )
-            except Exception as exc:
-                logger.error(
-                    "generation_node.name_collection_event_error",
-                    tenant_id=tenant_id,
-                    error=str(exc),
-                )
-                raise
-
-            display = booked_slot.get("display", "")
+        if extracted_name:
+            # Nombre encontrado → activar Fase B, pedir DNI
+            slot_display = booked_slot.get("display", "")
             system_content = (
                 f"{system_prompt_base}\n\n"
-                "ACCIÓN REQUERIDA — TURNO CONFIRMADO CON NOMBRE\n"
-                f"El turno fue reservado a nombre de {patient_name}. "
-                "Incluí el siguiente texto de turno en tu respuesta exactamente como aparece:\n\n"
-                f"{display}\n\n"
-                "Dirigite al paciente por su nombre. Usá voseo argentino cálido."
+                "ACCIÓN REQUERIDA — NOMBRE CAPTURADO, SOLICITAR DNI\n"
+                f"El paciente se llama {extracted_name} y eligió el turno:\n\n"
+                f"{slot_display}\n\n"
+                "Confirmá que recibiste su nombre y pedile el número de DNI (documento nacional de identidad) "
+                "para terminar de registrar el turno. "
+                "Si no lo tiene a mano, decile que puede continuar sin él. "
+                "Usá voseo argentino cálido. Sé breve."
             )
             messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
             response = _llm.invoke(messages_for_llm)
             logger.info(
                 "generation_node.done",
                 tenant_id=tenant_id,
-                response_type="booking_from_generation",
+                response_type="registration_name_captured_ask_dni",
             )
             return {
                 "messages": [response],
-                "patient_name": patient_name,
+                "patient_name": extracted_name,
                 "name_collection_active": False,
-                "calendar_event_id": event_id,
+                "dni_collection_active": True,
+                "dni_attempts": 0,
             }
 
-        # NAME-05: no name after 2 attempts → human handoff
+        # NAME-05: sin nombre tras 2 intentos → handoff humano
         if name_attempts >= 2:
             system_content = (
                 f"{system_prompt_base}\n\n"
@@ -428,7 +605,7 @@ def _handle_name_collection(state: ConversationState, tenant_id: str) -> dict:
             logger.info(
                 "generation_node.done",
                 tenant_id=tenant_id,
-                response_type="name_collection_handoff",
+                response_type="registration_name_handoff",
             )
             return {
                 "messages": [response],
@@ -436,7 +613,7 @@ def _handle_name_collection(state: ConversationState, tenant_id: str) -> dict:
                 "name_collection_active": False,
             }
 
-    # Ask for name (Turn 1, or re-ask on Turn 2 when no name found)
+    # Pedir nombre (Turn 1, o re-preguntar)
     slot_display = booked_slot.get("display", "")
     system_content = (
         f"{system_prompt_base}\n\n"
@@ -451,7 +628,7 @@ def _handle_name_collection(state: ConversationState, tenant_id: str) -> dict:
     logger.info(
         "generation_node.done",
         tenant_id=tenant_id,
-        response_type="name_collection_ask",
+        response_type="registration_name_ask",
         name_attempts=name_attempts,
     )
     return {
@@ -588,9 +765,10 @@ def generation_node(state: ConversationState) -> dict:
         )
         return {"messages": [AIMessage(content=ANTI_DIAGNOSTIC_RESPONSE)]}
 
-    # NAME-04/05/06/07: Name collection gate — intercepts before booking to collect patient name
-    if state.get("name_collection_active") and not state.get("patient_name"):
-        return _handle_name_collection(state, tenant_id)
+    # v1.4: Registration gate — intercepts to collect name (Phase A) and/or DNI (Phase B)
+    if (state.get("name_collection_active") and not state.get("patient_name")) or \
+       (state.get("dni_collection_active") and not state.get("patient_dni")):
+        return _handle_registration(state, tenant_id)
 
     # Booking path — LLM genera confirmaciones/cancelaciones de turno (RESP-02, RESP-03, RESP-05)
     booking_intent: bool = state.get("booking_intent", False)

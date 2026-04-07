@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from app.agent.state import ConversationState
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.services import calendar_service, tenant_service
+from app.services import calendar_service, patient_service, tenant_service
 
 logger = get_logger(__name__)
 
@@ -209,6 +209,8 @@ def booking_node(state: ConversationState) -> dict:
                     credentials_dict=credentials_dict,
                     event_id=event_id,
                 )
+                # v1.4: marcar appointment como cancelado en DB (fail-safe)
+                patient_service.cancel_appointment_by_event_id(event_id)
 
             logger.info(
                 "booking_node.done",
@@ -273,10 +275,27 @@ def booking_node(state: ConversationState) -> dict:
         actual_idx = selected_idx if selected_idx < len(slots) else 0
         chosen_slot = slots[actual_idx]
 
-        # NAME-02: Defer event creation until patient name is collected
-        if not state.get("patient_name"):
+        # v1.4: lookup paciente existente por phone_number para skip de recolección
+        patient_name_state: str | None = state.get("patient_name")
+        existing_patient_id: str | None = state.get("patient_id")
+        extra_state: dict = {}
+
+        if not patient_name_state:
+            existing = patient_service.get_patient_by_phone(tenant_id, phone_number)
+            if existing:
+                # Paciente conocido — pre-popular datos y saltar recolección
+                patient_name_state = existing.full_name
+                existing_patient_id = existing.patient_id
+                extra_state = {
+                    "patient_name": existing.full_name,
+                    "patient_dni": existing.dni,
+                    "patient_id": existing.patient_id,
+                }
+
+        # Diferir si aún no tenemos nombre (primer contacto)
+        if not patient_name_state:
             logger.info(
-                "booking_node.name_collection_deferred",
+                "booking_node.registration_deferred",
                 tenant_id=tenant_id,
                 slot_display=chosen_slot.get("display", ""),
                 query_preview=query[:80],
@@ -291,8 +310,11 @@ def booking_node(state: ConversationState) -> dict:
                 "calendar_event_id": None,
             }
 
-        # NAME-03: Patient name present — create event with name in title
-        patient_name: str = state["patient_name"]
+        # Paciente conocido (state o DB) — crear evento directamente
+        patient_name: str = patient_name_state
+        patient_dni: str | None = state.get("patient_dni") or (
+            extra_state.get("patient_dni") if extra_state else None
+        )
         event_title = f"{service_name} — {patient_name}" if service_name else f"Turno — {patient_name}"
         event_id = calendar_service.create_event(
             calendar_id=calendar_id,
@@ -301,7 +323,28 @@ def booking_node(state: ConversationState) -> dict:
             end_iso=chosen_slot["end"],
             phone_number=phone_number,
             title=event_title,
+            patient_name=patient_name,
+            dni=patient_dni,
         )
+
+        # v1.4: persistir appointment en DB si tenemos patient_id (fail-safe)
+        pid = existing_patient_id or state.get("patient_id")
+        if pid and event_id:
+            try:
+                patient_service.create_appointment(
+                    tenant_id=tenant_id,
+                    patient_id=pid,
+                    service_id=selected_service_id,
+                    calendar_event_id=event_id,
+                    start_iso=chosen_slot["start"],
+                    end_iso=chosen_slot["end"],
+                )
+            except Exception as appt_exc:
+                logger.error(
+                    "booking_node.appointment_error",
+                    tenant_id=tenant_id,
+                    error=str(appt_exc),
+                )
 
     except Exception as exc:
         logger.error("booking_node.error", tenant_id=tenant_id, error=str(exc))
@@ -315,10 +358,12 @@ def booking_node(state: ConversationState) -> dict:
         calendar_event_id=event_id,
         query_preview=query[:80],
     )
-    return {
+    result = {
         "booking_intent": True,
         "booking_action": "confirm",
         "booked_slot": chosen_slot,
         "calendar_event_id": event_id,
         "selected_slot_index": actual_idx,
     }
+    result.update(extra_state)
+    return result

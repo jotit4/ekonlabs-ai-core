@@ -208,6 +208,8 @@ def create_event(
     end_iso: str,
     phone_number: str,
     title: str | None = None,
+    patient_name: str | None = None,
+    dni: str | None = None,
 ) -> str | None:
     """Inserta un evento en Google Calendar y retorna el event_id.
 
@@ -219,6 +221,8 @@ def create_event(
         phone_number: Número del paciente — se incluye en la descripción para
             permitir lookup posterior en cancelaciones.
         title: Título del evento (default: "Turno médico — {phone_number}").
+        patient_name: Nombre completo del paciente (opcional, para descripción).
+        dni: DNI del paciente (opcional, para descripción).
 
     Returns:
         El event_id del evento creado, o None si falla (fail-safe).
@@ -234,11 +238,18 @@ def create_event(
         service = build("calendar", "v3", credentials=credentials)
 
         event_title = title or f"Turno médico — {phone_number}"
-        description = (
-            f"Turno reservado vía Agente IA\n"
-            f"Paciente: {phone_number}\n"
+        description_lines = [
+            "Turno reservado vía Agente IA",
+            f"Paciente: {phone_number}",
+        ]
+        if patient_name:
+            description_lines.append(f"Nombre: {patient_name}")
+        if dni:
+            description_lines.append(f"DNI: {dni}")
+        description_lines.append(
             f"Confirmado: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
         )
+        description = "\n".join(description_lines)
 
         event_body = {
             "summary": event_title,

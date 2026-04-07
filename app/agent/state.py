@@ -32,3 +32,8 @@ class ConversationState(TypedDict):
     selected_service_id: NotRequired[str | None]    # UUID del servicio seleccionado por el paciente
     selected_service_name: NotRequired[str | None]  # Nombre del servicio (para display y título de evento)
     service_selection_pending: NotRequired[bool]    # True cuando el agente debe preguntar qué servicio quiere el paciente
+    # v1.4 — Registro de pacientes
+    patient_dni: NotRequired[str | None]            # DNI una vez capturado; None = no recolectado aún
+    dni_collection_active: NotRequired[bool]        # True mientras el agente espera que el paciente dé su DNI
+    dni_attempts: NotRequired[int]                  # Veces que el agente pidió el DNI; ausente = 0
+    patient_id: NotRequired[str | None]             # UUID del registro en tabla patients
