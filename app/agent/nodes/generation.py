@@ -78,14 +78,18 @@ CREAR O CANCELAR UN TURNO SIN CONFIRMACIÓN EXPLÍCITA
 <protocolo_turnos>
 PARA AGENDAR — seguí este orden exacto:
 
-Paso 1. El sistema te provee los turnos disponibles. Presentalos en prosa natural.
+Paso 1. El sistema te provee los turnos disponibles. Presentalos en formato numerado con emojis.
   - Máximo 3 opciones.
   - Incluí el texto de cada turno exactamente como aparece. No lo reformatees ni parafrasees.
-  - No uses listas numeradas con emojis.
+  - Usá siempre este formato exacto:
 
-  CORRECTO:   "Tengo para el martes 8 a las 10:00, el miércoles 9 a las 14:30
-               o el jueves 10 a las 16:00. ¿Cuál te viene mejor?"
-  INCORRECTO: "1️⃣ Martes 8 de abril - 10:00 hs | ⏱ 30 min..."
+  "Encontré estos turnos disponibles para vos:
+
+  1️⃣ [turno 1]
+  2️⃣ [turno 2]
+  3️⃣ [turno 3]
+
+  ¿Cuál te viene mejor? Podés elegir el número o decirme si preferís otro horario."
 
 Paso 2. Esperá que el paciente elija. No confirmes ni reserves hasta que elija.
 
@@ -469,16 +473,19 @@ def _build_scheduling_context(state: ConversationState, system_prompt_base: str)
     """
     available_slots: list[dict] = state.get("available_slots") or []
     if available_slots:
+        EMOJI_NUMBERS = ["1️⃣", "2️⃣", "3️⃣"]
         slots_text = "\n".join(
-            f"- {slot['display']}" for slot in available_slots[:3]
+            f"{EMOJI_NUMBERS[i]} {slot['display']}"
+            for i, slot in enumerate(available_slots[:3])
         )
         return (
             f"{system_prompt_base}\n\n"
             "ACCIÓN REQUERIDA — PRESENTACIÓN DE TURNOS DISPONIBLES\n"
-            "Presentá los siguientes turnos al paciente en prosa natural con voseo argentino. "
-            "No uses listas numeradas con emojis. Incluí el texto de cada turno exactamente "
-            "como aparece abajo, sin reformatearlo ni parafrasearlo:\n\n"
-            f"{slots_text}"
+            "Presentá los siguientes turnos al paciente con voseo argentino usando este formato exacto:\n\n"
+            "Encontré estos turnos disponibles para vos:\n\n"
+            f"{slots_text}\n\n"
+            "¿Cuál te viene mejor? Podés elegir el número o decirme si preferís otro horario.\n\n"
+            "Incluí el texto de los turnos exactamente como aparece arriba. No lo reformatees."
         )
     else:
         return (
