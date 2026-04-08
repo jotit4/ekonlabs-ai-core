@@ -426,7 +426,7 @@ def _finalize_registration(
         "Dirigite al paciente por su nombre. Usá voseo argentino cálido."
     )
     messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
-    response = _llm.invoke(messages_for_llm)
+    response = _get_llm().invoke(messages_for_llm)
     logger.info(
         "generation_node.done",
         tenant_id=tenant_id,
@@ -475,7 +475,7 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
             "Usá voseo argentino."
         )
         messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
-        response = _llm.invoke(messages_for_llm)
+        response = _get_llm().invoke(messages_for_llm)
         logger.info(
             "generation_node.done",
             tenant_id=tenant_id,
@@ -549,7 +549,7 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
             "Pedíselo de forma natural y breve en voseo argentino."
         )
         messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
-        response = _llm.invoke(messages_for_llm)
+        response = _get_llm().invoke(messages_for_llm)
         logger.info(
             "generation_node.done",
             tenant_id=tenant_id,
@@ -593,7 +593,7 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
                 "Una sola oración, voseo argentino."
             )
             messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
-            response = _llm.invoke(messages_for_llm)
+            response = _get_llm().invoke(messages_for_llm)
             logger.info(
                 "generation_node.done",
                 tenant_id=tenant_id,
@@ -617,7 +617,7 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
                 "Usá voseo argentino."
             )
             messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
-            response = _llm.invoke(messages_for_llm)
+            response = _get_llm().invoke(messages_for_llm)
             logger.info(
                 "generation_node.done",
                 tenant_id=tenant_id,
@@ -644,7 +644,7 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
         "el turno en el sistema. Pedíselo de forma amable y natural en voseo argentino."
     )
     messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
-    response = _llm.invoke(messages_for_llm)
+    response = _get_llm().invoke(messages_for_llm)
     logger.info(
         "generation_node.done",
         tenant_id=tenant_id,
@@ -657,9 +657,17 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
     }
 
 
-# Module-level singleton — initialized once at import time.
+# Lazy singleton — created on first use so LangSmith env vars (set in lifespan/worker.py)
+# are already in os.environ when ChatOpenAI registers its tracer.
 # Tests must patch at: app.agent.nodes.generation._llm
-_llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0, request_timeout=20)
+_llm: ChatOpenAI | None = None
+
+
+def _get_llm() -> ChatOpenAI:
+    global _llm
+    if _llm is None:
+        _llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0, request_timeout=20)
+    return _llm
 
 
 def _build_scheduling_context(state: ConversationState, system_prompt_base: str) -> str:
@@ -818,7 +826,7 @@ def generation_node(state: ConversationState) -> dict:
             response_type = "booking_confirmed" if (event_id_for_log and booked_slot_for_log) else "booking_failed"
         messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
         try:
-            response = _llm.invoke(messages_for_llm)
+            response = _get_llm().invoke(messages_for_llm)
             logger.info(
                 "generation_node.done",
                 tenant_id=tenant_id,
@@ -846,7 +854,7 @@ def generation_node(state: ConversationState) -> dict:
         )
         messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
         search_tool = make_search_tool(tenant_id)
-        llm_with_tools = _llm.bind_tools([search_tool], tool_choice="required")
+        llm_with_tools = _get_llm().bind_tools([search_tool], tool_choice="required")
         try:
             first_response = llm_with_tools.invoke(messages_for_llm)
             tool_calls = getattr(first_response, "tool_calls", None)
@@ -858,7 +866,7 @@ def generation_node(state: ConversationState) -> dict:
                     tool_call_id=tool_call["id"],
                 )
                 messages_with_tool = messages_for_llm + [first_response, tool_message]
-                response = _llm.invoke(messages_with_tool)
+                response = _get_llm().invoke(messages_with_tool)
             else:
                 response = first_response
             logger.info(
@@ -880,7 +888,7 @@ def generation_node(state: ConversationState) -> dict:
         system_content = _build_scheduling_context(state, system_prompt_base)
         messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
         try:
-            response = _llm.invoke(messages_for_llm)
+            response = _get_llm().invoke(messages_for_llm)
             logger.info(
                 "generation_node.done",
                 tenant_id=tenant_id,
@@ -905,7 +913,7 @@ def generation_node(state: ConversationState) -> dict:
     # RAG-01/03: LLM calls search_knowledge_tool inline via tool_choice="required".
     # The tool is scoped to the tenant — the LLM never controls which tenant is searched.
     search_tool = make_search_tool(tenant_id)
-    llm_with_tools = _llm.bind_tools([search_tool], tool_choice="required")
+    llm_with_tools = _get_llm().bind_tools([search_tool], tool_choice="required")
 
     try:
         first_response = llm_with_tools.invoke(messages_for_llm)
@@ -919,7 +927,7 @@ def generation_node(state: ConversationState) -> dict:
                 tool_call_id=tool_call["id"],
             )
             messages_with_tool = messages_for_llm + [first_response, tool_message]
-            response = _llm.invoke(messages_with_tool)
+            response = _get_llm().invoke(messages_with_tool)
         else:
             response = first_response
         logger.info(
