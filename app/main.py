@@ -24,16 +24,34 @@ from app.api.v1.webhooks import router as webhooks_router
 async def lifespan(application: FastAPI):
     # Propagar variables de LangSmith a os.environ para que LangChain/LangSmith las lea.
     # Seteamos ambos prefijos: LANGCHAIN_* (SDK legacy) y LANGSMITH_* (SDK >=0.1, actual).
-    if settings.LANGCHAIN_TRACING_V2.lower() == "true":
-        os.environ["LANGCHAIN_TRACING_V2"] = "true"
-        os.environ["LANGCHAIN_API_KEY"] = settings.LANGCHAIN_API_KEY
-        os.environ["LANGCHAIN_PROJECT"] = settings.LANGCHAIN_PROJECT
-        os.environ["LANGSMITH_TRACING"] = "true"
-        os.environ["LANGSMITH_API_KEY"] = settings.LANGCHAIN_API_KEY
-        os.environ["LANGSMITH_PROJECT"] = settings.LANGCHAIN_PROJECT
-
     configure_logging()
     logger = get_logger(__name__)
+
+    _tracing_raw = settings.LANGCHAIN_TRACING_V2
+    _api_key = settings.LANGCHAIN_API_KEY
+    _project = settings.LANGCHAIN_PROJECT
+    logger.info(
+        "langsmith.init",
+        tracing_v2_setting=_tracing_raw,
+        tracing_enabled=(_tracing_raw.lower() == "true"),
+        api_key_set=bool(_api_key),
+        api_key_prefix=_api_key[:12] if _api_key else "EMPTY",
+        project=_project,
+    )
+    if _tracing_raw.lower() == "true":
+        os.environ["LANGCHAIN_TRACING_V2"] = "true"
+        os.environ["LANGCHAIN_API_KEY"] = _api_key
+        os.environ["LANGCHAIN_PROJECT"] = _project
+        os.environ["LANGSMITH_TRACING"] = "true"
+        os.environ["LANGSMITH_API_KEY"] = _api_key
+        os.environ["LANGSMITH_PROJECT"] = _project
+        try:
+            import langsmith
+            client = langsmith.Client(api_key=_api_key)
+            projects = list(client.list_projects())
+            logger.info("langsmith.connection_ok", projects=[p.name for p in projects[:5]])
+        except Exception as ls_exc:
+            logger.error("langsmith.connection_failed", error=str(ls_exc))
     if settings.APP_ENV.lower() in {"test", "testing"}:
         logger.info("Skipping Supabase startup checks in test environment")
         yield
