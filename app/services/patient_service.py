@@ -19,11 +19,11 @@ def get_patient_by_phone(tenant_id: str, phone_number: str) -> Patient | None:
             .select("*")
             .eq("tenant_id", tenant_id)
             .eq("phone_number", phone_number)
-            .maybe_single()
+            .limit(1)
             .execute()
         )
         if response.data:
-            return Patient(**response.data)
+            return Patient(**response.data[0])
         return None
     except Exception as exc:
         logger.error(
