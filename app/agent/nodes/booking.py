@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from app.agent.state import ConversationState
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.services import calendar_service, patient_service, tenant_service
+from app.services import booking_draft_service, calendar_service, patient_service, tenant_service
 
 logger = get_logger(__name__)
 
@@ -150,6 +150,22 @@ def booking_node(state: ConversationState) -> dict:
         is_confirm = any(f" {kw} " in padded_query for kw in BOOKING_CONFIRM_KEYWORDS)
 
         if not is_cancel and not is_confirm:
+            # INFRA-06: LangGraph has no checkpointer — state resets every turn.
+            # If a registration is in progress (name or DNI collection), re-hydrate
+            # from Redis draft so generation_node can continue the flow.
+            draft = booking_draft_service.get_draft(tenant_id, phone_number)
+            if draft and (draft.get("name_collection_active") or draft.get("dni_collection_active")):
+                logger.info(
+                    "booking_node.draft_rehydrated",
+                    tenant_id=tenant_id,
+                    name_collection_active=draft.get("name_collection_active"),
+                    dni_collection_active=draft.get("dni_collection_active"),
+                )
+                return {
+                    "booking_intent": True,
+                    "booking_action": "confirm",
+                    **{k: v for k, v in draft.items() if v is not None},
+                }
             logger.info(
                 "booking_node.done",
                 tenant_id=tenant_id,
@@ -238,20 +254,26 @@ def booking_node(state: ConversationState) -> dict:
                 chosen_slot = existing_booked_slot
                 actual_idx = state.get("selected_slot_index") or 0
             else:
-                logger.info(
-                    "booking_node.done",
-                    tenant_id=tenant_id,
-                    booking_intent=True,
-                    booking_action="confirm",
-                    booking_ambiguous_slot=True,
-                    query_preview=query[:80],
-                )
-                return {
-                    "booking_intent": True,
-                    "booking_action": "confirm",
-                    "booking_ambiguous_slot": True,
-                    "calendar_event_id": None,
-                }
+                # INFRA-06: state reset — try Redis draft as fallback
+                draft = booking_draft_service.get_draft(tenant_id, phone_number)
+                if draft and draft.get("booked_slot"):
+                    chosen_slot = draft["booked_slot"]
+                    actual_idx = draft.get("selected_slot_index", 0)
+                else:
+                    logger.info(
+                        "booking_node.done",
+                        tenant_id=tenant_id,
+                        booking_intent=True,
+                        booking_action="confirm",
+                        booking_ambiguous_slot=True,
+                        query_preview=query[:80],
+                    )
+                    return {
+                        "booking_intent": True,
+                        "booking_action": "confirm",
+                        "booking_ambiguous_slot": True,
+                        "calendar_event_id": None,
+                    }
         else:
             # INFRA-05: Read cached slots from state first to eliminate the race window.
             # scheduling_node stores available_slots in state when presenting options.
@@ -301,6 +323,21 @@ def booking_node(state: ConversationState) -> dict:
 
         # Diferir si aún no tenemos nombre (primer contacto)
         if not patient_name_state:
+            slot_presented_at = datetime.now(timezone.utc).isoformat()
+            # INFRA-06: persist registration state to Redis — LangGraph state resets each turn.
+            booking_draft_service.save_draft(tenant_id, phone_number, {
+                "name_collection_active": True,
+                "booked_slot": chosen_slot,
+                "selected_slot_index": actual_idx,
+                "selected_service_name": service_name,
+                "selected_service_id": selected_service_id,
+                "slot_presented_at": slot_presented_at,
+                "name_attempts": 0,
+                "patient_name": None,
+                "dni_collection_active": False,
+                "dni_attempts": 0,
+                "patient_dni": None,
+            })
             logger.info(
                 "booking_node.registration_deferred",
                 tenant_id=tenant_id,
@@ -313,7 +350,7 @@ def booking_node(state: ConversationState) -> dict:
                 "name_collection_active": True,
                 "booked_slot": chosen_slot,
                 "selected_slot_index": actual_idx,
-                "slot_presented_at": datetime.now(timezone.utc).isoformat(),
+                "slot_presented_at": slot_presented_at,
                 "calendar_event_id": None,
             }
 

@@ -10,7 +10,7 @@ from langchain_openai import ChatOpenAI
 
 from app.agent.state import ConversationState
 from app.core.logging import get_logger
-from app.services import calendar_service, patient_service, tenant_service
+from app.services import booking_draft_service, calendar_service, patient_service, tenant_service
 
 logger = get_logger(__name__)
 
@@ -96,7 +96,11 @@ Paso 2. Esperá que el paciente elija. No confirmes ni reserves hasta que elija.
 Paso 3. Pedí su nombre completo para registrar el turno.
   → "¿Me das tu nombre completo para anotarte?"
 
-Paso 4. El sistema confirma la reserva. Comunicalo con calidez e incluí los datos exactos.
+Paso 4. Con el nombre anotado, pedí su número de DNI (documento nacional de identidad).
+  → "¿Me das tu DNI? Si no lo tenés a mano podés seguir igual."
+  Si el paciente no lo da tras 2 intentos, continuá igual sin DNI.
+
+Paso 5. El sistema confirma la reserva. Comunicalo con calidez e incluí los datos exactos del turno.
 
 ---
 
@@ -409,6 +413,9 @@ def _finalize_registration(
             error=str(appt_exc),
         )
 
+    # INFRA-06: registration complete — delete Redis draft
+    booking_draft_service.delete_draft(tenant_id, phone_number)
+
     display = booked_slot.get("display", "")
     system_content = (
         f"{system_prompt_base}\n\n"
@@ -527,6 +534,10 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
                     raise
 
         # Pedir DNI (Turn 1, o re-preguntar)
+        # INFRA-06: update draft with incremented dni_attempts so next turn knows to extract
+        booking_draft_service.update_draft(tenant_id, state["phone_number"], {
+            "dni_attempts": dni_attempts + 1,
+        })
         slot_display = booked_slot.get("display", "")
         system_content = (
             f"{system_prompt_base}\n\n"
@@ -565,6 +576,13 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
 
         if extracted_name:
             # Nombre encontrado → activar Fase B, pedir DNI
+            # INFRA-06: update Redis draft so next turn knows name and phase
+            booking_draft_service.update_draft(tenant_id, state["phone_number"], {
+                "patient_name": extracted_name,
+                "name_collection_active": False,
+                "dni_collection_active": True,
+                "dni_attempts": 0,
+            })
             system_content = (
                 f"{system_prompt_base}\n\n"
                 "ACCIÓN REQUERIDA — PEDIR DNI\n"
@@ -612,6 +630,10 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
             }
 
     # Pedir nombre (Turn 1, o re-preguntar)
+    # INFRA-06: update draft with incremented name_attempts so next turn knows to extract
+    booking_draft_service.update_draft(tenant_id, state["phone_number"], {
+        "name_attempts": name_attempts + 1,
+    })
     slot_display = booked_slot.get("display", "")
     system_content = (
         f"{system_prompt_base}\n\n"
@@ -647,6 +669,16 @@ def _build_scheduling_context(state: ConversationState, system_prompt_base: str)
     No slots: instructs LLM to deliver actionable no-availability message.
     """
     available_slots: list[dict] = state.get("available_slots") or []
+    # Detect if the patient's first message was a greeting (to add warm intro)
+    messages = state.get("messages") or []
+    human_messages = [m for m in messages if getattr(m, "type", None) == "human"]
+    is_first_interaction = len(human_messages) <= 2  # first 1-2 human messages
+    greeting_hint = (
+        "Si es el primer mensaje del paciente, empezá con un saludo cálido y breve antes de mostrar los turnos. "
+        "Ej: '¡Hola! Claro, te busco algo ahora 😊'\n\n"
+        if is_first_interaction else ""
+    )
+
     if available_slots:
         EMOJI_NUMBERS = ["1️⃣", "2️⃣", "3️⃣"]
         slots_text = "\n".join(
@@ -656,6 +688,7 @@ def _build_scheduling_context(state: ConversationState, system_prompt_base: str)
         return (
             f"{system_prompt_base}\n\n"
             "ACCIÓN REQUERIDA — PRESENTACIÓN DE TURNOS DISPONIBLES\n"
+            f"{greeting_hint}"
             "Presentá los siguientes turnos al paciente con voseo argentino usando este formato exacto:\n\n"
             "Encontré estos turnos disponibles para vos:\n\n"
             f"{slots_text}\n\n"
@@ -666,6 +699,7 @@ def _build_scheduling_context(state: ConversationState, system_prompt_base: str)
         return (
             f"{system_prompt_base}\n\n"
             "ACCIÓN REQUERIDA — SIN TURNOS DISPONIBLES\n"
+            f"{greeting_hint}"
             "No hay turnos disponibles en los próximos días. "
             "Informá al paciente con calidez y ofrecé un paso siguiente accionable "
             "(por ejemplo: llamar a la clínica directamente o consultar en otro momento). "
