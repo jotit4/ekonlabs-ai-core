@@ -1,6 +1,7 @@
 """WhatsApp webhook endpoints — GET challenge verification + POST message reception."""
 import asyncio
 import json
+import time as _time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Query, Request
@@ -63,14 +64,19 @@ def _enqueue_task(payload_dict: dict, tenant_id: str) -> None:
         pending_key = f"buffer_pending:{tenant_id}:{phone}"
         buffer_key = f"buffer_msgs:{tenant_id}:{phone}"
 
-        # Acumular el texto del mensaje en el buffer Redis
+        # Acumular el texto del mensaje en el buffer Redis como JSON {ts, text}
+        # ts = timestamp del webhook (Unix int) para ordenar correctamente en caso de
+        # entregas out-of-order de WhatsApp (BUFF-01).
         try:
             msg_text = payload_dict["entry"][0]["changes"][0]["value"]["messages"][0]["text"]["body"]
+            msg_ts_raw = payload_dict["entry"][0]["changes"][0]["value"]["messages"][0].get("timestamp", "")
+            msg_ts = int(msg_ts_raw) if str(msg_ts_raw).isdigit() else int(_time.time())
         except (KeyError, IndexError, TypeError):
             msg_text = ""
+            msg_ts = int(_time.time())
 
         if msg_text:
-            conn.rpush(buffer_key, msg_text)
+            conn.rpush(buffer_key, json.dumps({"ts": msg_ts, "text": msg_text}))
             conn.expire(buffer_key, 120)  # TTL de seguridad
 
         # Si ya hay un job pendiente, no encolamos otro — el job existente procesará todos los msgs

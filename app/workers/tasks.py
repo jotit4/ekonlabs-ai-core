@@ -1,4 +1,5 @@
 """Tareas asíncronas procesadas por RQ Worker."""
+import json
 import random
 import time
 
@@ -170,6 +171,9 @@ def process_whatsapp_message(payload: dict, tenant_id: str) -> None:
     phone_number, message_text = msg_info
 
     # --- 1c. Ventana de buffering: esperar para acumular mensajes rápidos ---
+    # BUFF-01: WhatsApp no garantiza orden de entrega de webhooks. Los mensajes se
+    # almacenan como JSON {ts, text} y se ordenan por ts (timestamp del webhook)
+    # antes de combinar, garantizando el orden en que el usuario los envió.
     from app.api.v1.webhooks import _BUFFER_WINDOW_SECONDS
     try:
         time.sleep(_BUFFER_WINDOW_SECONDS)
@@ -177,12 +181,19 @@ def process_whatsapp_message(payload: dict, tenant_id: str) -> None:
         buffer_key = f"buffer_msgs:{tenant_id}:{phone_number}"
         pending_key = f"buffer_pending:{tenant_id}:{phone_number}"
         buffered = _redis.lrange(buffer_key, 0, -1)
-        if buffered:
-            extra_texts = [m.decode() if isinstance(m, bytes) else m for m in buffered]
-            all_texts = [message_text] + [t for t in extra_texts if t != message_text]
-            message_text = " ".join(all_texts)
-            _redis.delete(buffer_key)
+        _redis.delete(buffer_key)
         _redis.delete(pending_key)
+        if buffered:
+            entries = []
+            for raw in buffered:
+                try:
+                    item = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+                    entries.append((item.get("ts", 0), item.get("text", "")))
+                except Exception:
+                    # Fallback: item antiguo sin JSON (string plano)
+                    entries.append((0, raw.decode() if isinstance(raw, bytes) else raw))
+            entries.sort(key=lambda x: x[0])
+            message_text = " ".join(text for _, text in entries if text)
         logger.debug("buffer.flushed", tenant_id=tenant_id, phone=phone_number, merged_text=message_text)
     except Exception as exc:
         logger.warning("buffer.read_error", error=str(exc))

@@ -22,11 +22,15 @@ from app.api.v1.webhooks import router as webhooks_router
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    # Propagar variables de LangSmith a os.environ para que LangChain las lea
+    # Propagar variables de LangSmith a os.environ para que LangChain/LangSmith las lea.
+    # Seteamos ambos prefijos: LANGCHAIN_* (SDK legacy) y LANGSMITH_* (SDK >=0.1, actual).
     if settings.LANGCHAIN_TRACING_V2.lower() == "true":
         os.environ["LANGCHAIN_TRACING_V2"] = "true"
         os.environ["LANGCHAIN_API_KEY"] = settings.LANGCHAIN_API_KEY
         os.environ["LANGCHAIN_PROJECT"] = settings.LANGCHAIN_PROJECT
+        os.environ["LANGSMITH_TRACING"] = "true"
+        os.environ["LANGSMITH_API_KEY"] = settings.LANGCHAIN_API_KEY
+        os.environ["LANGSMITH_PROJECT"] = settings.LANGCHAIN_PROJECT
 
     configure_logging()
     logger = get_logger(__name__)

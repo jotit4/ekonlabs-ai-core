@@ -659,7 +659,7 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
 
 # Module-level singleton — initialized once at import time.
 # Tests must patch at: app.agent.nodes.generation._llm
-_llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.5, request_timeout=20)
+_llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0, request_timeout=20)
 
 
 def _build_scheduling_context(state: ConversationState, system_prompt_base: str) -> str:
