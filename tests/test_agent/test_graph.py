@@ -211,7 +211,7 @@ def test_graph_scheduling_intent_bypasses_rag():
     mock_llm.invoke.assert_called_once()
     system_msg = mock_llm.invoke.call_args[0][0][0]
     assert "Lunes 30 de Marzo — 10:00 a 11:00 hs" in system_msg.content
-    assert "1️⃣" not in system_msg.content
+    assert "1️⃣" in system_msg.content
     ai_messages = [m for m in result["messages"] if getattr(m, "type", None) == "ai"]
     assert len(ai_messages) >= 1
     assert ai_messages[-1].content != ANTI_DIAGNOSTIC_RESPONSE

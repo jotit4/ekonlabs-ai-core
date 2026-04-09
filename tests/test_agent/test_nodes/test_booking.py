@@ -334,6 +334,42 @@ def test_argentine_confirm_keywords_tomame_ese():
     assert result["booking_intent"] is True
 
 
+def test_generic_confirm_keywords_si():
+    """'sí' activa booking_intent=True — evita que el LLM alucine confirmación en path RAG."""
+    result = _booking_confirm_intent("sí")
+    assert result["booking_intent"] is True
+
+
+def test_generic_confirm_keywords_ok():
+    """'ok' activa booking_intent=True."""
+    result = _booking_confirm_intent("ok")
+    assert result["booking_intent"] is True
+
+
+def test_generic_confirm_keywords_sep():
+    """'sep' activa booking_intent=True."""
+    result = _booking_confirm_intent("sep")
+    assert result["booking_intent"] is True
+
+
+def test_generic_confirm_keywords_perfecto():
+    """'perfecto' activa booking_intent=True."""
+    result = _booking_confirm_intent("perfecto")
+    assert result["booking_intent"] is True
+
+
+def test_generic_confirm_keywords_esta_bien():
+    """'esta bien' activa booking_intent=True."""
+    result = _booking_confirm_intent("esta bien")
+    assert result["booking_intent"] is True
+
+
+def test_generic_confirm_keywords_adelante():
+    """'adelante' activa booking_intent=True."""
+    result = _booking_confirm_intent("adelante")
+    assert result["booking_intent"] is True
+
+
 def test_argentine_confirm_keywords_negative_reservar_para_manana():
     """'reservar para manana' NO activa booking_intent=True via confirm path."""
     from app.agent.nodes.booking import booking_node

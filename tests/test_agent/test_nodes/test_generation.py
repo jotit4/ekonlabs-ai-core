@@ -43,7 +43,7 @@ def test_generation_node_uses_default_system_prompt():
 
 
 def test_generation_node_uses_tenant_system_prompt():
-    """Con system_prompt en estado → usa el prompt del tenant, no el default."""
+    """Con system_prompt en estado → usa el prompt del tenant ADEMÁS del default (aditivo)."""
     from app.agent.nodes.generation import DEFAULT_SYSTEM_PROMPT, generation_node
 
     tenant_prompt = "Eres la recepcionista virtual de Clinica XYZ."
@@ -54,7 +54,8 @@ def test_generation_node_uses_tenant_system_prompt():
     call_args = mock_llm.bind_tools.return_value.invoke.call_args[0][0]
     system_msg = call_args[0]
     assert tenant_prompt in system_msg.content
-    assert DEFAULT_SYSTEM_PROMPT not in system_msg.content
+    assert DEFAULT_SYSTEM_PROMPT in system_msg.content
+    assert "<contexto_clinica>" in system_msg.content
 
 
 def test_generation_node_general_path_uses_bind_tools():
@@ -175,7 +176,7 @@ def test_generation_node_calls_llm_when_not_medical_query():
 
 
 def test_generation_node_scheduling_intent_with_slots():
-    """RESP-01: scheduling_intent=True con slots → LLM llamado, displays en contexto, sin emojis numerados."""
+    """RESP-01: scheduling_intent=True con slots → LLM llamado, displays en contexto, con emojis numerados."""
     from app.agent.nodes.generation import generation_node
 
     slots = [
@@ -193,9 +194,9 @@ def test_generation_node_scheduling_intent_with_slots():
     system_msg = mock_llm.invoke.call_args[0][0][0]
     assert "Lunes 30 de Marzo — 10:00 a 11:00 hs" in system_msg.content
     assert "Lunes 30 de Marzo — 11:00 a 12:00 hs" in system_msg.content
-    # RESP-01: sin lista numerada con emojis en el contexto
-    assert "1️⃣" not in system_msg.content
-    assert "2️⃣" not in system_msg.content
+    # RESP-01: slots presentados con lista numerada con emojis
+    assert "1️⃣" in system_msg.content
+    assert "2️⃣" in system_msg.content
     assert isinstance(result["messages"][0], AIMessage)
 
 
@@ -645,25 +646,33 @@ def test_shadow_mode_redirect_specifies_contact_channels():
 
 
 def test_default_system_prompt_has_correct_accents():
-    """COPY-04: DEFAULT_SYSTEM_PROMPT contains 'recepción' and 'médica' (accents present)."""
+    """COPY-04: DEFAULT_SYSTEM_PROMPT contains 'recepcionista' and 'médica' (accents present)."""
     from app.agent.nodes.generation import DEFAULT_SYSTEM_PROMPT
 
-    assert "recepción" in DEFAULT_SYSTEM_PROMPT
+    assert "recepcionista" in DEFAULT_SYSTEM_PROMPT
     assert "médica" in DEFAULT_SYSTEM_PROMPT
 
 
-def test_llm_temperature_is_0_5():
-    """PROMPT-04: _llm singleton uses temperature=0.5 for natural phrasing variability."""
-    from app.agent.nodes.generation import _llm
+def test_llm_temperature_is_0():
+    """PROMPT-04: _llm singleton uses temperature=0 for deterministic output."""
+    from app.agent.nodes import generation
 
-    assert _llm.temperature == 0.5
+    llm = generation._get_llm()
+    try:
+        assert llm.temperature == 0
+    finally:
+        generation._llm = None
 
 
 def test_llm_request_timeout_is_20():
     """COPY-05: _llm singleton has request_timeout=20 to prevent worker blocking."""
-    from app.agent.nodes.generation import _llm
+    from app.agent.nodes import generation
 
-    assert _llm.request_timeout == 20
+    llm = generation._get_llm()
+    try:
+        assert llm.request_timeout == 20
+    finally:
+        generation._llm = None
 
 
 # ── Plan 11-01: PROMPT-01/02/03/04 — System Prompt & Model ──────────────────
@@ -691,11 +700,16 @@ def test_default_system_prompt_contains_search_knowledge_tool_instruction():
 
 def test_llm_model_is_gpt_4_1_mini():
     """PROMPT-03: _llm singleton uses gpt-4.1-mini (not gpt-4o-mini)."""
-    from app.agent.nodes.generation import _llm
+    from app.agent.nodes import generation
 
-    assert _llm.model_name == "gpt-4.1-mini", (
-        f"Expected model 'gpt-4.1-mini', got '{_llm.model_name}'"
-    )
+    llm = generation._get_llm()
+    try:
+        model = getattr(llm, "model_name", None) or getattr(llm, "model", None)
+        assert model == "gpt-4.1-mini", (
+            f"Expected model 'gpt-4.1-mini', got '{model}'"
+        )
+    finally:
+        generation._llm = None
 
 
 # ── Plan 13-01: RESP-01/04 — Scheduling path LLM generation ──────────────────
@@ -932,38 +946,61 @@ def test_name04_first_ask_increments_attempts():
 
 
 def test_name04_name_provided_confirms_booking():
-    """NAME-04: Turn 2 — patient provides name → generation_node creates event and confirms."""
+    """NAME-04: Turn 2 — patient provides name → transitions to DNI phase (v1.4).
+
+    v1.4 flow: name captured → ask DNI (Fase B) → create event only after DNI.
+    dni_attempts starts at 1 (not 0) because the DNI question is asked in this
+    same response; the next turn should extract immediately, not ask again.
+    Event creation is tested separately in test_name06_event_title_contains_patient_name.
+    """
     from app.agent.nodes.generation import generation_node
 
-    with (
-        patch("app.agent.nodes.generation._llm", _make_mock_llm("Perfecto, Juan.")),
-        patch("app.agent.nodes.generation.tenant_service") as mock_ts,
-        patch("app.agent.nodes.generation.calendar_service") as mock_cs,
-    ):
-        mock_ts.get_tenant_config.return_value = _mock_tenant_with_calendar()
-        mock_cs.create_event.return_value = _NAME_EVENT_ID
-
+    with patch("app.agent.nodes.generation._llm", _make_mock_llm("Perfecto, Juan. ¿Me das tu DNI?")):
         result = generation_node(_name_state("Juan Pérez", name_attempts=1))
 
     assert result.get("patient_name") == "Juan Pérez"
-    assert result.get("calendar_event_id") == _NAME_EVENT_ID
     assert result.get("name_collection_active") is False
-    mock_cs.create_event.assert_called_once()
+    assert result.get("dni_collection_active") is True
+    assert result.get("dni_attempts") == 1  # first ask already happened in this turn
+    assert "messages" in result
+
+
+def _dni_state(last_message: str, patient_name: str, dni_attempts: int = 1) -> dict:
+    """Build state for DNI collection (Fase B) tests."""
+    from datetime import datetime, timezone
+    slot_ts = datetime.now(timezone.utc).isoformat()
+    return {
+        "tenant_id": _TENANT_ID,
+        "phone_number": _PHONE,
+        "messages": [HumanMessage(content=last_message)],
+        "name_collection_active": False,
+        "dni_collection_active": True,
+        "booked_slot": _NAME_SLOT,
+        "slot_presented_at": slot_ts,
+        "patient_name": patient_name,
+        "name_attempts": 1,
+        "dni_attempts": dni_attempts,
+        "booking_intent": True,
+    }
 
 
 def test_name06_event_title_contains_patient_name():
-    """NAME-06: calendar event created with title='Turno — {patient_name}'."""
+    """NAME-06: calendar event created with title='Turno — {patient_name}' at Fase C (DNI provided)."""
     from app.agent.nodes.generation import generation_node
 
     with (
         patch("app.agent.nodes.generation._llm", _make_mock_llm("Listo, María.")),
         patch("app.agent.nodes.generation.tenant_service") as mock_ts,
         patch("app.agent.nodes.generation.calendar_service") as mock_cs,
+        patch("app.agent.nodes.generation.patient_service") as mock_ps,
+        patch("app.agent.nodes.generation.booking_draft_service"),
     ):
         mock_ts.get_tenant_config.return_value = _mock_tenant_with_calendar()
+        mock_ts.get_tenant_services.return_value = []
+        mock_ps.get_or_create_patient.return_value = MagicMock(patient_id="pat_001")
         mock_cs.create_event.return_value = _NAME_EVENT_ID
 
-        generation_node(_name_state("me llamo María López", name_attempts=1))
+        generation_node(_dni_state("32456789", patient_name="María López", dni_attempts=1))
 
     call_kwargs = mock_cs.create_event.call_args[1]
     assert call_kwargs.get("title") == "Turno — María López"
