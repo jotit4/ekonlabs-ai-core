@@ -44,6 +44,25 @@ BOOKING_CONFIRM_KEYWORDS: frozenset[str] = frozenset({
     "agendame",
     "reservame",
     "tomame ese",
+    # Generic affirmatives — must match <palabras_confirmacion> in system prompt.
+    # Without these, patients saying "sí" or "ok" after seeing slots fall through
+    # to the general RAG path where the LLM hallucinates a booking confirmation.
+    # _detect_slot_index will return None for these (no slot number → ambiguous_slot=True),
+    # so the agent correctly asks "¿Cuál de los tres?" instead of faking a booking.
+    "sí",
+    "si",
+    "ok",
+    "okay",
+    "okey",
+    "sep",
+    "perfecto",
+    "bárbaro",
+    "barbaro",
+    "adelante",
+    "esta bien",
+    "está bien",
+    "de acuerdo",
+    "me quedo con ese",
 })
 
 BOOKING_CANCEL_KEYWORDS: frozenset[str] = frozenset({
@@ -213,11 +232,14 @@ def booking_node(state: ConversationState) -> dict:
 
         # ── Flujo cancelación ──────────────────────────────────────────────
         if booking_action == "cancel":
+            # Use 2× the booking window (minimum 2 weeks) so patients can cancel
+            # appointments booked further ahead than the standard lookahead.
+            cancel_lookahead = max(settings.SCHEDULING_LOOKAHEAD_HOURS * 2, 336)
             event_id = calendar_service.find_event_by_phone(
                 calendar_id=calendar_id,
                 credentials_dict=credentials_dict,
                 phone_number=phone_number,
-                lookahead_hours=settings.SCHEDULING_LOOKAHEAD_HOURS,
+                lookahead_hours=cancel_lookahead,
             )
             if event_id:
                 calendar_service.delete_event(

@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     # Google Calendar (Epic 3)
     GOOGLE_CALENDAR_CREDENTIALS_PATH: str = ""
     DEFAULT_SLOT_DURATION_MINUTES: int = 60
-    SCHEDULING_LOOKAHEAD_HOURS: int = 72
+    SCHEDULING_LOOKAHEAD_HOURS: int = 168
     # LangSmith tracing (optional — set to enable)
     LANGCHAIN_TRACING_V2: str = "false"
     LANGCHAIN_API_KEY: str = ""

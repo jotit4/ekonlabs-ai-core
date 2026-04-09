@@ -282,18 +282,47 @@ def _build_system_prompt(state: ConversationState) -> str:
 def _extract_patient_name(text: str) -> str | None:
     """Extract patient name from message using prefix-stripping heuristic.
 
-    Strips common Argentine Spanish name-introduction phrases then validates
-    the remainder looks like a name (1–4 words, no digits, all Unicode letters).
-    Returns the name as-is (original casing preserved), or None.
+    Strips common Argentine Spanish name-introduction phrases and affirmative
+    openers, then validates the remainder looks like a name (2–6 words, no digits,
+    all Unicode letters/hyphens/dots). Returns name with original casing, or None.
     """
     cleaned = text.strip()
-    lower = cleaned.lower()
-    for prefix in ("me llamo ", "soy ", "mi nombre es ", "mi nombre: ", "nombre: "):
-        if lower.startswith(prefix):
-            cleaned = cleaned[len(prefix):].strip()
+    # Strip leading punctuation like "¡" or "¿"
+    cleaned = re.sub(r'^[^\w\s]+', '', cleaned).strip()
+    # Strip trailing non-word characters (punctuation, emojis, etc.)
+    cleaned = re.sub(r'[^\w\s]+$', '', cleaned).strip()
+
+    # Ordered prefix list — compound forms first to handle "sí, me llamo Juan"
+    # in a single pass without needing to re-check after partial stripping.
+    _NAME_PREFIXES = (
+        "sí, me llamo ", "si, me llamo ", "bueno, me llamo ", "claro, me llamo ",
+        "dale, me llamo ", "hola, me llamo ", "hola, soy ",
+        "sí, soy ", "si, soy ", "bueno, soy ", "claro, soy ", "dale, soy ",
+        "sí me llamo ", "si me llamo ", "bueno me llamo ", "claro me llamo ",
+        "dale me llamo ",
+        "sí soy ", "si soy ", "bueno soy ", "claro soy ", "dale soy ",
+        "me llamo ", "soy ", "mi nombre es ", "mi nombre: ", "nombre: ",
+        "me dicen ", "me llaman ",
+        "sí, ", "si, ", "claro, ", "dale, ", "bueno, ", "ok, ", "okay, ",
+        "hola, ", "buenas, ",
+    )
+
+    # Two-pass stripping: handles chains like "sí, me llamo Juan" in pass 1
+    # or "claro, me llamo Juan" where compound prefix covers both tokens at once.
+    for _ in range(2):
+        prev = cleaned
+        lower = cleaned.lower()
+        for prefix in _NAME_PREFIXES:
+            if lower.startswith(prefix):
+                cleaned = cleaned[len(prefix):].strip()
+                # Strip trailing non-word chars again after prefix removal
+                cleaned = re.sub(r'[^\w\s]+$', '', cleaned).strip()
+                break
+        if cleaned == prev:
             break
+
     words = cleaned.split()
-    if not (2 <= len(words) <= 4):
+    if not (2 <= len(words) <= 6):  # Extended from 2–4 to support compound surnames
         return None
     if any(c.isdigit() for c in cleaned):
         return None
@@ -575,13 +604,15 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
         extracted_name = _extract_patient_name(last_human_text)
 
         if extracted_name:
-            # Nombre encontrado → activar Fase B, pedir DNI
-            # INFRA-06: update Redis draft so next turn knows name and phase
+            # Nombre encontrado → activar Fase B, pedir DNI.
+            # dni_attempts=1: el LLM pide el DNI en ESTA respuesta, así que el
+            # próximo turno ya cuenta como intento 1 y extrae directamente.
+            # (Si fuera 0, _handle_registration vería "no pregunté aún" y pediría DNI de nuevo.)
             booking_draft_service.update_draft(tenant_id, state["phone_number"], {
                 "patient_name": extracted_name,
                 "name_collection_active": False,
                 "dni_collection_active": True,
-                "dni_attempts": 0,
+                "dni_attempts": 1,
             })
             system_content = (
                 f"{system_prompt_base}\n\n"
@@ -604,7 +635,7 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
                 "patient_name": extracted_name,
                 "name_collection_active": False,
                 "dni_collection_active": True,
-                "dni_attempts": 0,
+                "dni_attempts": 1,
             }
 
         # NAME-05: sin nombre tras 2 intentos → handoff humano
