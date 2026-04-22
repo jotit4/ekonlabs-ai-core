@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from langchain_core.messages import BaseMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -90,6 +92,140 @@ def _normalize_text(text: str) -> str:
     """Normaliza texto para matching tolerante a tildes y espacios."""
     ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
     return re.sub(r"\s+", " ", ascii_text.lower()).strip()
+
+
+# ── Booking mode: gated service — prerequisite confirmation keywords ─────────
+# Frases (normalizadas, sin tildes) que indican que el paciente ya tuvo la consulta
+# médica previa requerida para acceder a un servicio gated (ej: aquagym/hidroterapia).
+# El matching se aplica sobre _normalize_text(query) para tolerar variantes.
+GATED_PREREQUISITE_MET_KEYWORDS: frozenset[str] = frozenset({
+    "ya fui",
+    "ya tuve",
+    "ya tuve la consulta",
+    "ya fui al dr",
+    "ya vi al dr",
+    "ya vi al doctor",
+    "ya consulte",
+    "ya hice la consulta",
+    "ya fui a la consulta",
+    "ya tuve la consulta previa",
+    "ya fui con el dr",
+    "ya fui con el medico",
+    "el dr me dijo",
+    "el doctor me dijo",
+    "el dr me indico",
+    "el doctor me indico",
+    "el medico me dijo",
+    "me indico que",
+    "me indicaron",
+    "me derivaron",
+    "me mandaron",
+    "me dieron el ok",
+    "me recomendo",
+    "ya lo vi",
+    "me dijeron que haga",
+    "me dijeron hacer",
+})
+
+
+# ── Detección de contexto de fecha ──────────────────────────────────────────
+
+# Zona horaria local del tenant (Argentina no tiene DST, UTC-3 fijo)
+_TZ_ARGENTINA = ZoneInfo("America/Argentina/Buenos_Aires")
+
+_OTHER_DAY_PATTERNS: frozenset[str] = frozenset({
+    "otro dia", "otro día", "otro horario", "otra fecha", "otro momento",
+    "cuando mas", "cuando más", "hay otro", "mas opciones", "más opciones",
+    "no puedo ese", "no puedo mañana", "no puedo manana", "no puedo el",
+    "no me viene", "no me sirve", "no me queda",
+    "tenes otro", "tenés otro", "tienen otro",
+    "otro turno", "otro dia disponible", "otro día disponible",
+})
+
+_DAY_NAMES_TO_WEEKDAY: dict[str, int] = {
+    "lunes": 0, "martes": 1, "miercoles": 2, "miércoles": 2,
+    "jueves": 3, "viernes": 4, "sabado": 5, "sábado": 5,
+}
+
+_NEGATIVE_DAY_CONTEXT: frozenset[str] = frozenset({
+    "no puedo", "no me viene", "no me sirve", "imposible ese",
+})
+
+# Meses en español → número (para parsear fechas de slots ya presentados)
+_MONTHS_ES_LOWER: dict[str, int] = {
+    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4,
+    "mayo": 5, "junio": 6, "julio": 7, "agosto": 8,
+    "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
+}
+_SLOT_DATE_PATTERN = re.compile(r'\b(\d{1,2})\s+de\s+([a-záéíóú]+)\b', re.IGNORECASE)
+
+
+def _wants_different_day(query: str) -> bool:
+    """Detecta si el paciente quiere ver opciones de otro día/horario."""
+    normalized = _normalize_text(query)
+    return any(p in normalized for p in _OTHER_DAY_PATTERNS)
+
+
+def _extract_last_shown_date(messages: list[BaseMessage]) -> datetime | None:
+    """Busca en mensajes AI la fecha más tardía de slots ya presentados al paciente.
+
+    Parsea el formato '10 de Abril', '13 de Abril', etc. que usa _format_display().
+    Retorna la fecha más tardía encontrada, o None si no hay.
+    """
+    now = datetime.now(_TZ_ARGENTINA)
+    last_date: datetime | None = None
+
+    for msg in messages:
+        if getattr(msg, "type", None) != "ai":
+            continue
+        for match in _SLOT_DATE_PATTERN.finditer(msg.content):
+            day = int(match.group(1))
+            month_name = match.group(2).lower()
+            month_num = _MONTHS_ES_LOWER.get(month_name)
+            if not month_num:
+                continue
+            year = now.year
+            if month_num < now.month - 1:
+                year += 1
+            try:
+                candidate = datetime(year, month_num, day, tzinfo=_TZ_ARGENTINA)
+                if candidate.date() >= now.date():
+                    if last_date is None or candidate > last_date:
+                        last_date = candidate
+            except ValueError:
+                pass
+
+    return last_date
+
+
+def _extract_day_preference(messages: list[BaseMessage]) -> datetime | None:
+    """Extrae la próxima ocurrencia del día de la semana mencionado por el paciente.
+
+    Busca en mensajes humanos (más reciente primero). Ignora mensajes con contexto
+    negativo ('no puedo el lunes'). Retorna None si no hay preferencia clara.
+    Usa la fecha/hora local de Argentina para calcular correctamente "el próximo lunes".
+    """
+    now = datetime.now(_TZ_ARGENTINA)
+
+    for msg in reversed(messages):
+        if getattr(msg, "type", None) != "human":
+            continue
+        content = msg.content
+        normalized = _normalize_text(content)
+
+        if any(neg in normalized for neg in _NEGATIVE_DAY_CONTEXT):
+            continue
+
+        for day_name, weekday in _DAY_NAMES_TO_WEEKDAY.items():
+            if day_name in normalized:
+                days_ahead = (weekday - now.weekday()) % 7
+                if days_ahead == 0:
+                    days_ahead = 7  # Hoy mismo → siguiente semana
+                preferred = now + timedelta(days=days_ahead)
+                # Retornar con tzinfo de Argentina para comparación coherente
+                return preferred.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    return None
 
 
 def detect_service(query: str, services: list[Service]) -> Service | None:
@@ -239,6 +375,7 @@ def scheduling_node(state: ConversationState) -> dict:
         credentials_dict = tenant_config.calendar_credentials or {}
 
         # v1.3: soporte multi-servicio
+        svc = None  # se asigna en paths 2/3; None en path 1 (tenant sin servicios)
         services = tenant_service.get_tenant_services(tenant_id)
 
         if len(services) == 0:
@@ -284,6 +421,51 @@ def scheduling_node(state: ConversationState) -> dict:
             selected_service_name = svc.name
             duration_minutes = svc.duration_minutes
 
+        # Verificar reglas de booking del servicio antes de consultar el calendario
+        if svc is not None:
+            booking_mode: str = getattr(svc, "booking_mode", "appointment")
+
+            if booking_mode == "walk_in":
+                logger.info(
+                    "scheduling_node.walk_in_service",
+                    tenant_id=tenant_id,
+                    service=svc.name,
+                )
+                result: dict = {
+                    "scheduling_intent": False,
+                    "walk_in_service": True,
+                    "selected_service_name": selected_service_name,
+                }
+                if selected_service_id:
+                    result["selected_service_id"] = selected_service_id
+                return result
+
+            elif booking_mode == "gated":
+                normalized_q = _normalize_text(query)
+                prerequisite_met = any(kw in normalized_q for kw in GATED_PREREQUISITE_MET_KEYWORDS)
+                if not prerequisite_met:
+                    prerequisite_note: str = getattr(svc, "prerequisite_note", None) or ""
+                    logger.info(
+                        "scheduling_node.gated_prerequisite_pending",
+                        tenant_id=tenant_id,
+                        service=svc.name,
+                    )
+                    result = {
+                        "scheduling_intent": False,
+                        "gated_service_active": True,
+                        "gated_service_name": svc.name,
+                        "gated_prerequisite_note": prerequisite_note,
+                        "selected_service_name": selected_service_name,
+                    }
+                    if selected_service_id:
+                        result["selected_service_id"] = selected_service_id
+                    return result
+                logger.info(
+                    "scheduling_node.gated_prerequisite_met",
+                    tenant_id=tenant_id,
+                    service=svc.name,
+                )
+
         if not calendar_id:
             logger.warning(
                 "scheduling_node.no_calendar_id",
@@ -298,11 +480,34 @@ def scheduling_node(state: ConversationState) -> dict:
             )
             return {"scheduling_intent": True, "available_slots": []}
 
+        # Detectar preferencia de fecha del paciente para evitar mostrar siempre
+        # los slots más próximos ignorando lo que el paciente pidió.
+        start_date: datetime | None = None
+        if _wants_different_day(query):
+            # El paciente quiere ver otro día → saltar las fechas ya presentadas
+            last_shown = _extract_last_shown_date(messages)
+            if last_shown:
+                start_date = last_shown + timedelta(days=1)
+                logger.info(
+                    "scheduling_node.date_skip",
+                    reason="wants_different_day",
+                    start_date=start_date.isoformat(),
+                )
+        else:
+            # El paciente mencionó un día de la semana → buscar desde ese día
+            start_date = _extract_day_preference(messages)
+            if start_date:
+                logger.info(
+                    "scheduling_node.date_preference",
+                    start_date=start_date.isoformat(),
+                )
+
         slots = calendar_service.get_available_slots(
             calendar_id=calendar_id,
             credentials_dict=credentials_dict,
             duration_minutes=duration_minutes,
             lookahead_hours=settings.SCHEDULING_LOOKAHEAD_HOURS,
+            start_date=start_date,
         )
 
     except Exception as exc:

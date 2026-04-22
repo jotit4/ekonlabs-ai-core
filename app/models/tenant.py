@@ -61,5 +61,13 @@ class Service(BaseModel):
     professional_name: str | None = None  # ej: "María García"
     duration_minutes: int = 60
     active: bool = True
+    # Booking rules (migration 006)
+    booking_mode: str = "appointment"           # "appointment" | "walk_in" | "gated"
+    prerequisite_note: str | None = None        # Texto para mostrar al paciente en modo gated
+    capacity_per_slot: int | None = None        # None = sin límite; ej: 6 para kinesiología grupal
+    requires_prescription: bool = False         # Requiere pedido médico obligatorio
+    is_referral_only: bool = False              # Solo accesible por derivación médica
+    reminder_hours_before: int | None = None    # None = sin recordatorio automático
+    reminder_instructions: str | None = None    # Instrucción específica del servicio (ej: "comer liviano")
 
     model_config = ConfigDict(str_strip_whitespace=True)

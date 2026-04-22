@@ -313,6 +313,7 @@ def test_scheduling_node_calls_calendar_service_with_correct_params():
         credentials_dict=creds,
         duration_minutes=60,
         lookahead_hours=72,
+        start_date=None,
     )
 
 
@@ -430,3 +431,220 @@ def test_has_scheduling_intent_negative_quiero_consultar_precios():
     from app.agent.nodes.scheduling import has_scheduling_intent
 
     assert has_scheduling_intent("quiero consultar precios") is False
+
+
+# ---------------------------------------------------------------------------
+# Tests — Walk-in service (booking_mode='walk_in')
+# ---------------------------------------------------------------------------
+
+def _make_service_mock(
+    booking_mode: str = "appointment",
+    name: str = "Kinesiología",
+    calendar_id: str = "svc@calendar.google.com",
+    prerequisite_note: str | None = None,
+) -> "MagicMock":
+    svc = MagicMock()
+    svc.service_id = "svc-uuid-1234"
+    svc.name = name
+    svc.calendar_id = calendar_id
+    svc.duration_minutes = 60
+    svc.booking_mode = booking_mode
+    svc.prerequisite_note = prerequisite_note
+    return svc
+
+
+def test_walk_in_service_returns_walk_in_flag():
+    """Servicio walk_in → walk_in_service=True, scheduling_intent=False sin llamar al calendario."""
+    from app.agent.nodes.scheduling import scheduling_node
+
+    state = _base_state(messages=[HumanMessage(content="quiero turno para traumatología")])
+
+    with (
+        patch("app.agent.nodes.scheduling.tenant_service") as mock_ts,
+        patch("app.agent.nodes.scheduling.calendar_service") as mock_cs,
+        patch("app.agent.nodes.scheduling.settings") as mock_settings,
+    ):
+        mock_ts.get_tenant_config.return_value = _tenant_config_with_calendar()
+        mock_ts.get_tenant_services.return_value = [
+            _make_service_mock(booking_mode="walk_in", name="Traumatología")
+        ]
+        mock_settings.DEFAULT_SLOT_DURATION_MINUTES = 60
+        mock_settings.SCHEDULING_LOOKAHEAD_HOURS = 168
+
+        result = scheduling_node(state)
+
+    assert result["walk_in_service"] is True
+    assert result["scheduling_intent"] is False
+    assert result["selected_service_name"] == "Traumatología"
+    mock_cs.get_available_slots.assert_not_called()
+
+
+def test_walk_in_service_does_not_call_calendar():
+    """Servicio walk_in → get_available_slots no debe ser invocado."""
+    from app.agent.nodes.scheduling import scheduling_node
+
+    state = _base_state(messages=[HumanMessage(content="quiero turno en traumatología")])
+
+    with (
+        patch("app.agent.nodes.scheduling.tenant_service") as mock_ts,
+        patch("app.agent.nodes.scheduling.calendar_service") as mock_cs,
+        patch("app.agent.nodes.scheduling.settings") as mock_settings,
+    ):
+        mock_ts.get_tenant_config.return_value = _tenant_config_with_calendar()
+        mock_ts.get_tenant_services.return_value = [
+            _make_service_mock(booking_mode="walk_in", name="Traumatología")
+        ]
+        mock_settings.DEFAULT_SLOT_DURATION_MINUTES = 60
+        mock_settings.SCHEDULING_LOOKAHEAD_HOURS = 168
+
+        scheduling_node(state)
+
+    mock_cs.get_available_slots.assert_not_called()
+
+
+def test_appointment_service_continues_to_calendar():
+    """Servicio appointment → flujo normal, llama al calendario."""
+    from app.agent.nodes.scheduling import scheduling_node
+
+    state = _base_state(messages=[HumanMessage(content="quiero turno para kinesiología")])
+
+    with (
+        patch("app.agent.nodes.scheduling.tenant_service") as mock_ts,
+        patch("app.agent.nodes.scheduling.calendar_service") as mock_cs,
+        patch("app.agent.nodes.scheduling.settings") as mock_settings,
+    ):
+        mock_ts.get_tenant_config.return_value = _tenant_config_with_calendar()
+        mock_ts.get_tenant_services.return_value = [
+            _make_service_mock(booking_mode="appointment", name="Kinesiología")
+        ]
+        mock_cs.get_available_slots.return_value = _FAKE_SLOTS
+        mock_settings.DEFAULT_SLOT_DURATION_MINUTES = 60
+        mock_settings.SCHEDULING_LOOKAHEAD_HOURS = 168
+
+        result = scheduling_node(state)
+
+    assert result["scheduling_intent"] is True
+    assert result.get("walk_in_service") is not True
+    mock_cs.get_available_slots.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Tests — Gated service (booking_mode='gated')
+# ---------------------------------------------------------------------------
+
+def test_gated_service_no_prerequisite_returns_gated_flag():
+    """Servicio gated sin keywords de prerequisito → gated_service_active=True, sin calendario."""
+    from app.agent.nodes.scheduling import scheduling_node
+
+    state = _base_state(messages=[HumanMessage(content="quiero turno para aquagym")])
+
+    with (
+        patch("app.agent.nodes.scheduling.tenant_service") as mock_ts,
+        patch("app.agent.nodes.scheduling.calendar_service") as mock_cs,
+        patch("app.agent.nodes.scheduling.settings") as mock_settings,
+    ):
+        mock_ts.get_tenant_config.return_value = _tenant_config_with_calendar()
+        mock_ts.get_tenant_services.return_value = [
+            _make_service_mock(
+                booking_mode="gated",
+                name="Aquagym",
+                prerequisite_note="Primero debés tener consulta con el Dr. Rodríguez.",
+            )
+        ]
+        mock_settings.DEFAULT_SLOT_DURATION_MINUTES = 60
+        mock_settings.SCHEDULING_LOOKAHEAD_HOURS = 168
+
+        result = scheduling_node(state)
+
+    assert result["gated_service_active"] is True
+    assert result["scheduling_intent"] is False
+    assert result["gated_service_name"] == "Aquagym"
+    assert result["gated_prerequisite_note"] == "Primero debés tener consulta con el Dr. Rodríguez."
+    mock_cs.get_available_slots.assert_not_called()
+
+
+def test_gated_service_does_not_call_calendar_without_prerequisite():
+    """Servicio gated sin prerequisito confirmado → get_available_slots no invocado."""
+    from app.agent.nodes.scheduling import scheduling_node
+
+    state = _base_state(messages=[HumanMessage(content="quiero turno para aquagym")])
+
+    with (
+        patch("app.agent.nodes.scheduling.tenant_service") as mock_ts,
+        patch("app.agent.nodes.scheduling.calendar_service") as mock_cs,
+        patch("app.agent.nodes.scheduling.settings") as mock_settings,
+    ):
+        mock_ts.get_tenant_config.return_value = _tenant_config_with_calendar()
+        mock_ts.get_tenant_services.return_value = [
+            _make_service_mock(booking_mode="gated", name="Aquagym")
+        ]
+        mock_settings.DEFAULT_SLOT_DURATION_MINUTES = 60
+        mock_settings.SCHEDULING_LOOKAHEAD_HOURS = 168
+
+        scheduling_node(state)
+
+    mock_cs.get_available_slots.assert_not_called()
+
+
+def test_gated_service_with_prerequisite_continues_to_calendar():
+    """Servicio gated + 'el dr me dijo' → prerequisito cumplido, llama al calendario."""
+    from app.agent.nodes.scheduling import scheduling_node
+
+    state = _base_state(messages=[
+        HumanMessage(content="quiero turno para aquagym, ya fui con el dr y me dijo que lo haga")
+    ])
+
+    with (
+        patch("app.agent.nodes.scheduling.tenant_service") as mock_ts,
+        patch("app.agent.nodes.scheduling.calendar_service") as mock_cs,
+        patch("app.agent.nodes.scheduling.settings") as mock_settings,
+    ):
+        mock_ts.get_tenant_config.return_value = _tenant_config_with_calendar()
+        mock_ts.get_tenant_services.return_value = [
+            _make_service_mock(booking_mode="gated", name="Aquagym")
+        ]
+        mock_cs.get_available_slots.return_value = _FAKE_SLOTS
+        mock_settings.DEFAULT_SLOT_DURATION_MINUTES = 60
+        mock_settings.SCHEDULING_LOOKAHEAD_HOURS = 168
+
+        result = scheduling_node(state)
+
+    assert result["scheduling_intent"] is True
+    assert result.get("gated_service_active") is not True
+    mock_cs.get_available_slots.assert_called_once()
+
+
+def test_gated_prerequisite_met_keyword_ya_fui():
+    """'ya fui' en query detecta prerequisito cumplido."""
+    from app.agent.nodes.scheduling import GATED_PREREQUISITE_MET_KEYWORDS, scheduling_node
+    import unicodedata, re
+
+    def _norm(text):
+        ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+        return re.sub(r"\s+", " ", ascii_text.lower()).strip()
+
+    assert any(kw in _norm("ya fui con el Dr Rodriguez") for kw in GATED_PREREQUISITE_MET_KEYWORDS)
+
+
+def test_gated_prerequisite_met_keyword_el_dr_me_dijo():
+    """'el dr me dijo' detecta prerequisito cumplido."""
+    from app.agent.nodes.scheduling import GATED_PREREQUISITE_MET_KEYWORDS
+    import unicodedata, re
+
+    def _norm(text):
+        ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+        return re.sub(r"\s+", " ", ascii_text.lower()).strip()
+
+    assert any(kw in _norm("el Dr me dijo que haga aquagym") for kw in GATED_PREREQUISITE_MET_KEYWORDS)
+
+
+def test_gated_prerequisite_not_met_random_message():
+    """Un mensaje genérico no activa el prerequisito."""
+    from app.agent.nodes.scheduling import GATED_PREREQUISITE_MET_KEYWORDS
+    import unicodedata, re
+
+    def _norm(text):
+        ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+        return re.sub(r"\s+", " ", ascii_text.lower()).strip()
+
+    assert not any(kw in _norm("quiero turno para aquagym") for kw in GATED_PREREQUISITE_MET_KEYWORDS)

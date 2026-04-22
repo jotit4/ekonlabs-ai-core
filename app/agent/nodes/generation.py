@@ -701,6 +701,25 @@ def _get_llm() -> ChatOpenAI:
     return _llm
 
 
+def _build_gated_context(state: ConversationState, system_prompt_base: str) -> str:
+    """Build system content for gated-service LLM call (prerequisite consultation required)."""
+    service_name = state.get("gated_service_name") or "este servicio"
+    prerequisite_note = state.get("gated_prerequisite_note") or (
+        f"Para acceder a {service_name}, primero debés tener una consulta médica previa "
+        "con el profesional correspondiente, quien evaluará si el servicio es adecuado para vos."
+    )
+    return (
+        f"{system_prompt_base}\n\n"
+        "ACCIÓN REQUERIDA — SERVICIO CON CONSULTA PREVIA OBLIGATORIA\n"
+        f"El paciente pregunta por {service_name}. "
+        "Este servicio no se puede reservar sin una consulta médica previa. "
+        f"Requisito:\n\n{prerequisite_note}\n\n"
+        "Comunicalo claramente en voseo argentino, con calidez. "
+        "Preguntá si ya tuvo esa consulta previa. "
+        "Si dice que sí y menciona lo que le indicaron, podés continuar con el turno en el próximo mensaje."
+    )
+
+
 def _build_scheduling_context(state: ConversationState, system_prompt_base: str) -> str:
     """Build system content for scheduling-intent LLM calls.
 
@@ -835,6 +854,34 @@ def generation_node(state: ConversationState) -> dict:
             response_type="hardcoded_medical",
         )
         return {"messages": [AIMessage(content=ANTI_DIAGNOSTIC_RESPONSE)]}
+
+    # Walk-in service — sin turno previo, solo por orden de llegada
+    if state.get("walk_in_service", False):
+        service_name = state.get("selected_service_name") or "este servicio"
+        msg = (
+            f"{service_name} atiende sin turno previo, por orden de llegada. "
+            "Podés acercarte directamente a la clínica en el horario de atención. "
+            "¿Necesitás saber los horarios o tenés alguna otra consulta?"
+        )
+        logger.info("generation_node.done", tenant_id=tenant_id, response_type="walk_in_service")
+        return {"messages": [AIMessage(content=msg)]}
+
+    # Gated service — requiere consulta médica previa antes de poder agendar
+    if state.get("gated_service_active", False):
+        system_prompt_base: str = _build_system_prompt(state)
+        system_content = _build_gated_context(state, system_prompt_base)
+        messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+        try:
+            response = _get_llm().invoke(messages_for_llm)
+            logger.info(
+                "generation_node.done",
+                tenant_id=tenant_id,
+                response_type="gated_service_prerequisite",
+            )
+            return {"messages": [response]}
+        except Exception as exc:
+            logger.error("generation_node.error", tenant_id=tenant_id, error=str(exc))
+            raise
 
     # v1.4: Registration gate — intercepts to collect name (Phase A) and/or DNI (Phase B)
     if (state.get("name_collection_active") and not state.get("patient_name")) or \

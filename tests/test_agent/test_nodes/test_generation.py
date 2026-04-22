@@ -1037,3 +1037,144 @@ def test_name07_expired_slot_clears_name_collection():
     assert result.get("name_collection_active") is False
     assert result.get("patient_name") is None
     assert "messages" in result
+
+
+# ---------------------------------------------------------------------------
+# Tests — Walk-in service (migration 006)
+# ---------------------------------------------------------------------------
+
+def test_walk_in_service_returns_direct_message():
+    """walk_in_service=True → AIMessage directo con 'orden de llegada', sin LLM."""
+    from app.agent.nodes.generation import generation_node
+
+    state = _base_state(walk_in_service=True, selected_service_name="Traumatología")
+    mock_llm = _make_mock_llm()
+
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        result = generation_node(state)
+
+    assert "messages" in result
+    content = result["messages"][0].content
+    assert "orden de llegada" in content.lower()
+    mock_llm.invoke.assert_not_called()
+    mock_llm.bind_tools.assert_not_called()
+
+
+def test_walk_in_service_no_llm_call():
+    """walk_in_service=True → LLM no es invocado en ninguna forma."""
+    from app.agent.nodes.generation import generation_node
+
+    state = _base_state(walk_in_service=True)
+    mock_llm = _make_mock_llm()
+
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        generation_node(state)
+
+    mock_llm.invoke.assert_not_called()
+    mock_llm.bind_tools.assert_not_called()
+
+
+def test_walk_in_service_includes_service_name():
+    """walk_in_service=True + selected_service_name → nombre del servicio en la respuesta."""
+    from app.agent.nodes.generation import generation_node
+
+    state = _base_state(walk_in_service=True, selected_service_name="Traumatología")
+
+    with patch("app.agent.nodes.generation._llm", _make_mock_llm()):
+        result = generation_node(state)
+
+    content = result["messages"][0].content
+    assert "Traumatología" in content
+
+
+def test_walk_in_service_fallback_message_without_service_name():
+    """walk_in_service=True sin selected_service_name → usa 'este servicio'."""
+    from app.agent.nodes.generation import generation_node
+
+    state = _base_state(walk_in_service=True)
+
+    with patch("app.agent.nodes.generation._llm", _make_mock_llm()):
+        result = generation_node(state)
+
+    content = result["messages"][0].content
+    assert "este servicio" in content
+
+
+# ---------------------------------------------------------------------------
+# Tests — Gated service (migration 006)
+# ---------------------------------------------------------------------------
+
+def test_gated_service_calls_llm():
+    """gated_service_active=True → LLM invocado con contexto de prerequisito."""
+    from app.agent.nodes.generation import generation_node
+
+    state = _base_state(
+        gated_service_active=True,
+        gated_service_name="Aquagym",
+        gated_prerequisite_note="Primero debés tener consulta con el Dr. Rodríguez.",
+    )
+    mock_llm = _make_mock_llm("Para acceder a Aquagym necesitás consulta previa.")
+
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        result = generation_node(state)
+
+    assert "messages" in result
+    mock_llm.invoke.assert_called_once()
+
+
+def test_gated_service_system_content_includes_prerequisite_note():
+    """gated_service_active=True → system content incluye el prerequisite_note."""
+    from app.agent.nodes.generation import generation_node
+
+    note = "Primero debés tener consulta con el Dr. Rodríguez, quien atiende sin turno previo."
+    state = _base_state(
+        gated_service_active=True,
+        gated_service_name="Aquagym",
+        gated_prerequisite_note=note,
+    )
+    mock_llm = _make_mock_llm()
+
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        generation_node(state)
+
+    call_args = mock_llm.invoke.call_args[0][0]
+    system_msg = call_args[0]
+    assert isinstance(system_msg, SystemMessage)
+    assert note in system_msg.content
+
+
+def test_gated_service_system_content_includes_service_name():
+    """gated_service_active=True → system content menciona el nombre del servicio."""
+    from app.agent.nodes.generation import generation_node
+
+    state = _base_state(
+        gated_service_active=True,
+        gated_service_name="Hidroterapia",
+        gated_prerequisite_note="Requiere consulta previa.",
+    )
+    mock_llm = _make_mock_llm()
+
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        generation_node(state)
+
+    call_args = mock_llm.invoke.call_args[0][0]
+    system_msg = call_args[0]
+    assert "Hidroterapia" in system_msg.content
+
+
+def test_gated_service_fallback_note_when_none():
+    """gated_service_active=True sin prerequisite_note → fallback genérico en system content."""
+    from app.agent.nodes.generation import generation_node
+
+    state = _base_state(
+        gated_service_active=True,
+        gated_service_name="Aquagym",
+    )
+    mock_llm = _make_mock_llm()
+
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        generation_node(state)
+
+    call_args = mock_llm.invoke.call_args[0][0]
+    system_msg = call_args[0]
+    assert "consulta médica previa" in system_msg.content

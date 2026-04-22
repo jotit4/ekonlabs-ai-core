@@ -64,3 +64,62 @@ def test_new_fields_can_be_set_and_read():
     assert state["patient_name"] == "María García"
     assert state["name_collection_active"] is True
     assert state["slot_presented_at"] == "2026-04-05T10:00:00-03:00"
+
+
+# ---------------------------------------------------------------------------
+# Tests — Booking rules per service (migration 006)
+# ---------------------------------------------------------------------------
+
+def test_state_has_walk_in_service_field():
+    """Migration 006: ConversationState declares walk_in_service: NotRequired[bool]."""
+    from app.agent.state import ConversationState
+
+    hints = get_type_hints(ConversationState, include_extras=True)
+    assert "walk_in_service" in hints, "ConversationState missing walk_in_service field"
+
+
+def test_state_has_gated_service_active_field():
+    """Migration 006: ConversationState declares gated_service_active: NotRequired[bool]."""
+    from app.agent.state import ConversationState
+
+    hints = get_type_hints(ConversationState, include_extras=True)
+    assert "gated_service_active" in hints, "ConversationState missing gated_service_active field"
+
+
+def test_state_has_gated_service_name_field():
+    """Migration 006: ConversationState declares gated_service_name: NotRequired[str | None]."""
+    from app.agent.state import ConversationState
+
+    hints = get_type_hints(ConversationState, include_extras=True)
+    assert "gated_service_name" in hints, "ConversationState missing gated_service_name field"
+
+
+def test_state_has_gated_prerequisite_note_field():
+    """Migration 006: ConversationState declares gated_prerequisite_note: NotRequired[str | None]."""
+    from app.agent.state import ConversationState
+
+    hints = get_type_hints(ConversationState, include_extras=True)
+    assert "gated_prerequisite_note" in hints, "ConversationState missing gated_prerequisite_note field"
+
+
+def test_booking_rule_fields_absent_by_default():
+    """Booking rule fields are NOT present in minimal state dict (NotRequired = optional)."""
+    state = _minimal_state()
+    assert "walk_in_service" not in state
+    assert "gated_service_active" not in state
+    assert "gated_service_name" not in state
+    assert "gated_prerequisite_note" not in state
+
+
+def test_booking_rule_fields_can_be_set_and_read():
+    """Booking rule fields can be set and retrieved from a state dict."""
+    state = _minimal_state()
+    state["walk_in_service"] = True
+    state["gated_service_active"] = True
+    state["gated_service_name"] = "Aquagym"
+    state["gated_prerequisite_note"] = "Primero debés ver al Dr. Rodríguez."
+
+    assert state["walk_in_service"] is True
+    assert state["gated_service_active"] is True
+    assert state["gated_service_name"] == "Aquagym"
+    assert state["gated_prerequisite_note"] == "Primero debés ver al Dr. Rodríguez."

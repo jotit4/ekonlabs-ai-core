@@ -72,11 +72,12 @@ def get_available_slots(
     credentials_dict: dict,
     duration_minutes: int = 60,
     lookahead_hours: int = 72,
+    start_date: datetime | None = None,
 ) -> list[dict]:
     """Consulta Google Calendar y retorna hasta 3 franjas horarias libres.
 
     Algoritmo:
-        1. Obtener eventos existentes en las próximas `lookahead_hours`.
+        1. Obtener eventos existentes desde ahora hasta time_max.
         2. Iterar por días laborales (Lun-Vie) generando candidatos en horario
            laboral (09:00-18:00 UTC), paso de 1 hora.
         3. Filtrar candidatos que colisionan con eventos existentes.
@@ -87,6 +88,8 @@ def get_available_slots(
         credentials_dict: Service account JSON ya deserializado (campo `calendar_credentials`).
         duration_minutes: Duración de cada slot en minutos (default 60).
         lookahead_hours: Ventana de búsqueda en horas (default 72).
+        start_date: Si se provee, buscar slots no antes de esta fecha. Útil cuando el
+            paciente pidió un día específico o quiere ver "otro día".
 
     Returns:
         Lista de hasta 3 dicts con claves `start`, `end`, `display`.
@@ -103,7 +106,9 @@ def get_available_slots(
 
         now = datetime.now(timezone.utc)
         time_min = now
-        time_max = now + timedelta(hours=lookahead_hours)
+        # Si hay start_date, extender time_max para cubrir desde esa fecha
+        effective_start = max(now, start_date) if start_date else now
+        time_max = effective_start + timedelta(hours=lookahead_hours)
 
         events_result = (
             service.events()
@@ -120,6 +125,7 @@ def get_available_slots(
         calendar_timezone = _resolve_timezone(events_result.get("timeZone"))
         time_min_local = time_min.astimezone(calendar_timezone)
         time_max_local = time_max.astimezone(calendar_timezone)
+        effective_start_local = effective_start.astimezone(calendar_timezone)
 
         # Construir lista de intervalos ocupados
         busy: list[tuple[datetime, datetime]] = []
@@ -131,18 +137,18 @@ def get_available_slots(
             if start_dt and end_dt:
                 busy.append((start_dt, end_dt))
 
-        # Generar candidatos en días laborales
+        # Generar candidatos en días laborales — comenzar desde effective_start
         free_slots: list[datetime] = []
         slot_duration = timedelta(minutes=duration_minutes)
-        current_day = time_min_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        current_day = effective_start_local.replace(hour=0, minute=0, second=0, microsecond=0)
 
         while current_day < time_max_local and len(free_slots) < 3:
             if current_day.weekday() < 5:  # Lun=0 … Vie=4
                 work_start = current_day.replace(hour=_WORK_START_HOUR, minute=0, second=0, microsecond=0)
                 work_end = current_day.replace(hour=_WORK_END_HOUR, minute=0, second=0, microsecond=0)
 
-                # El primer slot del día no puede ser anterior a time_min
-                candidate = work_start if work_start >= time_min_local else _next_full_hour(time_min_local)
+                # El primer slot del día no puede ser anterior a effective_start
+                candidate = work_start if work_start >= effective_start_local else _next_full_hour(effective_start_local)
 
                 while candidate + slot_duration <= work_end:
                     if candidate >= time_max_local:

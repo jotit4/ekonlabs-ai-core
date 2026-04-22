@@ -37,3 +37,8 @@ class ConversationState(TypedDict):
     dni_collection_active: NotRequired[bool]        # True mientras el agente espera que el paciente dé su DNI
     dni_attempts: NotRequired[int]                  # Veces que el agente pidió el DNI; ausente = 0
     patient_id: NotRequired[str | None]             # UUID del registro en tabla patients
+    # Booking rules por servicio (migration 006)
+    walk_in_service: NotRequired[bool]              # True si el servicio es solo por orden de llegada (sin turno)
+    gated_service_active: NotRequired[bool]         # True si el servicio requiere consulta médica previa
+    gated_service_name: NotRequired[str | None]     # Nombre del servicio gated que el paciente quiere
+    gated_prerequisite_note: NotRequired[str | None] # Texto del requisito previo para mostrar al paciente
