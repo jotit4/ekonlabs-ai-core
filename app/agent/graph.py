@@ -21,12 +21,20 @@ from langgraph.graph import StateGraph, END
 
 from app.agent.nodes.anti_diagnostic import anti_diagnostic_node
 from app.agent.nodes.booking import booking_node
+from app.agent.nodes.consent import consent_node
 from app.agent.nodes.generation import generation_node
 from app.agent.nodes.handoff import handoff_node
 from app.agent.nodes.rag_retrieval import rag_retrieval_node
 from app.agent.nodes.scheduling import has_scheduling_intent, scheduling_node
 from app.agent.nodes.triage import triage_node
 from app.agent.state import ConversationState
+
+
+def _route_after_consent(state: ConversationState) -> str:
+    """consent_given=True → proceed to triage. False → consent AIMessage already added → END."""
+    if state.get("consent_given", False):
+        return "triage"
+    return "__end__"
 
 
 def _route_after_anti_diagnostic(state: ConversationState) -> str:
@@ -79,6 +87,12 @@ def _route_after_scheduling(state: ConversationState) -> str:
         return "generation"
     if state.get("scheduling_intent", False):
         return "generation"
+    if state.get("walk_in_service", False):
+        return "generation"
+    if state.get("gated_service_active", False):
+        return "generation"
+    if state.get("cycle_service_active", False):
+        return "generation"
     return "rag_retrieval"
 
 
@@ -100,13 +114,19 @@ def build_graph() -> StateGraph:
         Grafo compilado listo para invoke().
     """
     builder = StateGraph(ConversationState)
+    builder.add_node("consent", consent_node)
     builder.add_node("triage", triage_node)
     builder.add_node("anti_diagnostic", anti_diagnostic_node)
     builder.add_node("booking", booking_node)
     builder.add_node("scheduling", scheduling_node)
     builder.add_node("rag_retrieval", rag_retrieval_node)
     builder.add_node("generation", generation_node)
-    builder.set_entry_point("triage")
+    builder.set_entry_point("consent")
+    builder.add_conditional_edges(
+        "consent",
+        _route_after_consent,
+        {"triage": "triage", "__end__": END},
+    )
     builder.add_edge("triage", "anti_diagnostic")
     builder.add_conditional_edges(
         "anti_diagnostic",

@@ -58,9 +58,9 @@ def test_create_event_returns_event_id():
     assert result == _EVENT_ID
 
 
-def test_create_event_includes_phone_in_description():
-    """create_event pasa el phone_number en el campo description del evento."""
-    from app.services.calendar_service import create_event
+def test_create_event_uses_opaque_token_not_phone_in_description():
+    """F0.2: create_event NO incluye el phone crudo en description; usa token opaco ref:..."""
+    from app.services.calendar_service import create_event, _lookup_token
 
     mock_service = _mock_service()
     with (
@@ -77,7 +77,11 @@ def test_create_event_includes_phone_in_description():
 
     call_kwargs = mock_service.events.return_value.insert.call_args
     body = call_kwargs[1]["body"]
-    assert _PHONE in body["description"]
+    # Raw phone must NOT appear in description (PII removal F0.2)
+    assert _PHONE not in body["description"]
+    # Opaque token MUST be present for cancel lookup
+    expected_token = f"ref:{_lookup_token(_PHONE, _CALENDAR_ID)}"
+    assert expected_token in body["description"]
 
 
 def test_create_event_returns_none_on_api_error():
@@ -102,8 +106,8 @@ def test_create_event_returns_none_on_api_error():
     assert result is None
 
 
-def test_create_event_uses_default_title_with_phone():
-    """create_event usa el título default 'Turno médico — {phone_number}' cuando no se pasa title."""
+def test_create_event_uses_default_title_turno():
+    """F0.2: create_event usa el título default 'Turno' (sin PII) cuando no se pasa title."""
     from app.services.calendar_service import create_event
 
     mock_service = _mock_service()
@@ -121,7 +125,8 @@ def test_create_event_uses_default_title_with_phone():
 
     call_kwargs = mock_service.events.return_value.insert.call_args
     body = call_kwargs[1]["body"]
-    assert _PHONE in body["summary"]
+    assert body["summary"] == "Turno"
+    assert _PHONE not in body["summary"]
 
 
 def test_delete_event_returns_true_on_success():

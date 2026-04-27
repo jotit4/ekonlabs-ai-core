@@ -40,6 +40,11 @@ def get_or_create_patient(
     phone_number: str,
     full_name: str,
     dni: str | None = None,
+    obra_social: str | None = None,
+    obra_social_number: str | None = None,
+    reason_for_visit: str | None = None,
+    alternative_phone: str | None = None,
+    address: str | None = None,
 ) -> Patient:
     """Upsert del paciente.
 
@@ -60,6 +65,16 @@ def get_or_create_patient(
     }
     if dni is not None:
         upsert_data["dni"] = dni
+    if obra_social is not None:
+        upsert_data["obra_social"] = obra_social
+    if obra_social_number is not None:
+        upsert_data["obra_social_number"] = obra_social_number
+    if reason_for_visit is not None:
+        upsert_data["reason_for_visit"] = reason_for_visit
+    if alternative_phone is not None:
+        upsert_data["alternative_phone"] = alternative_phone
+    if address is not None:
+        upsert_data["address"] = address
 
     response = (
         client.table("patients")
@@ -131,7 +146,11 @@ def create_appointment(
     return appt
 
 
-def cancel_appointment_by_event_id(calendar_event_id: str) -> bool:
+def cancel_appointment_by_event_id(
+    calendar_event_id: str,
+    cancelled_by: str = "patient",
+    cancellation_reason: str | None = None,
+) -> bool:
     """Marca el appointment como cancelado por calendar_event_id.
 
     Retorna True si se actualizó algún registro, False si no encontró nada.
@@ -139,14 +158,16 @@ def cancel_appointment_by_event_id(calendar_event_id: str) -> bool:
     """
     try:
         client = get_supabase_client()
+        update_data: dict = {
+            "status": "cancelled",
+            "cancelled_at": datetime.now(timezone.utc).isoformat(),
+            "cancelled_by": cancelled_by,
+        }
+        if cancellation_reason is not None:
+            update_data["cancellation_reason"] = cancellation_reason
         response = (
             client.table("appointments")
-            .update(
-                {
-                    "status": "cancelled",
-                    "cancelled_at": datetime.now(timezone.utc).isoformat(),
-                }
-            )
+            .update(update_data)
             .eq("calendar_event_id", calendar_event_id)
             .execute()
         )

@@ -42,7 +42,9 @@ class TenantConfig(BaseModel):
     rules: dict = Field(default_factory=dict)
     # Epic 3 — Google Calendar (nullable; tenants sin calendario operan con RAG normal)
     calendar_id: str | None = None
-    calendar_credentials: dict | None = None
+    # F0.1: prefer calendar_credentials_ref (env var / Vault secret name) over legacy JSONB
+    calendar_credentials_ref: str | None = None
+    calendar_credentials: dict | None = None  # deprecated: being drained to NULL
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -62,7 +64,7 @@ class Service(BaseModel):
     duration_minutes: int = 60
     active: bool = True
     # Booking rules (migration 006)
-    booking_mode: str = "appointment"           # "appointment" | "walk_in" | "gated"
+    booking_mode: str = "appointment"           # "appointment" | "walk_in" | "gated" | "cycle"
     prerequisite_note: str | None = None        # Texto para mostrar al paciente en modo gated
     capacity_per_slot: int | None = None        # None = sin límite; ej: 6 para kinesiología grupal
     requires_prescription: bool = False         # Requiere pedido médico obligatorio

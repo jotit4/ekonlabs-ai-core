@@ -15,6 +15,7 @@ from app.core.exceptions import AppException
 from app.core.logging import configure_logging, get_logger
 from app.core.rate_limiter import limiter
 from app.core.config import settings
+from app.observability.sentry import configure_sentry
 from app.api.v1.health import router as health_router
 from app.api.v1.tenants import router as tenants_router
 from app.api.v1.webhooks import router as webhooks_router
@@ -25,6 +26,7 @@ async def lifespan(application: FastAPI):
     # Propagar variables de LangSmith a os.environ para que LangChain/LangSmith las lea.
     # Seteamos ambos prefijos: LANGCHAIN_* (SDK legacy) y LANGSMITH_* (SDK >=0.1, actual).
     configure_logging()
+    configure_sentry()
     logger = get_logger(__name__)
 
     _tracing_raw = settings.LANGCHAIN_TRACING_V2

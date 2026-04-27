@@ -153,6 +153,7 @@ def test_graph_medical_query_bypasses_rag_and_llm():
 
     state = {**_BASE_STATE, "messages": [HumanMessage(content="necesito un diagnóstico urgente")]}
     with (
+        patch("app.agent.nodes.consent.has_active_consent", return_value=True),
         patch("app.agent.nodes.generation._llm", mock_llm),
         patch("app.agent.nodes.rag_retrieval.make_search_tool", mock_search),
     ):
@@ -191,6 +192,7 @@ def test_graph_scheduling_intent_bypasses_rag():
     ]
 
     with (
+        patch("app.agent.nodes.consent.has_active_consent", return_value=True),
         patch("app.agent.nodes.generation._llm", mock_llm),
         patch("app.agent.nodes.rag_retrieval.make_search_tool", mock_search),
         patch("app.agent.nodes.booking.tenant_service") as mock_ts_booking,
@@ -238,6 +240,7 @@ def test_graph_booking_confirm_bypasses_scheduling_and_rag():
     }
 
     with (
+        patch("app.agent.nodes.consent.has_active_consent", return_value=True),
         patch("app.agent.nodes.generation._llm", mock_llm),
         patch("app.agent.nodes.rag_retrieval.make_search_tool", mock_search),
         patch("app.agent.nodes.booking.tenant_service") as mock_ts,
@@ -275,6 +278,7 @@ def test_graph_shadow_mode_returns_redirect_without_rag_or_llm():
     mock_tenant.shadow_mode_enabled = True
 
     with (
+        patch("app.agent.nodes.consent.has_active_consent", return_value=True),
         patch("app.agent.nodes.generation._llm", mock_llm),
         patch("app.agent.nodes.rag_retrieval.make_search_tool", mock_search),
         patch("app.agent.nodes.booking.tenant_service") as mock_ts_booking,
@@ -311,6 +315,7 @@ def test_graph_normal_query_uses_rag_and_llm():
 
     state = {**_BASE_STATE, "messages": [HumanMessage(content="¿cuáles son los horarios?")]}
     with (
+        patch("app.agent.nodes.consent.has_active_consent", return_value=True),
         patch("app.agent.nodes.generation._llm", mock_llm),
         patch("app.agent.nodes.rag_retrieval.make_search_tool", mock_search),
     ):

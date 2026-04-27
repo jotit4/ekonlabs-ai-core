@@ -1,6 +1,6 @@
 """Tests para Turn 4 del flujo de agendamiento.
 
-Turn 4: paciente envía su DNI ("32456789") → agente crea evento en Calendar y confirma reserva.
+Turn 4: paciente envía su DNI → agente activa Fase D (datos extendidos) → Fase C (finalization).
 
 Flujo de nodos:
     triage → anti_diagnostic → booking → scheduling → rag_retrieval → generation
@@ -8,7 +8,7 @@ Flujo de nodos:
 Cobertura de este archivo:
     1. booking_node — re-hidratación con dni_collection_active (INFRA-06)
     2. _extract_dni — función pura de extracción de DNI argentino
-    3. generation_node — Fase B (extracción DNI) + _finalize_registration (Fase C)
+    3. generation_node — Fase B (extracción DNI → transición a Fase D) + _finalize_registration (Fase C)
 """
 from __future__ import annotations
 
@@ -306,7 +306,7 @@ class TestExtractDni:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestGenerationNodeTurn4PhaseB:
-    """generation_node en Turn 4: gate de registration activo + Fase B DNI + Fase C finalización."""
+    """generation_node en Turn 4: Fase B (DNI) → transición a Fase D (datos extendidos) → Fase C (finalización)."""
 
     def _make_turn4_state(self, message: str = _DNI, **kwargs) -> dict:
         """State típico de Turn 4 re-hidratado desde Redis."""
@@ -328,38 +328,46 @@ class TestGenerationNodeTurn4PhaseB:
         state.update(kwargs)
         return state
 
-    def _mock_services_patch(self, event_id: str = _EVENT_ID, patient_id: str = "patient-001"):
-        """Retorna los patches necesarios para _finalize_registration."""
-        mock_patient = _mock_patient(patient_id=patient_id)
-        mock_tenant_config = _mock_tenant()
+    def _make_phase_d_state(self, message: str = "OSEP afiliado 99", **kwargs) -> dict:
+        """State de Fase D (datos extendidos ya pedidos, esperando respuesta)."""
+        state = {
+            "tenant_id": _TENANT_ID,
+            "phone_number": _PHONE,
+            "messages": [HumanMessage(content=message)],
+            "confidence_score": 1.0,
+            "is_paused": False,
+            "booking_intent": False,
+            "name_collection_active": False,
+            "dni_collection_active": False,
+            "extended_collection_active": True,
+            "extended_attempts": 1,
+            "patient_name": _PATIENT_NAME,
+            "patient_dni": _DNI,
+            "booked_slot": _FAKE_SLOT,
+        }
+        state.update(kwargs)
+        return state
 
-        return mock_patient, mock_tenant_config
+    # ── Fase B: DNI capturado → transición a Fase D ───────────────────────────
 
-    # ── Fase B: extracción e invocación de _finalize_registration ──────────────
-
-    def test_phase_b_calls_finalize_registration(self):
-        """dni_collection_active=True, dni_attempts=1, mensaje '32456789' → llama _finalize_registration."""
+    def test_phase_b_transitions_to_phase_d(self):
+        """dni_collection_active=True, dni_attempts=1, DNI válido → activa Fase D (no finaliza aún)."""
         from app.agent.nodes.generation import generation_node
 
-        mock_llm = _make_mock_llm()
-        mock_patient = _mock_patient()
+        mock_llm = _make_mock_llm("¿Tenés obra social?")
 
         with (
             patch("app.agent.nodes.generation._llm", mock_llm),
-            patch("app.agent.nodes.generation.patient_service") as mock_ps,
             patch("app.agent.nodes.generation.calendar_service") as mock_cs,
-            patch("app.agent.nodes.generation.tenant_service") as mock_ts,
             patch("app.agent.nodes.generation.booking_draft_service") as mock_draft,
         ):
-            mock_ps.get_or_create_patient.return_value = mock_patient
-            mock_cs.create_event.return_value = _EVENT_ID
-            mock_ts.get_tenant_config.return_value = _mock_tenant()
-            mock_ts.get_tenant_services.return_value = []
-
+            mock_draft.get_draft.return_value = {}
             result = generation_node(self._make_turn4_state(_DNI))
 
-        # _finalize_registration se ejecutó → create_event fue llamado
-        mock_cs.create_event.assert_called_once()
+        # Phase D activated — calendar NOT touched yet
+        mock_cs.create_event.assert_not_called()
+        assert result.get("extended_collection_active") is True
+        assert result.get("patient_dni") == _DNI
 
     def test_phase_b_does_not_use_bind_tools(self):
         """Registration path usa _get_llm().invoke() (NO bind_tools)."""
@@ -385,81 +393,75 @@ class TestGenerationNodeTurn4PhaseB:
         mock_llm.bind_tools.assert_not_called()
         mock_llm.invoke.assert_called_once()
 
-    # ── _finalize_registration: llamadas a servicios externos ──────────────────
+    # ── _finalize_registration (Fase C): llamadas a servicios externos ──────────
+    # Estas pruebas usan estado de Fase D (extended_collection_active=True, extended_attempts=1)
 
     def test_finalize_calls_get_or_create_patient(self):
-        """_finalize_registration llama patient_service.get_or_create_patient con los datos correctos."""
+        """_finalize_registration llama patient_service.get_or_create_patient con name y dni."""
         from app.agent.nodes.generation import generation_node
 
-        mock_llm = _make_mock_llm()
-        mock_patient = _mock_patient()
-
         with (
-            patch("app.agent.nodes.generation._llm", mock_llm),
+            patch("app.agent.nodes.generation._llm", _make_mock_llm()),
+            patch("app.agent.nodes.generation._extract_extended_data", return_value={"patient_obra_social": "OSEP"}),
             patch("app.agent.nodes.generation.patient_service") as mock_ps,
             patch("app.agent.nodes.generation.calendar_service") as mock_cs,
             patch("app.agent.nodes.generation.tenant_service") as mock_ts,
             patch("app.agent.nodes.generation.booking_draft_service") as mock_draft,
         ):
-            mock_ps.get_or_create_patient.return_value = mock_patient
+            mock_ps.get_or_create_patient.return_value = _mock_patient()
             mock_cs.create_event.return_value = _EVENT_ID
             mock_ts.get_tenant_config.return_value = _mock_tenant()
             mock_ts.get_tenant_services.return_value = []
+            mock_draft.get_draft.return_value = {}
+            generation_node(self._make_phase_d_state())
 
-            generation_node(self._make_turn4_state(_DNI))
-
-        mock_ps.get_or_create_patient.assert_called_once_with(
-            tenant_id=_TENANT_ID,
-            phone_number=_PHONE,
-            full_name=_PATIENT_NAME,
-            dni=_DNI,
-        )
+        mock_ps.get_or_create_patient.assert_called_once()
+        call_kwargs = mock_ps.get_or_create_patient.call_args[1]
+        assert call_kwargs["full_name"] == _PATIENT_NAME
+        assert call_kwargs["dni"] == _DNI
 
     def test_finalize_calls_calendar_create_event(self):
-        """_finalize_registration llama calendar_service.create_event con patient_name y dni."""
+        """_finalize_registration llama calendar_service.create_event con title y sin PII raw."""
         from app.agent.nodes.generation import generation_node
 
-        mock_llm = _make_mock_llm()
-        mock_patient = _mock_patient()
-
         with (
-            patch("app.agent.nodes.generation._llm", mock_llm),
+            patch("app.agent.nodes.generation._llm", _make_mock_llm()),
+            patch("app.agent.nodes.generation._extract_extended_data", return_value={"patient_obra_social": "OSEP"}),
             patch("app.agent.nodes.generation.patient_service") as mock_ps,
             patch("app.agent.nodes.generation.calendar_service") as mock_cs,
             patch("app.agent.nodes.generation.tenant_service") as mock_ts,
             patch("app.agent.nodes.generation.booking_draft_service") as mock_draft,
         ):
-            mock_ps.get_or_create_patient.return_value = mock_patient
+            mock_ps.get_or_create_patient.return_value = _mock_patient()
             mock_cs.create_event.return_value = _EVENT_ID
             mock_ts.get_tenant_config.return_value = _mock_tenant()
             mock_ts.get_tenant_services.return_value = []
-
-            generation_node(self._make_turn4_state(_DNI))
+            mock_draft.get_draft.return_value = {}
+            generation_node(self._make_phase_d_state())
 
         call_kwargs = mock_cs.create_event.call_args[1]
-        assert call_kwargs["patient_name"] == _PATIENT_NAME
-        assert call_kwargs["dni"] == _DNI
+        assert "patient_name" not in call_kwargs
+        assert "dni" not in call_kwargs
+        assert _PATIENT_NAME in call_kwargs["title"]
 
     def test_finalize_calls_create_appointment(self):
         """_finalize_registration llama patient_service.create_appointment."""
         from app.agent.nodes.generation import generation_node
 
-        mock_llm = _make_mock_llm()
-        mock_patient = _mock_patient(patient_id="patient-uuid-999")
-
         with (
-            patch("app.agent.nodes.generation._llm", mock_llm),
+            patch("app.agent.nodes.generation._llm", _make_mock_llm()),
+            patch("app.agent.nodes.generation._extract_extended_data", return_value={"patient_obra_social": "OSEP"}),
             patch("app.agent.nodes.generation.patient_service") as mock_ps,
             patch("app.agent.nodes.generation.calendar_service") as mock_cs,
             patch("app.agent.nodes.generation.tenant_service") as mock_ts,
             patch("app.agent.nodes.generation.booking_draft_service") as mock_draft,
         ):
-            mock_ps.get_or_create_patient.return_value = mock_patient
+            mock_ps.get_or_create_patient.return_value = _mock_patient(patient_id="patient-uuid-999")
             mock_cs.create_event.return_value = _EVENT_ID
             mock_ts.get_tenant_config.return_value = _mock_tenant()
             mock_ts.get_tenant_services.return_value = []
-
-            generation_node(self._make_turn4_state(_DNI))
+            mock_draft.get_draft.return_value = {}
+            generation_node(self._make_phase_d_state())
 
         mock_ps.create_appointment.assert_called_once()
         call_kwargs = mock_ps.create_appointment.call_args[1]
@@ -469,29 +471,27 @@ class TestGenerationNodeTurn4PhaseB:
         """_finalize_registration llama booking_draft_service.delete_draft (limpia Redis)."""
         from app.agent.nodes.generation import generation_node
 
-        mock_llm = _make_mock_llm()
-        mock_patient = _mock_patient()
-
         with (
-            patch("app.agent.nodes.generation._llm", mock_llm),
+            patch("app.agent.nodes.generation._llm", _make_mock_llm()),
+            patch("app.agent.nodes.generation._extract_extended_data", return_value={"patient_obra_social": "OSEP"}),
             patch("app.agent.nodes.generation.patient_service") as mock_ps,
             patch("app.agent.nodes.generation.calendar_service") as mock_cs,
             patch("app.agent.nodes.generation.tenant_service") as mock_ts,
             patch("app.agent.nodes.generation.booking_draft_service") as mock_draft,
         ):
-            mock_ps.get_or_create_patient.return_value = mock_patient
+            mock_ps.get_or_create_patient.return_value = _mock_patient()
             mock_cs.create_event.return_value = _EVENT_ID
             mock_ts.get_tenant_config.return_value = _mock_tenant()
             mock_ts.get_tenant_services.return_value = []
-
-            generation_node(self._make_turn4_state(_DNI))
+            mock_draft.get_draft.return_value = {}
+            generation_node(self._make_phase_d_state())
 
         mock_draft.delete_draft.assert_called_once_with(_TENANT_ID, _PHONE)
 
     # ── State final retornado por generation_node ──────────────────────────────
 
     def test_final_state_has_calendar_event_id(self):
-        """El event_id retornado por create_event aparece en el state final (calendar_event_id)."""
+        """El event_id retornado por create_event aparece en el state final (Fase C)."""
         from app.agent.nodes.generation import generation_node
 
         mock_llm = _make_mock_llm()
@@ -499,6 +499,7 @@ class TestGenerationNodeTurn4PhaseB:
 
         with (
             patch("app.agent.nodes.generation._llm", mock_llm),
+            patch("app.agent.nodes.generation._extract_extended_data", return_value={"patient_obra_social": "OSEP"}),
             patch("app.agent.nodes.generation.patient_service") as mock_ps,
             patch("app.agent.nodes.generation.calendar_service") as mock_cs,
             patch("app.agent.nodes.generation.tenant_service") as mock_ts,
@@ -508,13 +509,14 @@ class TestGenerationNodeTurn4PhaseB:
             mock_cs.create_event.return_value = _EVENT_ID
             mock_ts.get_tenant_config.return_value = _mock_tenant()
             mock_ts.get_tenant_services.return_value = []
+            mock_draft.get_draft.return_value = {}
 
-            result = generation_node(self._make_turn4_state(_DNI))
+            result = generation_node(self._make_phase_d_state())
 
         assert result.get("calendar_event_id") == _EVENT_ID
 
     def test_final_state_name_collection_active_false(self):
-        """State final tiene name_collection_active=False."""
+        """State final (Fase C) tiene name_collection_active=False."""
         from app.agent.nodes.generation import generation_node
 
         mock_llm = _make_mock_llm()
@@ -522,6 +524,7 @@ class TestGenerationNodeTurn4PhaseB:
 
         with (
             patch("app.agent.nodes.generation._llm", mock_llm),
+            patch("app.agent.nodes.generation._extract_extended_data", return_value={"patient_obra_social": "OSEP"}),
             patch("app.agent.nodes.generation.patient_service") as mock_ps,
             patch("app.agent.nodes.generation.calendar_service") as mock_cs,
             patch("app.agent.nodes.generation.tenant_service") as mock_ts,
@@ -531,8 +534,9 @@ class TestGenerationNodeTurn4PhaseB:
             mock_cs.create_event.return_value = _EVENT_ID
             mock_ts.get_tenant_config.return_value = _mock_tenant()
             mock_ts.get_tenant_services.return_value = []
+            mock_draft.get_draft.return_value = {}
 
-            result = generation_node(self._make_turn4_state(_DNI))
+            result = generation_node(self._make_phase_d_state())
 
         assert result.get("name_collection_active") is False
 
@@ -560,7 +564,7 @@ class TestGenerationNodeTurn4PhaseB:
         assert result.get("dni_collection_active") is False
 
     def test_final_state_patient_name_preserved(self):
-        """State final preserva patient_name."""
+        """State final (Fase C) preserva patient_name."""
         from app.agent.nodes.generation import generation_node
 
         mock_llm = _make_mock_llm()
@@ -568,6 +572,7 @@ class TestGenerationNodeTurn4PhaseB:
 
         with (
             patch("app.agent.nodes.generation._llm", mock_llm),
+            patch("app.agent.nodes.generation._extract_extended_data", return_value={"patient_obra_social": "OSEP"}),
             patch("app.agent.nodes.generation.patient_service") as mock_ps,
             patch("app.agent.nodes.generation.calendar_service") as mock_cs,
             patch("app.agent.nodes.generation.tenant_service") as mock_ts,
@@ -577,8 +582,9 @@ class TestGenerationNodeTurn4PhaseB:
             mock_cs.create_event.return_value = _EVENT_ID
             mock_ts.get_tenant_config.return_value = _mock_tenant()
             mock_ts.get_tenant_services.return_value = []
+            mock_draft.get_draft.return_value = {}
 
-            result = generation_node(self._make_turn4_state(_DNI))
+            result = generation_node(self._make_phase_d_state())
 
         assert result.get("patient_name") == _PATIENT_NAME
 
@@ -655,7 +661,7 @@ class TestGenerationNodeTurn4PhaseB:
         assert isinstance(system_msg, SystemMessage)
         assert _FAKE_SLOT["display"] in system_msg.content
 
-    # ── Título del evento en Calendar ──────────────────────────────────────────
+    # ── Título del evento en Calendar (tested via Fase D → C) ─────────────────
 
     def test_event_title_with_service_name(self):
         """Si hay selected_service_name: título = '{service_name} — {patient_name}'."""
@@ -666,6 +672,7 @@ class TestGenerationNodeTurn4PhaseB:
 
         with (
             patch("app.agent.nodes.generation._llm", mock_llm),
+            patch("app.agent.nodes.generation._extract_extended_data", return_value={"patient_obra_social": "OSEP"}),
             patch("app.agent.nodes.generation.patient_service") as mock_ps,
             patch("app.agent.nodes.generation.calendar_service") as mock_cs,
             patch("app.agent.nodes.generation.tenant_service") as mock_ts,
@@ -675,11 +682,9 @@ class TestGenerationNodeTurn4PhaseB:
             mock_cs.create_event.return_value = _EVENT_ID
             mock_ts.get_tenant_config.return_value = _mock_tenant()
             mock_ts.get_tenant_services.return_value = []
+            mock_draft.get_draft.return_value = {}
 
-            generation_node(self._make_turn4_state(
-                _DNI,
-                selected_service_name="Kinesiología",
-            ))
+            generation_node(self._make_phase_d_state(selected_service_name="Kinesiología"))
 
         call_kwargs = mock_cs.create_event.call_args[1]
         assert call_kwargs["title"] == f"Kinesiología — {_PATIENT_NAME}"
@@ -693,6 +698,7 @@ class TestGenerationNodeTurn4PhaseB:
 
         with (
             patch("app.agent.nodes.generation._llm", mock_llm),
+            patch("app.agent.nodes.generation._extract_extended_data", return_value={"patient_obra_social": "OSEP"}),
             patch("app.agent.nodes.generation.patient_service") as mock_ps,
             patch("app.agent.nodes.generation.calendar_service") as mock_cs,
             patch("app.agent.nodes.generation.tenant_service") as mock_ts,
@@ -702,21 +708,20 @@ class TestGenerationNodeTurn4PhaseB:
             mock_cs.create_event.return_value = _EVENT_ID
             mock_ts.get_tenant_config.return_value = _mock_tenant()
             mock_ts.get_tenant_services.return_value = []
+            mock_draft.get_draft.return_value = {}
 
-            # Sin selected_service_name
-            generation_node(self._make_turn4_state(_DNI))
+            generation_node(self._make_phase_d_state())
 
         call_kwargs = mock_cs.create_event.call_args[1]
         assert call_kwargs["title"] == f"Turno — {_PATIENT_NAME}"
 
-    # ── Path: DNI no dado tras 2 intentos ─────────────────────────────────────
+    # ── Path: DNI no dado tras 2 intentos → Fase D activa ─────────────────────
 
-    def test_dni_skipped_after_2_attempts_calls_finalize_with_none_dni(self):
-        """dni_attempts >= 2 sin DNI extraído → llama _finalize_registration con dni=None."""
+    def test_dni_skipped_after_2_attempts_activates_phase_d(self):
+        """dni_attempts >= 2 sin DNI extraído → activa Fase D (sin DNI), no finaliza directamente."""
         from app.agent.nodes.generation import generation_node
 
-        mock_llm = _make_mock_llm()
-        mock_patient = _mock_patient()
+        mock_llm = _make_mock_llm("¿Tenés obra social?")
 
         state = self._make_turn4_state(
             "no recuerdo el número",  # mensaje sin DNI válido
@@ -725,37 +730,30 @@ class TestGenerationNodeTurn4PhaseB:
 
         with (
             patch("app.agent.nodes.generation._llm", mock_llm),
-            patch("app.agent.nodes.generation.patient_service") as mock_ps,
             patch("app.agent.nodes.generation.calendar_service") as mock_cs,
-            patch("app.agent.nodes.generation.tenant_service") as mock_ts,
             patch("app.agent.nodes.generation.booking_draft_service") as mock_draft,
         ):
-            mock_ps.get_or_create_patient.return_value = mock_patient
-            mock_cs.create_event.return_value = _EVENT_ID
-            mock_ts.get_tenant_config.return_value = _mock_tenant()
-            mock_ts.get_tenant_services.return_value = []
-
+            mock_draft.get_draft.return_value = {}
             result = generation_node(state)
 
-        # El evento se crea igual, con dni=None
-        mock_cs.create_event.assert_called_once()
-        call_kwargs = mock_cs.create_event.call_args[1]
-        assert call_kwargs["dni"] is None
+        mock_cs.create_event.assert_not_called()
+        assert result.get("extended_collection_active") is True
+        assert result.get("patient_dni") is None
 
     def test_dni_skipped_event_still_created(self):
-        """Cuando se salta el DNI, el evento en Calendar se crea igualmente."""
+        """Cuando se salta el DNI, el evento se crea igualmente (vía Fase D → C)."""
         from app.agent.nodes.generation import generation_node
 
         mock_llm = _make_mock_llm()
         mock_patient = _mock_patient()
 
-        state = self._make_turn4_state(
-            "no lo sé",  # mensaje sin DNI válido
-            dni_attempts=2,
+        state = self._make_phase_d_state(
+            patient_dni=None,  # DNI fue saltado
         )
 
         with (
             patch("app.agent.nodes.generation._llm", mock_llm),
+            patch("app.agent.nodes.generation._extract_extended_data", return_value={"patient_obra_social": "particular"}),
             patch("app.agent.nodes.generation.patient_service") as mock_ps,
             patch("app.agent.nodes.generation.calendar_service") as mock_cs,
             patch("app.agent.nodes.generation.tenant_service") as mock_ts,
@@ -765,6 +763,7 @@ class TestGenerationNodeTurn4PhaseB:
             mock_cs.create_event.return_value = _EVENT_ID
             mock_ts.get_tenant_config.return_value = _mock_tenant()
             mock_ts.get_tenant_services.return_value = []
+            mock_draft.get_draft.return_value = {}
 
             result = generation_node(state)
 

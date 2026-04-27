@@ -14,6 +14,7 @@ from app.core.exceptions import AppException
 from app.core.logging import get_logger
 from app.core.rate_limiter import limiter
 from app.core.security import verify_meta_signature, verify_webhook_challenge
+from app.logging.processors import hash_pii
 from app.models.webhook import WhatsAppWebhookPayload
 from app.services.tenant_service import get_tenant_by_phone
 from app.workers.tasks import process_whatsapp_message
@@ -61,8 +62,10 @@ def _enqueue_task(payload_dict: dict, tenant_id: str) -> None:
         except (KeyError, IndexError, TypeError):
             phone = "unknown"
 
-        pending_key = f"buffer_pending:{tenant_id}:{phone}"
-        buffer_key = f"buffer_msgs:{tenant_id}:{phone}"
+        # F0.4: use hashed phone in Redis keys — raw PII never stored in key space
+        phone_hash = hash_pii(phone)
+        pending_key = f"buffer_pending:{tenant_id}:{phone_hash}"
+        buffer_key = f"buffer_msgs:{tenant_id}:{phone_hash}"
 
         # Acumular el texto del mensaje en el buffer Redis como JSON {ts, text}
         # ts = timestamp del webhook (Unix int) para ordenar correctamente en caso de

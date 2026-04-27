@@ -104,13 +104,16 @@ def test_anti_diagnostic_returns_only_is_medical_query_key():
 
 
 def test_anti_diagnostic_failsafe_on_exception():
-    """Si ocurre una excepción inesperada → is_medical_query = False (fail-safe, vía except)."""
+    """F6: Si ocurre una excepción inesperada → is_medical_query = TRUE (fail-safe inverted).
+
+    Fail-safe direction changed in F6: must prove NOT medical to pass through.
+    An exception means uncertainty → safest is to block (True), not allow (False).
+    """
     from app.agent.nodes.anti_diagnostic import anti_diagnostic_node
 
     # Forzamos una excepción dentro del bloque try haciendo que state.get() lance RuntimeError
     state = _base_state(messages=[HumanMessage(content="quiero mi diagnóstico")])
     with patch.dict(state, {}, clear=False):
-        # Reemplazamos state con un dict-like que explota en .get("messages")
         class ExplodingState(dict):
             def get(self, key, default=None):
                 if key == "messages":
@@ -120,7 +123,7 @@ def test_anti_diagnostic_failsafe_on_exception():
         bad_state = ExplodingState(state)
         result = anti_diagnostic_node(bad_state)
 
-    assert result == {"is_medical_query": False}
+    assert result == {"is_medical_query": True}
 
 
 def test_anti_diagnostic_no_false_positive_scheduling_query():

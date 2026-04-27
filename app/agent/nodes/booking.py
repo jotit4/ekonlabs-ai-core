@@ -9,6 +9,7 @@ from app.agent.state import ConversationState
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services import booking_draft_service, calendar_service, patient_service, tenant_service
+from app.services.vault_client import resolve_calendar_credentials
 
 logger = get_logger(__name__)
 
@@ -206,7 +207,13 @@ def booking_node(state: ConversationState) -> dict:
         # Cancelación tiene precedencia sobre confirmación si ambas se detectan
         booking_action = "cancel" if is_cancel else "confirm"
 
-        credentials_dict = tenant_config.calendar_credentials or {}
+        try:
+            credentials_dict = resolve_calendar_credentials(
+                tenant_config.calendar_credentials_ref,
+                tenant_config.calendar_credentials,
+            )
+        except ValueError:
+            credentials_dict = {}
         service_name = state.get("selected_service_name")
         selected_service_id = state.get("selected_service_id")
 
@@ -230,6 +237,51 @@ def booking_node(state: ConversationState) -> dict:
             )
             return {"booking_intent": True, "booking_action": booking_action, "calendar_event_id": None}
 
+        # ── Cancel 2-step: intercept pending cancel confirmation ──────────────
+        # Must run before the cancel/confirm split below so that a patient
+        # saying "SI" after "¿confirmás cancelar?" is not mis-routed to booking.
+        existing_draft = booking_draft_service.get_draft(tenant_id, phone_number)
+        if existing_draft and existing_draft.get("pending_cancellation"):
+            if is_confirm and not is_cancel:
+                # Second step confirmed — execute the pending cancel
+                pending_event_id = existing_draft.get("cancel_event_id")
+                booking_draft_service.delete_draft(tenant_id, phone_number)
+                if pending_event_id:
+                    calendar_service.delete_event(
+                        calendar_id=calendar_id,
+                        credentials_dict=credentials_dict,
+                        event_id=pending_event_id,
+                    )
+                    patient_service.cancel_appointment_by_event_id(pending_event_id)
+                logger.info(
+                    "booking_node.done",
+                    tenant_id=tenant_id,
+                    booking_intent=True,
+                    booking_action="cancel",
+                    calendar_event_id=pending_event_id,
+                    query_preview=query[:80],
+                )
+                return {
+                    "booking_intent": True,
+                    "booking_action": "cancel",
+                    "calendar_event_id": pending_event_id,
+                }
+            else:
+                # Patient said "cancelar" again or something else — re-present confirmation
+                logger.info(
+                    "booking_node.done",
+                    tenant_id=tenant_id,
+                    booking_intent=True,
+                    booking_action="cancel_pending",
+                    calendar_event_id=existing_draft.get("cancel_event_id"),
+                    query_preview=query[:80],
+                )
+                return {
+                    "booking_intent": True,
+                    "booking_action": "cancel_pending",
+                    "calendar_event_id": existing_draft.get("cancel_event_id"),
+                }
+
         # ── Flujo cancelación ──────────────────────────────────────────────
         if booking_action == "cancel":
             # Use 2× the booking window (minimum 2 weeks) so patients can cancel
@@ -241,26 +293,22 @@ def booking_node(state: ConversationState) -> dict:
                 phone_number=phone_number,
                 lookahead_hours=cancel_lookahead,
             )
-            if event_id:
-                calendar_service.delete_event(
-                    calendar_id=calendar_id,
-                    credentials_dict=credentials_dict,
-                    event_id=event_id,
-                )
-                # v1.4: marcar appointment como cancelado en DB (fail-safe)
-                patient_service.cancel_appointment_by_event_id(event_id)
-
+            # First step: save pending state and ask for explicit confirmation
+            booking_draft_service.save_draft(tenant_id, phone_number, {
+                "pending_cancellation": True,
+                "cancel_event_id": event_id,
+            })
             logger.info(
                 "booking_node.done",
                 tenant_id=tenant_id,
                 booking_intent=True,
-                booking_action="cancel",
+                booking_action="cancel_pending",
                 calendar_event_id=event_id,
                 query_preview=query[:80],
             )
             return {
                 "booking_intent": True,
-                "booking_action": "cancel",
+                "booking_action": "cancel_pending",
                 "calendar_event_id": event_id,
             }
 
@@ -389,8 +437,6 @@ def booking_node(state: ConversationState) -> dict:
             end_iso=chosen_slot["end"],
             phone_number=phone_number,
             title=event_title,
-            patient_name=patient_name,
-            dni=patient_dni,
         )
 
         # v1.4: persistir appointment en DB si tenemos patient_id (fail-safe)

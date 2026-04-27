@@ -313,7 +313,9 @@ def test_enqueue_task_raises_503_on_redis_error():
         patch("app.api.v1.webhooks._get_redis_pool") as mock_pool,
         patch("app.api.v1.webhooks.Queue") as mock_queue_cls,
     ):
-        mock_pool.return_value = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.exists.return_value = False  # no pending job → proceeds to enqueue
+        mock_pool.return_value = mock_conn
         mock_q = MagicMock()
         mock_queue_cls.return_value = mock_q
         mock_q.enqueue.side_effect = RedisConnectionError("Connection refused")
@@ -338,7 +340,9 @@ def test_enqueue_task_503_propagates_to_endpoint(client, monkeypatch):
         patch("app.api.v1.webhooks._get_redis_pool") as mock_pool,
         patch("app.api.v1.webhooks.Queue") as mock_queue_cls,
     ):
-        mock_pool.return_value = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.exists.return_value = False  # no pending job → proceeds to enqueue
+        mock_pool.return_value = mock_conn
         mock_q = MagicMock()
         mock_queue_cls.return_value = mock_q
         mock_q.enqueue.side_effect = RedisConnectionError("down")
@@ -360,7 +364,9 @@ def test_enqueue_task_uses_retry_object():
         patch("app.api.v1.webhooks._get_redis_pool") as mock_pool,
         patch("app.api.v1.webhooks.Queue") as mock_queue_cls,
     ):
-        mock_pool.return_value = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.exists.return_value = False  # no pending job → proceeds to enqueue
+        mock_pool.return_value = mock_conn
         mock_q = MagicMock()
         mock_queue_cls.return_value = mock_q
 

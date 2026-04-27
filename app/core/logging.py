@@ -1,6 +1,7 @@
 import logging
 import structlog
 from app.core.config import settings
+from app.logging.processors import redact_pii_processor
 
 
 def configure_logging() -> None:
@@ -11,6 +12,7 @@ def configure_logging() -> None:
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
+        redact_pii_processor,
     ]
 
     if settings.APP_ENV == "development":

@@ -20,7 +20,7 @@ _CHUNK_SIZE = 400
 _CHUNK_OVERLAP = 60
 _EMBED_MODEL = "text-embedding-3-small"
 _EMBED_DIMS = 1536
-_SIMILARITY_THRESHOLD: float = 0.35
+_SIMILARITY_THRESHOLD: float = 0.60
 
 # Module-level singletons — created once, reused across calls
 _embedder: OpenAIEmbeddings | None = None

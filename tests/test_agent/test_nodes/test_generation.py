@@ -984,23 +984,45 @@ def _dni_state(last_message: str, patient_name: str, dni_attempts: int = 1) -> d
     }
 
 
+def _phase_d_state_gen(patient_name: str, patient_dni: str | None = "32456789") -> dict:
+    """Build Phase D state for generation tests (extended data collection, attempt 1)."""
+    from datetime import datetime, timezone
+    slot_ts = datetime.now(timezone.utc).isoformat()
+    return {
+        "tenant_id": _TENANT_ID,
+        "phone_number": _PHONE,
+        "messages": [HumanMessage(content="OSEP")],
+        "name_collection_active": False,
+        "dni_collection_active": False,
+        "extended_collection_active": True,
+        "extended_attempts": 1,
+        "booked_slot": _NAME_SLOT,
+        "slot_presented_at": slot_ts,
+        "patient_name": patient_name,
+        "patient_dni": patient_dni,
+        "booking_intent": False,
+    }
+
+
 def test_name06_event_title_contains_patient_name():
-    """NAME-06: calendar event created with title='Turno — {patient_name}' at Fase C (DNI provided)."""
+    """NAME-06: calendar event title='Turno — {patient_name}' at Fase C (via Phase D → C)."""
     from app.agent.nodes.generation import generation_node
 
     with (
         patch("app.agent.nodes.generation._llm", _make_mock_llm("Listo, María.")),
+        patch("app.agent.nodes.generation._extract_extended_data", return_value={"patient_obra_social": "OSEP"}),
         patch("app.agent.nodes.generation.tenant_service") as mock_ts,
         patch("app.agent.nodes.generation.calendar_service") as mock_cs,
         patch("app.agent.nodes.generation.patient_service") as mock_ps,
-        patch("app.agent.nodes.generation.booking_draft_service"),
+        patch("app.agent.nodes.generation.booking_draft_service") as mock_draft,
     ):
         mock_ts.get_tenant_config.return_value = _mock_tenant_with_calendar()
         mock_ts.get_tenant_services.return_value = []
         mock_ps.get_or_create_patient.return_value = MagicMock(patient_id="pat_001")
         mock_cs.create_event.return_value = _NAME_EVENT_ID
+        mock_draft.get_draft.return_value = {}
 
-        generation_node(_dni_state("32456789", patient_name="María López", dni_attempts=1))
+        generation_node(_phase_d_state_gen("María López"))
 
     call_kwargs = mock_cs.create_event.call_args[1]
     assert call_kwargs.get("title") == "Turno — María López"

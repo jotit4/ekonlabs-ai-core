@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.tenant import Service
 from app.services import calendar_service, tenant_service
+from app.services.vault_client import resolve_calendar_credentials
 
 logger = get_logger(__name__)
 
@@ -228,10 +229,62 @@ def _extract_day_preference(messages: list[BaseMessage]) -> datetime | None:
     return None
 
 
+# ── Service alias map ────────────────────────────────────────────────────────
+# Maps normalized alternative terms → normalized canonical term fragment.
+# Applied to the query BEFORE standard prefix/substring matching so patients
+# using colloquial or alternative names are correctly routed.
+# Keyed by the alias (must be ≥4 chars after normalization to avoid false positives).
+_SERVICE_ALIASES: dict[str, str] = {
+    # Kinesiología aliases
+    "kinesioterapia": "kinesiologia",
+    "kinesiologo": "kinesiologia",
+    "kinesiologos": "kinesiologia",
+    "kinesio": "kinesiologia",
+    # Fisioterapia aliases
+    "fisioterapeuta": "fisioterapia",
+    "fisioterapista": "fisioterapia",
+    "fisio": "fisioterapia",
+    # FKT (kinesiotherapy protocol abbreviation — maps to kinesiologia in ISADI context)
+    "fkt": "kinesiologia",
+    # Hidroterapia aliases
+    "pileta": "hidroterapia",
+    "piscina": "hidroterapia",
+    "hidro": "hidroterapia",
+    "hidroterapi": "hidroterapia",
+    # Rehabilitación aliases
+    "traumatologia": "rehabilitacion traumatologica",
+    "traumatologica": "rehabilitacion traumatologica",
+    "traumato": "rehabilitacion",
+    "rehab": "rehabilitacion",
+    # Plasma (PRP — Platelet Rich Plasma)
+    "plaquetas": "plasma",
+    "prp": "plasma",
+    # Aquagym
+    "agua gym": "aquagym",
+    "gimnasio acuatico": "aquagym",
+    "natacion": "aquagym",
+    # Pilates variants
+    "pilate": "pilates",
+}
+
+
+def _apply_service_aliases(normalized_query: str) -> str:
+    """Replace alias terms with canonical terms in the normalized query.
+
+    Applies longest aliases first to avoid partial substitutions
+    (e.g. "rehabilitacion traumatologica" before "rehabilitacion").
+    """
+    for alias in sorted(_SERVICE_ALIASES, key=len, reverse=True):
+        if alias in normalized_query:
+            normalized_query = normalized_query.replace(alias, _SERVICE_ALIASES[alias])
+    return normalized_query
+
+
 def detect_service(query: str, services: list[Service]) -> Service | None:
     """Detecta qué servicio menciona el paciente en su mensaje.
 
     Estrategia:
+        0. Alias expansion — traduce términos alternativos al nombre canónico.
         1. Match exacto del nombre del servicio normalizado.
         2. Match por substring (nombre del servicio contenido en el query).
         3. Match por palabra clave del nombre del servicio (primera palabra significativa).
@@ -241,7 +294,7 @@ def detect_service(query: str, services: list[Service]) -> Service | None:
     if not services:
         return None
 
-    normalized_query = _normalize_text(query)
+    normalized_query = _apply_service_aliases(_normalize_text(query))
 
     for svc in services:
         svc_normalized = _normalize_text(svc.name)
@@ -372,7 +425,13 @@ def scheduling_node(state: ConversationState) -> dict:
             logger.info("scheduling_node.shadow_mode_active", tenant_id=tenant_id)
             return {"scheduling_intent": False, "shadow_mode_active": True}
 
-        credentials_dict = tenant_config.calendar_credentials or {}
+        try:
+            credentials_dict = resolve_calendar_credentials(
+                tenant_config.calendar_credentials_ref,
+                tenant_config.calendar_credentials,
+            )
+        except ValueError:
+            credentials_dict = {}
 
         # v1.3: soporte multi-servicio
         svc = None  # se asigna en paths 2/3; None en path 1 (tenant sin servicios)
@@ -465,6 +524,33 @@ def scheduling_node(state: ConversationState) -> dict:
                     tenant_id=tenant_id,
                     service=svc.name,
                 )
+
+            elif booking_mode == "cycle":
+                # Servicios por ciclo (Pilates, Aquagym): inscripción semanal fija.
+                # El agente informa horarios/profesor/capacidad y deriva formalización a recepción.
+                cycle_info_parts = []
+                if getattr(svc, "professional_name", None):
+                    cycle_info_parts.append(f"Profesional: {svc.professional_name}")
+                if getattr(svc, "capacity_per_slot", None):
+                    cycle_info_parts.append(f"Capacidad por clase: {svc.capacity_per_slot} personas")
+                if getattr(svc, "reminder_instructions", None):
+                    cycle_info_parts.append(f"Qué traer: {svc.reminder_instructions}")
+                cycle_info = " | ".join(cycle_info_parts) if cycle_info_parts else ""
+                logger.info(
+                    "scheduling_node.cycle_service",
+                    tenant_id=tenant_id,
+                    service=svc.name,
+                )
+                result = {
+                    "scheduling_intent": False,
+                    "cycle_service_active": True,
+                    "cycle_service_name": svc.name,
+                    "cycle_service_info": cycle_info,
+                    "selected_service_name": selected_service_name,
+                }
+                if selected_service_id:
+                    result["selected_service_id"] = selected_service_id
+                return result
 
         if not calendar_id:
             logger.warning(

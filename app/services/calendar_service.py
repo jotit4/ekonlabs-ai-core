@@ -1,7 +1,10 @@
 """Google Calendar API v3 — Disponibilidad (Story 3.1) e Inserción/Cancelación (Story 3.2)."""
 from __future__ import annotations
 
+import hashlib
 import time as _time
+
+_CREATE_EVENT_RETRY_DELAY_S = 1.0
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -28,6 +31,18 @@ _DAYS_ES = {
     0: "Lunes", 1: "Martes", 2: "Miércoles", 3: "Jueves",
     4: "Viernes", 5: "Sábado", 6: "Domingo",
 }
+
+
+def _lookup_token(phone_number: str, calendar_id: str) -> str:
+    """Opaque, deterministic token for calendar event lookup.
+
+    Derived from (phone, calendar_id) so it is consistent across create/find
+    calls without storing raw PII in the event description.
+    The first 20 hex chars (80 bits) are more than sufficient to prevent
+    collision across a single tenant's calendar.
+    """
+    raw = f"{phone_number}:{calendar_id}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
 def _resolve_timezone(timezone_name: str | None):
@@ -214,8 +229,6 @@ def create_event(
     end_iso: str,
     phone_number: str,
     title: str | None = None,
-    patient_name: str | None = None,
-    dni: str | None = None,
 ) -> str | None:
     """Inserta un evento en Google Calendar y retorna el event_id.
 
@@ -224,18 +237,14 @@ def create_event(
         credentials_dict: Service account JSON ya deserializado.
         start_iso: Datetime de inicio en formato ISO 8601 con timezone.
         end_iso: Datetime de fin en formato ISO 8601 con timezone.
-        phone_number: Número del paciente — se incluye en la descripción para
-            permitir lookup posterior en cancelaciones.
-        title: Título del evento (default: "Turno médico — {phone_number}").
-        patient_name: Nombre completo del paciente (opcional, para descripción).
-        dni: DNI del paciente (opcional, para descripción).
+        phone_number: Número del paciente — se usa para generar el token de
+            lookup; el número crudo NO se escribe en el evento.
+        title: Título del evento (default: "Turno").
 
     Returns:
         El event_id del evento creado, o None si falla (fail-safe).
     """
     t0 = _time.monotonic()
-    event_id: str | None = None
-
     try:
         credentials = service_account.Credentials.from_service_account_info(
             credentials_dict,
@@ -243,20 +252,13 @@ def create_event(
         )
         service = build("calendar", "v3", credentials=credentials)
 
-        event_title = title or f"Turno médico — {phone_number}"
-        description_lines = [
-            "Turno reservado vía Agente IA",
-            f"Paciente: {phone_number}",
-        ]
-        if patient_name:
-            description_lines.append(f"Nombre: {patient_name}")
-        if dni:
-            description_lines.append(f"DNI: {dni}")
-        description_lines.append(
+        event_title = title or "Turno"
+        token = _lookup_token(phone_number, calendar_id)
+        description = (
+            f"Turno reservado vía Agente IA\n"
+            f"ref:{token}\n"
             f"Confirmado: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
         )
-        description = "\n".join(description_lines)
-
         event_body = {
             "summary": event_title,
             "description": description,
@@ -264,17 +266,41 @@ def create_event(
             "end": {"dateTime": end_iso},
         }
 
-        result = service.events().insert(calendarId=calendar_id, body=event_body).execute()
-        event_id = result.get("id")
+        last_exc: Exception | None = None
+        for attempt in range(2):
+            if attempt > 0:
+                _time.sleep(_CREATE_EVENT_RETRY_DELAY_S)
+            try:
+                result = (
+                    service.events().insert(calendarId=calendar_id, body=event_body).execute()
+                )
+                event_id = result.get("id")
+                duration_ms = int((_time.monotonic() - t0) * 1000)
+                logger.info(
+                    "calendar_service.create_event.done",
+                    calendar_id=calendar_id,
+                    event_id=event_id,
+                    duration_ms=duration_ms,
+                    attempt=attempt,
+                )
+                return event_id
+            except Exception as exc:
+                logger.warning(
+                    "calendar_service.create_event.retry",
+                    calendar_id=calendar_id,
+                    attempt=attempt,
+                    error=str(exc),
+                )
+                last_exc = exc
 
         duration_ms = int((_time.monotonic() - t0) * 1000)
-        logger.info(
-            "calendar_service.create_event.done",
+        logger.error(
+            "calendar_service.create_event.error",
             calendar_id=calendar_id,
-            event_id=event_id,
+            error=str(last_exc),
             duration_ms=duration_ms,
         )
-        return event_id
+        return None
 
     except Exception as exc:
         duration_ms = int((_time.monotonic() - t0) * 1000)
@@ -328,9 +354,13 @@ def find_event_by_phone(
             .execute()
         )
 
+        token = _lookup_token(phone_number, calendar_id)
+        token_marker = f"ref:{token}"
         for event in events_result.get("items", []):
             description = event.get("description", "") or ""
-            if phone_number in description:
+            # Primary: match opaque token (new format, no raw PII)
+            # Fallback: match raw phone number (legacy events created before F0.2)
+            if token_marker in description or phone_number in description:
                 event_id = event.get("id")
                 duration_ms = int((_time.monotonic() - t0) * 1000)
                 logger.info(

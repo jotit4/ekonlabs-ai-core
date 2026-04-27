@@ -10,6 +10,7 @@ from app.agent.graph import graph as conversation_graph
 from app.agent.state import ConversationState
 from app.core.exceptions import AppException
 from app.core.logging import get_logger
+from app.logging.processors import hash_pii
 from app.services.conversation_service import get_conversation_history, save_message
 from app.services.tenant_service import get_tenant_config
 from app.services.thread_state_service import get_thread_status, set_thread_active, set_thread_paused
@@ -178,8 +179,9 @@ def process_whatsapp_message(payload: dict, tenant_id: str) -> None:
     try:
         time.sleep(_BUFFER_WINDOW_SECONDS)
         _redis = Redis.from_url(settings.REDIS_URL)
-        buffer_key = f"buffer_msgs:{tenant_id}:{phone_number}"
-        pending_key = f"buffer_pending:{tenant_id}:{phone_number}"
+        phone_hash = hash_pii(phone_number)
+        buffer_key = f"buffer_msgs:{tenant_id}:{phone_hash}"
+        pending_key = f"buffer_pending:{tenant_id}:{phone_hash}"
         buffered = _redis.lrange(buffer_key, 0, -1)
         _redis.delete(buffer_key)
         _redis.delete(pending_key)

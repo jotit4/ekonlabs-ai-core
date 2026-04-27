@@ -1,16 +1,19 @@
 """Nodo: generar respuesta IA con contexto RAG + System Prompt del Tenant."""
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone, timedelta
 
-from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from app.agent.tools.search_tool import make_search_tool
 from langchain_openai import ChatOpenAI
 
+from app.agent.guardrails.input_sanitizer import sanitize_user_input
 from app.agent.state import ConversationState
 from app.core.logging import get_logger
 from app.services import booking_draft_service, calendar_service, patient_service, tenant_service
+from app.services.vault_client import resolve_calendar_credentials
 
 logger = get_logger(__name__)
 
@@ -261,6 +264,21 @@ LOW_CONFIDENCE_PAUSE_RESPONSE = (
 DEFAULT_CONFIDENCE_THRESHOLD: float = 0.5
 
 
+def _build_messages_for_llm(system_content: str, state: ConversationState) -> list:
+    """Build the message list for an LLM call with injection-safe user content.
+
+    All HumanMessage content is passed through the input sanitizer before
+    reaching the model. Non-human messages (AI, System, Tool) are forwarded as-is.
+    """
+    sanitized = []
+    for msg in state["messages"]:
+        if isinstance(msg, HumanMessage) and isinstance(msg.content, str):
+            sanitized.append(HumanMessage(content=sanitize_user_input(msg.content)))
+        else:
+            sanitized.append(msg)
+    return [SystemMessage(content=system_content)] + sanitized
+
+
 def _build_system_prompt(state: ConversationState) -> str:
     """Ensambla el system prompt final: DEFAULT + contexto del tenant (aditivo, no reemplazo).
 
@@ -394,7 +412,13 @@ def _finalize_registration(
     system_prompt_base = _build_system_prompt(state)
 
     tenant_config = tenant_service.get_tenant_config(tenant_id)
-    creds = tenant_config.calendar_credentials or {}
+    try:
+        creds = resolve_calendar_credentials(
+            tenant_config.calendar_credentials_ref,
+            tenant_config.calendar_credentials,
+        )
+    except ValueError:
+        creds = {}
 
     # v1.3: usar calendar_id del servicio si está disponible
     if selected_service_id:
@@ -404,12 +428,17 @@ def _finalize_registration(
     else:
         cal_id = tenant_config.calendar_id
 
-    # v1.4: crear o actualizar ficha del paciente
+    # v1.4: crear o actualizar ficha del paciente (incluye datos extendidos F-ISADI-3)
     patient = patient_service.get_or_create_patient(
         tenant_id=tenant_id,
         phone_number=phone_number,
         full_name=patient_name,
         dni=dni,
+        obra_social=state.get("patient_obra_social"),
+        obra_social_number=state.get("patient_obra_social_number"),
+        reason_for_visit=state.get("patient_motivo"),
+        alternative_phone=state.get("patient_alt_phone"),
+        address=state.get("patient_address"),
     )
 
     # Crear evento en Google Calendar
@@ -421,8 +450,6 @@ def _finalize_registration(
         end_iso=booked_slot["end"],
         phone_number=phone_number,
         title=event_title,
-        patient_name=patient_name,
-        dni=dni,
     )
 
     # Persistir appointment en DB (fail-safe: no bloquea si falla)
@@ -454,7 +481,7 @@ def _finalize_registration(
         f"{display}\n\n"
         "Dirigite al paciente por su nombre. Usá voseo argentino cálido."
     )
-    messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+    messages_for_llm = _build_messages_for_llm(system_content, state)
     response = _get_llm().invoke(messages_for_llm)
     logger.info(
         "generation_node.done",
@@ -471,6 +498,45 @@ def _finalize_registration(
         "dni_collection_active": False,
         "calendar_event_id": event_id,
     }
+
+
+def _extract_extended_data(text: str) -> dict:
+    """Parse extended patient data from free text using LLM.
+
+    Returns dict with state-keyed fields (patient_obra_social, etc.).
+    Empty dict if extraction fails or nothing is found.
+    """
+    if not text or not text.strip():
+        return {}
+    try:
+        prompt = (
+            "Extraé los siguientes datos del mensaje de un paciente. "
+            "Devolvé SOLO un objeto JSON con estos campos exactos (null si no se menciona el dato):\n"
+            '- "obra_social": nombre de la obra social, o "particular" si paga sin cobertura, o null\n'
+            '- "obra_social_number": número de afiliado/socio (solo si tiene OS), o null\n'
+            '- "reason_for_visit": motivo de consulta o diagnóstico mencionado, o null\n'
+            '- "alternative_phone": número de teléfono alternativo, o null\n'
+            '- "address": dirección del paciente, o null\n\n'
+            f'Mensaje: "{text}"\n\n'
+            "Devolvé solo el JSON."
+        )
+        response = _get_llm().invoke([HumanMessage(content=prompt)])
+        raw = response.content.strip()
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = re.sub(r"^```[a-z]*\n?", "", raw).rstrip("`").strip()
+        data = json.loads(raw)
+        mapping = {
+            "obra_social": "patient_obra_social",
+            "obra_social_number": "patient_obra_social_number",
+            "reason_for_visit": "patient_motivo",
+            "alternative_phone": "patient_alt_phone",
+            "address": "patient_address",
+        }
+        return {mapping[k]: v for k, v in data.items() if k in mapping and v is not None}
+    except Exception as exc:
+        logger.warning("generation_node.extended_extraction_failed", error=str(exc))
+        return {}
 
 
 def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
@@ -503,7 +569,7 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
             "Informá al paciente con calidez y ofrecé buscar nuevas opciones. "
             "Usá voseo argentino."
         )
-        messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+        messages_for_llm = _build_messages_for_llm(system_content, state)
         response = _get_llm().invoke(messages_for_llm)
         logger.info(
             "generation_node.done",
@@ -520,6 +586,94 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
     patient_name: str | None = state.get("patient_name")
     booked_slot: dict = state.get("booked_slot") or {}
 
+    def _transition_to_phase_d(captured_dni: str | None) -> dict:
+        """Persist DNI and start Phase D (extended data collection)."""
+        booking_draft_service.update_draft(tenant_id, state["phone_number"], {
+            "patient_dni": captured_dni,
+            "dni_collection_active": False,
+            "extended_collection_active": True,
+            "extended_attempts": 0,
+        })
+        slot_display = booked_slot.get("display", "")
+        system_content = (
+            f"{system_prompt_base}\n\n"
+            "ACCIÓN REQUERIDA — SOLICITAR DATOS ADICIONALES DEL PACIENTE\n"
+            f"Ya tenés el nombre ({patient_name}) y DNI del paciente para el turno:\n{slot_display}\n\n"
+            "Pedile los siguientes datos adicionales, todos en un solo mensaje amistoso:\n"
+            "1. ¿Tenés obra social o pagás particular? (si tiene OS: nombre y número de afiliado)\n"
+            "2. Motivo de la consulta o diagnóstico\n"
+            "3. Teléfono alternativo de contacto (opcional)\n"
+            "4. Dirección (opcional)\n\n"
+            "Aclará que los datos opcionales pueden saltearlos. Usá voseo argentino, tono cálido y conciso."
+        )
+        messages_for_llm = _build_messages_for_llm(system_content, state)
+        response = _get_llm().invoke(messages_for_llm)
+        logger.info(
+            "generation_node.done",
+            tenant_id=tenant_id,
+            response_type="registration_ask_extended",
+        )
+        return {
+            "messages": [response],
+            "patient_dni": captured_dni,
+            "dni_collection_active": False,
+            "extended_collection_active": True,
+            "extended_attempts": 0,
+        }
+
+    # ── Fase D: colección de datos extendidos (OS, motivo, tel alt, dirección) ──
+    if patient_name and state.get("extended_collection_active"):
+        extended_attempts: int = state.get("extended_attempts") or 0
+
+        if extended_attempts >= 1:
+            messages = state.get("messages") or []
+            last_human_text = ""
+            for msg in reversed(messages):
+                if getattr(msg, "type", None) == "human" and getattr(msg, "content", ""):
+                    last_human_text = msg.content
+                    break
+
+            extracted = _extract_extended_data(last_human_text)
+            if extracted or extended_attempts >= 2:
+                # Datos capturados (o tiempo agotado) → Fase C con datos extendidos
+                booking_draft_service.update_draft(tenant_id, state["phone_number"], {
+                    "extended_collection_active": False,
+                    **extracted,
+                })
+                merged_state = {**state, **extracted}
+                patient_dni = merged_state.get("patient_dni")
+                try:
+                    return _finalize_registration(merged_state, tenant_id, patient_name, patient_dni)
+                except Exception as exc:
+                    logger.error("generation_node.registration_error", tenant_id=tenant_id, error=str(exc))
+                    raise
+
+        # Pedir datos extendidos (2° intento si no se pudo parsear)
+        booking_draft_service.update_draft(tenant_id, state["phone_number"], {
+            "extended_attempts": extended_attempts + 1,
+        })
+        slot_display = booked_slot.get("display", "")
+        system_content = (
+            f"{system_prompt_base}\n\n"
+            "ACCIÓN REQUERIDA — RE-SOLICITAR DATOS ADICIONALES DEL PACIENTE\n"
+            f"Todavía necesitás datos de {patient_name} para completar el registro del turno:\n{slot_display}\n\n"
+            "Pedile nuevamente de forma clara: obra social (o particular), motivo de la consulta, "
+            "teléfono alternativo (opcional) y dirección (opcional). "
+            "Podés pedírselos todos en un solo mensaje. Usá voseo argentino."
+        )
+        messages_for_llm = _build_messages_for_llm(system_content, state)
+        response = _get_llm().invoke(messages_for_llm)
+        logger.info(
+            "generation_node.done",
+            tenant_id=tenant_id,
+            response_type="registration_ask_extended_retry",
+            extended_attempts=extended_attempts,
+        )
+        return {
+            "messages": [response],
+            "extended_attempts": extended_attempts + 1,
+        }
+
     # ── Fase B: colección de DNI (nombre ya en state) ─────────────────────────
     if patient_name and state.get("dni_collection_active") and not state.get("patient_dni"):
         dni_attempts: int = state.get("dni_attempts") or 0
@@ -535,32 +689,13 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
             extracted_dni = _extract_dni(last_human_text)
 
             if extracted_dni:
-                # DNI encontrado → Fase C
-                try:
-                    return _finalize_registration(state, tenant_id, patient_name, extracted_dni)
-                except Exception as exc:
-                    logger.error(
-                        "generation_node.registration_error",
-                        tenant_id=tenant_id,
-                        error=str(exc),
-                    )
-                    raise
+                # DNI encontrado → Fase D (datos extendidos)
+                return _transition_to_phase_d(extracted_dni)
 
-            # Sin DNI tras 2 intentos → Fase C sin DNI (no bloquea el turno)
+            # Sin DNI tras 2 intentos → Fase D sin DNI (no bloquea el turno)
             if dni_attempts >= 2:
-                logger.info(
-                    "generation_node.registration_dni_skipped",
-                    tenant_id=tenant_id,
-                )
-                try:
-                    return _finalize_registration(state, tenant_id, patient_name, dni=None)
-                except Exception as exc:
-                    logger.error(
-                        "generation_node.registration_error",
-                        tenant_id=tenant_id,
-                        error=str(exc),
-                    )
-                    raise
+                logger.info("generation_node.registration_dni_skipped", tenant_id=tenant_id)
+                return _transition_to_phase_d(captured_dni=None)
 
         # Pedir DNI (Turn 1, o re-preguntar)
         # INFRA-06: update draft with incremented dni_attempts so next turn knows to extract
@@ -577,7 +712,7 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
             "Si no lo tiene a mano, decile que puede continuar sin él. "
             "Pedíselo de forma natural y breve en voseo argentino."
         )
-        messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+        messages_for_llm = _build_messages_for_llm(system_content, state)
         response = _get_llm().invoke(messages_for_llm)
         logger.info(
             "generation_node.done",
@@ -623,7 +758,7 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
                 "Aclará que si no lo tiene a mano puede seguir sin él. "
                 "Una sola oración, voseo argentino."
             )
-            messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+            messages_for_llm = _build_messages_for_llm(system_content, state)
             response = _get_llm().invoke(messages_for_llm)
             logger.info(
                 "generation_node.done",
@@ -647,7 +782,7 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
                 "Informá con calidez que lo va a atender un miembro del equipo. "
                 "Usá voseo argentino."
             )
-            messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+            messages_for_llm = _build_messages_for_llm(system_content, state)
             response = _get_llm().invoke(messages_for_llm)
             logger.info(
                 "generation_node.done",
@@ -674,7 +809,7 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
         "Antes de confirmar, necesitás su nombre completo (nombre y apellido) para registrar "
         "el turno en el sistema. Pedíselo de forma amable y natural en voseo argentino."
     )
-    messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+    messages_for_llm = _build_messages_for_llm(system_content, state)
     response = _get_llm().invoke(messages_for_llm)
     logger.info(
         "generation_node.done",
@@ -717,6 +852,26 @@ def _build_gated_context(state: ConversationState, system_prompt_base: str) -> s
         "Comunicalo claramente en voseo argentino, con calidez. "
         "Preguntá si ya tuvo esa consulta previa. "
         "Si dice que sí y menciona lo que le indicaron, podés continuar con el turno en el próximo mensaje."
+    )
+
+
+def _build_cycle_context(state: ConversationState, system_prompt_base: str) -> str:
+    """Build system content for cycle-service LLM call (Pilates, Aquagym — inscripción mensual)."""
+    service_name = state.get("cycle_service_name") or "este servicio"
+    extra_info = state.get("cycle_service_info") or ""
+    extra_block = f"\n\nInformación del servicio: {extra_info}" if extra_info else ""
+    return (
+        f"{system_prompt_base}\n\n"
+        "ACCIÓN REQUERIDA — SERVICIO POR CICLO / INSCRIPCIÓN\n"
+        f"El paciente pregunta por {service_name}. "
+        f"Este servicio funciona por inscripción al ciclo mensual/semanal, no por turno suelto.{extra_block}\n\n"
+        "Tu misión:\n"
+        "1. Explicá cómo funciona el ciclo (clases fijas semanales, no turno individual).\n"
+        "2. Contá los horarios disponibles si los tenés en el contexto o en la base de conocimiento.\n"
+        "3. Si el paciente quiere inscribirse, indicale que contacte a recepción para formalizar la inscripción "
+        "(el agente no puede inscribir directamente en el ciclo).\n"
+        "4. Si el paciente ya está inscripto y quiere avisar que no va a una clase, tomá nota y respondé con empatía.\n"
+        "Usá voseo argentino, tono cálido y conciso."
     )
 
 
@@ -777,6 +932,23 @@ def _build_booking_context(state: ConversationState, system_prompt_base: str) ->
     booking_action: str = state.get("booking_action", "confirm")
     event_id = state.get("calendar_event_id")
     booked_slot: dict = state.get("booked_slot") or {}
+    if booking_action == "cancel_pending":
+        if event_id:
+            return (
+                f"{system_prompt_base}\n\n"
+                "ACCIÓN REQUERIDA — CONFIRMAR CANCELACIÓN DE TURNO\n"
+                "El paciente quiere cancelar su turno. Encontramos un turno reservado. "
+                "Preguntale explícitamente: '¿Confirmás cancelar tu turno? Respondé SI para confirmar.' "
+                "Usá voseo argentino cálido. No canceles nada todavía — solo pedí confirmación."
+            )
+        else:
+            return (
+                f"{system_prompt_base}\n\n"
+                "ACCIÓN REQUERIDA — TURNO NO ENCONTRADO PARA CANCELAR\n"
+                "No se encontró un turno reservado a nombre del paciente para cancelar. "
+                "Informá al paciente y sugerí que llame directamente a la clínica. "
+                "Usá voseo argentino."
+            )
     if booking_action == "cancel":
         if event_id:
             return (
@@ -866,11 +1038,28 @@ def generation_node(state: ConversationState) -> dict:
         logger.info("generation_node.done", tenant_id=tenant_id, response_type="walk_in_service")
         return {"messages": [AIMessage(content=msg)]}
 
+    # Cycle service — Pilates/Aquagym: inscripción al ciclo, no turno suelto
+    if state.get("cycle_service_active", False):
+        system_prompt_base: str = _build_system_prompt(state)
+        system_content = _build_cycle_context(state, system_prompt_base)
+        messages_for_llm = _build_messages_for_llm(system_content, state)
+        try:
+            response = _get_llm().invoke(messages_for_llm)
+            logger.info(
+                "generation_node.done",
+                tenant_id=tenant_id,
+                response_type="cycle_service",
+            )
+            return {"messages": [response]}
+        except Exception as exc:
+            logger.error("generation_node.error", tenant_id=tenant_id, error=str(exc))
+            raise
+
     # Gated service — requiere consulta médica previa antes de poder agendar
     if state.get("gated_service_active", False):
         system_prompt_base: str = _build_system_prompt(state)
         system_content = _build_gated_context(state, system_prompt_base)
-        messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+        messages_for_llm = _build_messages_for_llm(system_content, state)
         try:
             response = _get_llm().invoke(messages_for_llm)
             logger.info(
@@ -883,9 +1072,10 @@ def generation_node(state: ConversationState) -> dict:
             logger.error("generation_node.error", tenant_id=tenant_id, error=str(exc))
             raise
 
-    # v1.4: Registration gate — intercepts to collect name (Phase A) and/or DNI (Phase B)
+    # v1.4: Registration gate — intercepts to collect name (Phase A), DNI (Phase B), or extended data (Phase D)
     if (state.get("name_collection_active") and not state.get("patient_name")) or \
-       (state.get("dni_collection_active") and not state.get("patient_dni")):
+       (state.get("dni_collection_active") and not state.get("patient_dni")) or \
+       state.get("extended_collection_active"):
         return _handle_registration(state, tenant_id)
 
     # Booking path — LLM genera confirmaciones/cancelaciones de turno (RESP-02, RESP-03, RESP-05)
@@ -898,11 +1088,13 @@ def generation_node(state: ConversationState) -> dict:
         booked_slot_for_log: dict = state.get("booked_slot") or {}
         if state.get("booking_ambiguous_slot", False):
             response_type = "booking_clarification"
+        elif booking_action_for_log == "cancel_pending":
+            response_type = "booking_cancel_pending" if event_id_for_log else "booking_not_found"
         elif booking_action_for_log == "cancel":
             response_type = "booking_cancelled" if event_id_for_log else "booking_not_found"
         else:
             response_type = "booking_confirmed" if (event_id_for_log and booked_slot_for_log) else "booking_failed"
-        messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+        messages_for_llm = _build_messages_for_llm(system_content, state)
         try:
             response = _get_llm().invoke(messages_for_llm)
             logger.info(
@@ -930,7 +1122,7 @@ def generation_node(state: ConversationState) -> dict:
             "y luego preguntale al paciente cuál necesita. "
             "Presentá las opciones de forma natural y breve. Usá voseo argentino."
         )
-        messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+        messages_for_llm = _build_messages_for_llm(system_content, state)
         search_tool = make_search_tool(tenant_id)
         llm_with_tools = _get_llm().bind_tools([search_tool], tool_choice="required")
         try:
@@ -964,7 +1156,7 @@ def generation_node(state: ConversationState) -> dict:
         available_slots_for_log: list[dict] = state.get("available_slots") or []
         response_type = "scheduling_slots" if available_slots_for_log else "scheduling_no_slots"
         system_content = _build_scheduling_context(state, system_prompt_base)
-        messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+        messages_for_llm = _build_messages_for_llm(system_content, state)
         try:
             response = _get_llm().invoke(messages_for_llm)
             logger.info(
@@ -986,7 +1178,7 @@ def generation_node(state: ConversationState) -> dict:
     if empathy_mode == "urgent":
         system_content = EMPATHY_MODIFIER + "\n\n" + system_prompt
 
-    messages_for_llm = [SystemMessage(content=system_content)] + list(state["messages"])
+    messages_for_llm = _build_messages_for_llm(system_content, state)
 
     # RAG-01/03: LLM calls search_knowledge_tool inline via tool_choice="required".
     # The tool is scoped to the tenant — the LLM never controls which tenant is searched.

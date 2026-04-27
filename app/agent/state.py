@@ -37,8 +37,22 @@ class ConversationState(TypedDict):
     dni_collection_active: NotRequired[bool]        # True mientras el agente espera que el paciente dé su DNI
     dni_attempts: NotRequired[int]                  # Veces que el agente pidió el DNI; ausente = 0
     patient_id: NotRequired[str | None]             # UUID del registro en tabla patients
+    # F0.3 — Consent (Ley 25.326)
+    consent_given: NotRequired[bool]         # True once patient has given or already had active consent
     # Booking rules por servicio (migration 006)
     walk_in_service: NotRequired[bool]              # True si el servicio es solo por orden de llegada (sin turno)
     gated_service_active: NotRequired[bool]         # True si el servicio requiere consulta médica previa
     gated_service_name: NotRequired[str | None]     # Nombre del servicio gated que el paciente quiere
     gated_prerequisite_note: NotRequired[str | None] # Texto del requisito previo para mostrar al paciente
+    # Servicios por ciclo / inscripción (Pilates, Aquagym) — F-ISADI-1
+    cycle_service_active: NotRequired[bool]          # True cuando el servicio solicitado es por ciclo
+    cycle_service_name: NotRequired[str | None]      # Nombre del servicio de ciclo
+    cycle_service_info: NotRequired[str | None]      # Info de horarios/profesor/capacidad inyectada al LLM
+    # Captura extendida de datos del paciente (F-ISADI-3)
+    extended_collection_active: NotRequired[bool]    # True mientras se recolectan OS/motivo/tel alt/dirección
+    extended_attempts: NotRequired[int]              # Intentos de captura extendida; ausente = 0
+    patient_obra_social: NotRequired[str | None]     # Nombre OS o "particular"; None = no capturado
+    patient_obra_social_number: NotRequired[str | None]  # Número de afiliado; None = no capturado
+    patient_motivo: NotRequired[str | None]          # Motivo de consulta / diagnóstico
+    patient_alt_phone: NotRequired[str | None]       # Teléfono alternativo de contacto
+    patient_address: NotRequired[str | None]         # Dirección del paciente

@@ -66,22 +66,26 @@ def test_booking_node_confirm_keyword_activates_intent():
     assert result["booking_action"] == "confirm"
 
 
-def test_booking_node_cancel_keyword_activates_cancel():
-    """Keyword de cancelación ('quiero cancelar') activa booking_action='cancel'."""
+def test_booking_node_cancel_keyword_activates_cancel_pending():
+    """F2: Keyword de cancelación ('quiero cancelar') activa booking_action='cancel_pending' (2-step)."""
     from app.agent.nodes.booking import booking_node
 
     with (
         patch("app.agent.nodes.booking.tenant_service") as mock_ts,
         patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+        patch("app.agent.nodes.booking.booking_draft_service") as mock_draft,
     ):
         mock_ts.get_tenant_config.return_value = _mock_tenant()
         mock_cs.find_event_by_phone.return_value = _EVENT_ID
-        mock_cs.delete_event.return_value = True
+        mock_draft.get_draft.return_value = None  # no pending draft yet
 
         result = booking_node(_base_state("quiero cancelar mi turno"))
 
     assert result["booking_intent"] is True
-    assert result["booking_action"] == "cancel"
+    assert result["booking_action"] == "cancel_pending"
+    assert result["calendar_event_id"] == _EVENT_ID
+    mock_cs.delete_event.assert_not_called()  # NOT deleted yet — waiting for confirmation
+    mock_draft.save_draft.assert_called_once()  # pending_cancellation saved to Redis
 
 
 def test_booking_node_no_intent_returns_false():
@@ -183,19 +187,49 @@ def test_create_event_exception_returns_booking_intent_false():
     assert result == {"booking_intent": False}
 
 
-def test_cancel_with_event_found_calls_delete():
-    """Cancelación con evento encontrado llama a delete_event con el event_id correcto."""
+def test_cancel_first_step_saves_pending_and_does_not_delete():
+    """F2: Primera keyword de cancel → guarda pending_cancellation, NO llama delete_event."""
     from app.agent.nodes.booking import booking_node
 
     with (
         patch("app.agent.nodes.booking.tenant_service") as mock_ts,
         patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+        patch("app.agent.nodes.booking.booking_draft_service") as mock_draft,
+        patch("app.agent.nodes.booking.patient_service"),
     ):
         mock_ts.get_tenant_config.return_value = _mock_tenant()
         mock_cs.find_event_by_phone.return_value = _EVENT_ID
-        mock_cs.delete_event.return_value = True
+        mock_draft.get_draft.return_value = None
 
         result = booking_node(_base_state("necesito cancelar mi turno"))
+
+    assert result["booking_intent"] is True
+    assert result["booking_action"] == "cancel_pending"
+    assert result["calendar_event_id"] == _EVENT_ID
+    mock_cs.delete_event.assert_not_called()
+    saved_draft = mock_draft.save_draft.call_args[0][2]
+    assert saved_draft["pending_cancellation"] is True
+    assert saved_draft["cancel_event_id"] == _EVENT_ID
+
+
+def test_cancel_second_step_executes_delete_on_confirmation():
+    """F2: Segunda respuesta 'SI' con pending_cancellation → llama delete_event y retorna cancel."""
+    from app.agent.nodes.booking import booking_node
+
+    with (
+        patch("app.agent.nodes.booking.tenant_service") as mock_ts,
+        patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+        patch("app.agent.nodes.booking.booking_draft_service") as mock_draft,
+        patch("app.agent.nodes.booking.patient_service") as mock_ps,
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant()
+        mock_cs.delete_event.return_value = True
+        mock_draft.get_draft.return_value = {
+            "pending_cancellation": True,
+            "cancel_event_id": _EVENT_ID,
+        }
+
+        result = booking_node(_base_state("si confirmo"))
 
     assert result["booking_intent"] is True
     assert result["booking_action"] == "cancel"
@@ -205,23 +239,27 @@ def test_cancel_with_event_found_calls_delete():
         credentials_dict={"type": "service_account"},
         event_id=_EVENT_ID,
     )
+    mock_ps.cancel_appointment_by_event_id.assert_called_once_with(_EVENT_ID)
+    mock_draft.delete_draft.assert_called_once()
 
 
-def test_cancel_with_no_event_found_returns_none_event_id():
-    """Cancelación sin evento encontrado retorna calendar_event_id=None sin error."""
+def test_cancel_with_no_event_found_returns_cancel_pending_no_event():
+    """F2: Cancelación sin evento encontrado → cancel_pending con calendar_event_id=None."""
     from app.agent.nodes.booking import booking_node
 
     with (
         patch("app.agent.nodes.booking.tenant_service") as mock_ts,
         patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+        patch("app.agent.nodes.booking.booking_draft_service") as mock_draft,
     ):
         mock_ts.get_tenant_config.return_value = _mock_tenant()
         mock_cs.find_event_by_phone.return_value = None
+        mock_draft.get_draft.return_value = None
 
         result = booking_node(_base_state("quiero cancelar"))
 
     assert result["booking_intent"] is True
-    assert result["booking_action"] == "cancel"
+    assert result["booking_action"] == "cancel_pending"
     assert result["calendar_event_id"] is None
     mock_cs.delete_event.assert_not_called()
 
