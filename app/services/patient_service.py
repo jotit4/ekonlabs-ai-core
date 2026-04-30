@@ -35,6 +35,20 @@ def get_patient_by_phone(tenant_id: str, phone_number: str) -> Patient | None:
         return None
 
 
+def get_patient_by_dni(tenant_id: str, dni: str) -> dict | None:
+    """Busca un paciente por tenant + DNI. Retorna el dict del registro o None."""
+    client = get_supabase_client()
+    result = (
+        client.table("patients")
+        .select("patient_id, full_name, dni, phone_number, obra_social, obra_social_number")
+        .eq("tenant_id", tenant_id)
+        .eq("dni", dni)
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
 def get_or_create_patient(
     tenant_id: str,
     phone_number: str,

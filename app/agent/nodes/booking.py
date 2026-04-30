@@ -175,16 +175,25 @@ def booking_node(state: ConversationState) -> dict:
             # from Redis draft so generation_node can continue the flow.
             draft = booking_draft_service.get_draft(tenant_id, phone_number)
             if draft and (draft.get("name_collection_active") or draft.get("dni_collection_active")):
+                # Si el DNI ya fue capturado en intake (state), no activar dni_collection_active
+                draft_fields = {k: v for k, v in draft.items() if v is not None}
+                if state.get("patient_dni"):
+                    draft_fields.pop("dni_collection_active", None)
+                    draft_fields["patient_dni"] = state["patient_dni"]
+                # Si el nombre ya fue capturado en intake (state), no activar name_collection_active
+                if state.get("patient_name"):
+                    draft_fields.pop("name_collection_active", None)
+                    draft_fields["patient_name"] = state["patient_name"]
                 logger.info(
                     "booking_node.draft_rehydrated",
                     tenant_id=tenant_id,
-                    name_collection_active=draft.get("name_collection_active"),
-                    dni_collection_active=draft.get("dni_collection_active"),
+                    name_collection_active=draft_fields.get("name_collection_active"),
+                    dni_collection_active=draft_fields.get("dni_collection_active"),
                 )
                 return {
                     "booking_intent": True,
                     "booking_action": "confirm",
-                    **{k: v for k, v in draft.items() if v is not None},
+                    **draft_fields,
                 }
             logger.info(
                 "booking_node.done",

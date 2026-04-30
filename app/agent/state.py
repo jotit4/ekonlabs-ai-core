@@ -37,6 +37,9 @@ class ConversationState(TypedDict):
     dni_collection_active: NotRequired[bool]        # True mientras el agente espera que el paciente dé su DNI
     dni_attempts: NotRequired[int]                  # Veces que el agente pidió el DNI; ausente = 0
     patient_id: NotRequired[str | None]             # UUID del registro en tabla patients
+    # Intake — identificación temprana por DNI (reemplaza consent F0.3)
+    intake_complete: NotRequired[bool]     # True cuando intake terminó (DNI capturado o intentos agotados)
+    intake_attempts: NotRequired[int]      # Número de veces que el agente pidió el DNI
     # F0.3 — Consent (Ley 25.326)
     consent_given: NotRequired[bool]         # True once patient has given or already had active consent
     # Booking rules por servicio (migration 006)

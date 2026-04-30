@@ -305,6 +305,21 @@ def process_whatsapp_message(payload: dict, tenant_id: str) -> None:
             error=str(exc),
         )
 
+    # --- 3b. Re-hidratar estado de intake desde Redis draft ---
+    from app.services.booking_draft_service import get_draft as _get_draft
+    _draft = _get_draft(tenant_id=tenant_id, phone_number=phone_number)
+    if _draft:
+        if _draft.get("intake_complete"):
+            initial_state["intake_complete"] = True
+        if _draft.get("intake_attempts") is not None:
+            initial_state["intake_attempts"] = int(_draft["intake_attempts"])
+        if _draft.get("patient_dni"):
+            initial_state["patient_dni"] = _draft["patient_dni"]
+        if _draft.get("patient_id"):
+            initial_state["patient_id"] = _draft["patient_id"]
+        if _draft.get("patient_name"):
+            initial_state["patient_name"] = _draft["patient_name"]
+
     # --- 4. Invocar grafo LangGraph ---
     # Excepciones se propagan intencionalmente → RQ reintentará el job completo.
     # El mensaje del usuario se persiste (paso 5) solo si el grafo tiene éxito,

@@ -12,6 +12,7 @@ _BASE_STATE: ConversationState = {
     "messages": [],
     "confidence_score": 1.0,
     "is_paused": False,
+    "intake_complete": True,  # bypass intake node in graph integration tests
 }
 
 _AI_REPLY = AIMessage(content="Respuesta de la IA")
