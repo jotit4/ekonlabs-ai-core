@@ -15,7 +15,7 @@ from langchain_core.messages import AIMessage
 
 from app.agent.state import ConversationState
 from app.core.logging import get_logger
-from app.services import booking_draft_service
+from app.services.booking_draft_service import save_draft, update_draft
 
 logger = get_logger(__name__)
 
@@ -34,22 +34,15 @@ def intake_node(state: ConversationState) -> dict:
         if state.get("intake_complete", False):
             return {}
 
-        booking_draft_service.save_draft(tenant_id, phone_number, {
-            "intake_complete": True,
-        })
+        update_draft(tenant_id, phone_number, {"intake_complete": True})
         logger.info("intake_node.welcome_sent", tenant_id=tenant_id)
         # No retornar intake_complete=True en el state: el routing lo lee del state
         # y si fuera True continuaría a triage en el mismo turn, generando dos
-        # respuestas. El flag vive en Redis; tasks.py lo recarga en turn 2.
+        # respuestas. El flag vive en el historial de Supabase (turn 2+ lo infiere).
         return {
             "messages": [AIMessage(content=WELCOME_MESSAGE)],
         }
 
     except Exception as exc:
         logger.error("intake_node.error", tenant_id=tenant_id, error=str(exc))
-        # Fail-safe: guardar en Redis para que el siguiente turno pase a triage
-        try:
-            booking_draft_service.save_draft(tenant_id, phone_number, {"intake_complete": True})
-        except Exception:
-            pass
         return {}

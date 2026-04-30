@@ -305,12 +305,17 @@ def process_whatsapp_message(payload: dict, tenant_id: str) -> None:
             error=str(exc),
         )
 
-    # --- 3b. Re-hidratar estado desde Redis draft ---
+    # --- 3b. Re-hidratar intake_complete desde historial ---
+    # intake_complete no vive en Redis (el draft expira y se sobreescribe durante el
+    # flujo de booking). Si el paciente ya tiene historial en Supabase, el intake ya
+    # ocurrió — derivarlo del historial garantiza que nunca se re-dispare el welcome.
+    if history_rows:
+        initial_state["intake_complete"] = True
+
+    # --- 3c. Re-hidratar estado de booking desde Redis draft ---
     from app.services.booking_draft_service import get_draft as _get_draft
     _draft = _get_draft(tenant_id=tenant_id, phone_number=phone_number)
     if _draft:
-        if _draft.get("intake_complete"):
-            initial_state["intake_complete"] = True
         if _draft.get("patient_dni"):
             initial_state["patient_dni"] = _draft["patient_dni"]
         if _draft.get("patient_id"):
