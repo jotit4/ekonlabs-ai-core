@@ -305,14 +305,12 @@ def process_whatsapp_message(payload: dict, tenant_id: str) -> None:
             error=str(exc),
         )
 
-    # --- 3b. Re-hidratar estado de intake desde Redis draft ---
+    # --- 3b. Re-hidratar estado desde Redis draft ---
     from app.services.booking_draft_service import get_draft as _get_draft
     _draft = _get_draft(tenant_id=tenant_id, phone_number=phone_number)
     if _draft:
         if _draft.get("intake_complete"):
             initial_state["intake_complete"] = True
-        if _draft.get("intake_attempts") is not None:
-            initial_state["intake_attempts"] = int(_draft["intake_attempts"])
         if _draft.get("patient_dni"):
             initial_state["patient_dni"] = _draft["patient_dni"]
         if _draft.get("patient_id"):
