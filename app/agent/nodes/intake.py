@@ -38,11 +38,18 @@ def intake_node(state: ConversationState) -> dict:
             "intake_complete": True,
         })
         logger.info("intake_node.welcome_sent", tenant_id=tenant_id)
+        # No retornar intake_complete=True en el state: el routing lo lee del state
+        # y si fuera True continuaría a triage en el mismo turn, generando dos
+        # respuestas. El flag vive en Redis; tasks.py lo recarga en turn 2.
         return {
-            "intake_complete": True,
             "messages": [AIMessage(content=WELCOME_MESSAGE)],
         }
 
     except Exception as exc:
         logger.error("intake_node.error", tenant_id=tenant_id, error=str(exc))
-        return {"intake_complete": True}
+        # Fail-safe: guardar en Redis para que el siguiente turno pase a triage
+        try:
+            booking_draft_service.save_draft(tenant_id, phone_number, {"intake_complete": True})
+        except Exception:
+            pass
+        return {}
