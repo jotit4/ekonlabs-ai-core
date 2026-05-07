@@ -1,0 +1,13 @@
+# Supabase local development configuration
+# For hosted Supabase, also enable the hook in: Authentication → Hooks → Custom Access Token Hook
+
+# Local project identifier. For hosted Supabase, link the project with:
+# supabase link --project-ref <ref>
+project_id = "ekonlabs-dashboard"
+
+[auth]
+enabled = true
+
+[auth.hook.custom_access_token]
+enabled = true
+uri     = "pg-functions://postgres/public/custom_access_token_hook"

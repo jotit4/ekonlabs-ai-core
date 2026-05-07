@@ -1,0 +1,124 @@
+'use client'
+
+import { useState } from 'react'
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import {
+  Calendar, ChartBar, MessageSquare, PanelLeft,
+  PanelLeftClose, Settings, Users,
+} from 'lucide-react'
+import type { UserRole } from '@/types/index'
+
+type NavItem = {
+  href: string
+  label: string
+  icon: React.ElementType
+}
+
+const NAV_ITEMS: Record<UserRole, NavItem[]> = {
+  receptionist: [
+    { href: '/conversaciones', label: 'Conversaciones', icon: MessageSquare },
+    { href: '/agenda',         label: 'Agenda',          icon: Calendar },
+    { href: '/pacientes',      label: 'Pacientes',        icon: Users },
+  ],
+  doctor: [
+    { href: '/agenda',    label: 'Agenda',    icon: Calendar },
+    { href: '/pacientes', label: 'Pacientes', icon: Users },
+  ],
+  admin: [
+    { href: '/conversaciones',       label: 'Conversaciones', icon: MessageSquare },
+    { href: '/agenda',               label: 'Agenda',          icon: Calendar },
+    { href: '/pacientes',            label: 'Pacientes',        icon: Users },
+    { href: '/configuracion/agente', label: 'Configuración',   icon: Settings },
+    { href: '/metricas',             label: 'Métricas',         icon: ChartBar },
+  ],
+}
+
+export function AppSidebar({ role }: { role: UserRole }) {
+  const [collapsed, setCollapsed] = useState(false)
+  const pathname = usePathname()
+  const items = NAV_ITEMS[role] ?? NAV_ITEMS.receptionist
+
+  return (
+    <>
+      {/* Desktop sidebar — visible at lg (1024px) and above */}
+      <nav
+        aria-label="Navegación principal"
+        className={[
+          'hidden lg:flex flex-col h-screen border-r border-[var(--color-border)]',
+          'bg-[var(--color-bg)] transition-[width] duration-200 ease-in-out overflow-hidden',
+          collapsed ? 'w-16' : 'w-[220px]',
+        ].join(' ')}
+      >
+        <div className="flex items-center h-14 px-3 border-b border-[var(--color-border)]">
+          <button
+            onClick={() => setCollapsed((c) => !c)}
+            aria-label={collapsed ? 'Expandir sidebar' : 'Colapsar sidebar'}
+            aria-expanded={!collapsed}
+            className="p-2 rounded-[8px] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)] transition-colors duration-120"
+          >
+            {collapsed ? <PanelLeft size={20} /> : <PanelLeftClose size={20} />}
+          </button>
+          {!collapsed && (
+            <span className="ml-2 text-[13px] font-semibold text-[var(--color-text-primary)] truncate">
+              ekonlabs
+            </span>
+          )}
+        </div>
+
+        <ul className="flex-1 flex flex-col gap-1 p-2 pt-3" role="list">
+          {items.map(({ href, label, icon: Icon }) => {
+            const active = pathname === href || pathname.startsWith(href + '/')
+            return (
+              <li key={href}>
+                <Link
+                  href={href}
+                  aria-current={active ? 'page' : undefined}
+                  className={[
+                    'flex items-center gap-3 px-3 py-2.5 rounded-[8px] min-h-[44px]',
+                    'text-[14px] font-medium transition-colors duration-120',
+                    active
+                      ? 'bg-[var(--color-surface)] text-[var(--color-text-primary)] border-l-2 border-[var(--color-interactive)]'
+                      : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text-primary)]',
+                  ].join(' ')}
+                >
+                  <Icon size={20} className="shrink-0" />
+                  {!collapsed && <span className="truncate">{label}</span>}
+                </Link>
+              </li>
+            )
+          })}
+        </ul>
+      </nav>
+
+      {/* Mobile bottom nav — visible below lg (1024px) */}
+      <nav
+        aria-label="Navegación móvil"
+        className="lg:hidden fixed bottom-0 inset-x-0 flex items-center justify-around
+          h-14 border-t border-[var(--color-border)] bg-[var(--color-bg)] z-40"
+      >
+        {items.slice(0, 4).map(({ href, label, icon: Icon }) => {
+          const active = pathname === href || pathname.startsWith(href + '/')
+          return (
+            <Link
+              key={href}
+              href={href}
+              aria-current={active ? 'page' : undefined}
+              aria-label={label}
+              className={[
+                'flex flex-col items-center gap-0.5 px-4 py-2 min-h-[44px] min-w-[44px]',
+                'text-[10px] transition-colors duration-120',
+                active
+                  ? 'text-[var(--color-interactive)]'
+                  : 'text-[var(--color-text-secondary)]',
+              ].join(' ')}
+            >
+              <Icon size={22} />
+              <span>{label}</span>
+            </Link>
+          )
+        })}
+      </nav>
+    </>
+  )
+}
