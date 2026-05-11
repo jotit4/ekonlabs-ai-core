@@ -19,6 +19,7 @@ interface PatientResult {
   full_name: string
   phone_number: string
   obra_social: string | null
+  deletion_requested_at: string | null
 }
 
 interface ServiceOption {
@@ -130,7 +131,7 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
       const supabase = createSupabaseBrowserClient()
       const { data, error } = await supabase
         .from('patients')
-        .select('patient_id, full_name, phone_number, obra_social')
+        .select('patient_id, full_name, phone_number, obra_social, deletion_requested_at')
         .eq('dni', values.dni)
         .maybeSingle()
 
@@ -144,7 +145,15 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
         return
       }
 
-      setPatient(data as PatientResult)
+      const foundPatient = data as PatientResult
+
+      // Bloquear selección si el paciente tiene eliminación pendiente
+      if (foundPatient.deletion_requested_at) {
+        setPatientSearchError('Este paciente tiene una eliminación programada')
+        return
+      }
+
+      setPatient(foundPatient)
       appointmentForm.setValue('patient_id', data.patient_id)
     } catch {
       setPatientSearchError('Error de red al buscar el paciente.')

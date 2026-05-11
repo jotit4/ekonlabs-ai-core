@@ -115,6 +115,7 @@ describe('NewTurnoModal', () => {
           full_name: 'Juan García',
           phone_number: '+5491100000000',
           obra_social: 'OSDE',
+          deletion_requested_at: null,
         },
         error: null,
       })
@@ -156,6 +157,34 @@ describe('NewTurnoModal', () => {
         expect(screen.getByText(/Ingresá un DNI válido de 7 u 8 dígitos/)).toBeInTheDocument()
       })
     })
+
+    it('muestra error si el paciente tiene eliminación programada y no permite seleccionarlo', async () => {
+      mockMaybeSingle.mockResolvedValue({
+        data: {
+          patient_id: 'pat-uuid-2',
+          full_name: 'Carlos Gómez',
+          phone_number: '+5491122334455',
+          obra_social: null,
+          deletion_requested_at: '2026-05-11T00:00:00Z',
+        },
+        error: null,
+      })
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
+
+      await user.type(screen.getByLabelText('DNI del paciente'), '11223344')
+      await user.click(screen.getByRole('button', { name: /buscar/i }))
+
+      await waitFor(() => {
+        expect(
+          screen.getByText('Este paciente tiene una eliminación programada')
+        ).toBeInTheDocument()
+      })
+
+      // No debe mostrarse el formulario de turno
+      expect(screen.queryByLabelText('Servicio')).not.toBeInTheDocument()
+    })
   })
 
   describe('formulario de turno', () => {
@@ -166,6 +195,7 @@ describe('NewTurnoModal', () => {
           full_name: 'María López',
           phone_number: '+5491111111111',
           obra_social: null,
+          deletion_requested_at: null,
         },
         error: null,
       })

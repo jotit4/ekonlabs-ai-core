@@ -9,8 +9,11 @@ export type AuditAction =
   | 'appointment_created'
   | 'appointment_rescheduled'
   | 'config_system_prompt_updated'
+  | 'user_created'
+  | 'user_deactivated'
+  | 'user_activated'
 
-export type AuditEntityType = 'patient' | 'conversation' | 'appointment' | 'config'
+export type AuditEntityType = 'patient' | 'conversation' | 'appointment' | 'config' | 'user'
 
 interface LogAuditParams {
   action: AuditAction
