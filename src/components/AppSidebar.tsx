@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   Calendar, ChartBar, MessageSquare, PanelLeft,
-  PanelLeftClose, Settings, Users,
+  PanelLeftClose, Settings, UserCog, Users,
 } from 'lucide-react'
 import type { UserRole } from '@/types/index'
 
@@ -26,11 +26,12 @@ const NAV_ITEMS: Record<UserRole, NavItem[]> = {
     { href: '/pacientes', label: 'Pacientes', icon: Users },
   ],
   admin: [
-    { href: '/conversaciones',       label: 'Conversaciones', icon: MessageSquare },
-    { href: '/agenda',               label: 'Agenda',          icon: Calendar },
-    { href: '/pacientes',            label: 'Pacientes',        icon: Users },
-    { href: '/configuracion/agente', label: 'Configuración',   icon: Settings },
-    { href: '/metricas',             label: 'Métricas',         icon: ChartBar },
+    { href: '/conversaciones',          label: 'Conversaciones', icon: MessageSquare },
+    { href: '/agenda',                  label: 'Agenda',          icon: Calendar },
+    { href: '/pacientes',               label: 'Pacientes',        icon: Users },
+    { href: '/configuracion/agente',    label: 'Configuración',   icon: Settings },
+    { href: '/metricas',                label: 'Métricas',         icon: ChartBar },
+    { href: '/configuracion/usuarios',  label: 'Usuarios',         icon: UserCog },
   ],
 }
 

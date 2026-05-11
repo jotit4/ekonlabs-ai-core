@@ -1,17 +1,22 @@
 'use client'
 
-import { format, parseISO } from 'date-fns'
+import { format, parseISO, isValid } from 'date-fns'
 import { es } from 'date-fns/locale'
+import { Pencil } from 'lucide-react'
 import type { Appointment } from '@/types/appointments'
 import { STATUS_LABELS } from '@/types/appointments'
 import { StatusDot, statusToVariant } from '@/components/shared/StatusDot'
 
 interface TurnoCardProps {
   appointment: Appointment
+  onReschedule?: (appointment: Appointment) => void // prop opcional para accesibilidad alternativa
 }
 
-export function TurnoCard({ appointment }: TurnoCardProps) {
-  const hora = format(parseISO(appointment.appointment_time), 'HH:mm', { locale: es })
+export function TurnoCard({ appointment, onReschedule }: TurnoCardProps) {
+  // Usar start_at como fuente de verdad; fallback a appointment_time (legacy)
+  const timeSource = appointment.start_at ?? appointment.appointment_time ?? ''
+  const parsedTime = parseISO(timeSource)
+  const hora = isValid(parsedTime) ? format(parsedTime, 'HH:mm', { locale: es }) : '--:--'
   const paciente = appointment.patients?.full_name ?? 'Paciente desconocido'
   const servicio = appointment.services?.name ?? ''
   const profesional = appointment.services?.professional
@@ -34,6 +39,16 @@ export function TurnoCard({ appointment }: TurnoCardProps) {
         <StatusDot variant={variant} label={label} />
         <span className="text-xs text-[var(--color-text-secondary)]">{label}</span>
       </div>
+      {onReschedule && (
+        <button
+          type="button"
+          onClick={() => onReschedule(appointment)}
+          className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-interactive)] hover:bg-[var(--color-surface)] transition-colors"
+          aria-label={`Reprogramar turno de ${appointment.patients?.full_name ?? 'paciente'}`}
+        >
+          <Pencil className="w-4 h-4" />
+        </button>
+      )}
     </div>
   )
 }

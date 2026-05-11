@@ -10,6 +10,8 @@ const BASE_APT: Appointment = {
   patient_id: 'pat-1',
   service_id: 'svc-1',
   appointment_time: '2026-05-07T09:00:00',
+  start_at: '2026-05-07T09:00:00',
+  end_at: '2026-05-07T10:00:00',
   status: 'confirmed',
   calendar_event_id: null,
   created_at: '2026-05-01T00:00:00.000Z',

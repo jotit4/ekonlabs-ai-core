@@ -14,7 +14,14 @@ export function useAgendaRealtime(isoDate: string) {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'appointments' },
-        () => queryClient.invalidateQueries({ queryKey: ['agenda', 'day', isoDate] }),
+        (payload) => {
+          const newRecord = payload.new as Record<string, string> | undefined
+          const oldRecord = payload.old as Record<string, string> | undefined
+          // CORRECCIÓN: usar start_at (columna real) en lugar de appointment_time (legacy)
+          const affectedTime = newRecord?.start_at ?? oldRecord?.start_at
+          if (affectedTime && affectedTime.slice(0, 10) !== isoDate) return
+          queryClient.invalidateQueries({ queryKey: ['agenda', 'day', isoDate] })
+        },
       )
       .subscribe()
 

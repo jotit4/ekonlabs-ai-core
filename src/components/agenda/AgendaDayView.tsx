@@ -1,12 +1,15 @@
 'use client'
 
-import { useList } from '@refinedev/core'
-import { startOfDay, endOfDay, formatISO, parseISO } from 'date-fns'
 import type { Appointment } from '@/types/appointments'
 import { TurnoCard } from './TurnoCard'
 
 interface AgendaDayViewProps {
-  date: string // ISO date YYYY-MM-DD
+  date: string // ISO date YYYY-MM-DD (used for label/display context)
+  appointments: Appointment[]
+  isLoading: boolean
+  isError: boolean
+  onRefetch: () => void
+  onReschedule?: (appointment: Appointment) => void
 }
 
 function groupByProfessional(appointments: Appointment[]): Map<string, Appointment[]> {
@@ -24,45 +27,26 @@ export function AgendaDayViewSkeleton() {
   return (
     <div className="space-y-2" aria-label="Cargando turnos">
       {Array.from({ length: 5 }).map((_, i) => (
-        <div
-          key={i}
-          className="h-11 rounded-[var(--radius-sm)] bg-[var(--color-surface)] animate-pulse"
-        />
+        <div key={i} className="flex items-center gap-3 px-4 py-3 min-h-[44px] animate-pulse">
+          <div className="w-10 h-3 rounded bg-[var(--color-surface)] shrink-0" />
+          <div className="flex-1 h-3 rounded bg-[var(--color-surface)]" />
+          <div className="w-32 h-3 rounded bg-[var(--color-surface)]" />
+          <div className="flex items-center gap-1.5 shrink-0">
+            <div className="w-[9px] h-[9px] rounded-full bg-[var(--color-surface)]" />
+            <div className="w-16 h-3 rounded bg-[var(--color-surface)]" />
+          </div>
+        </div>
       ))}
     </div>
   )
 }
 
-export function AgendaDayView({ date }: AgendaDayViewProps) {
-  const selectedDate = parseISO(date)
-  const startISO = formatISO(startOfDay(selectedDate))
-  const endISO = formatISO(endOfDay(selectedDate))
-
-  const { query, result, overtime } = useList<Appointment>({
-    resource: 'appointments',
-    meta: {
-      select: '*, patients(full_name), services(name, professional)',
-    },
-    filters: [
-      { field: 'appointment_time', operator: 'gte', value: startISO },
-      { field: 'appointment_time', operator: 'lte', value: endISO },
-    ],
-    sorters: [{ field: 'appointment_time', order: 'asc' }],
-    pagination: { mode: 'off' },
-    queryOptions: {
-      queryKey: ['agenda', 'day', date],
-      staleTime: 0,
-    },
-    overtimeOptions: { interval: 100 },
-  })
-
-  const timedOut = (overtime.elapsedTime ?? 0) >= 5000
-
-  if (query.isPending && !timedOut) {
+export function AgendaDayView({ appointments, isLoading, isError, onRefetch, onReschedule }: AgendaDayViewProps) {
+  if (isLoading) {
     return <AgendaDayViewSkeleton />
   }
 
-  if (query.isError || timedOut) {
+  if (isError) {
     return (
       <div
         role="alert"
@@ -70,7 +54,7 @@ export function AgendaDayView({ date }: AgendaDayViewProps) {
       >
         <p className="text-sm">Error al cargar los turnos</p>
         <button
-          onClick={() => query.refetch()}
+          onClick={() => onRefetch()}
           className="min-h-[44px] px-4 text-sm text-[var(--color-interactive)] hover:underline"
         >
           Reintentar
@@ -78,8 +62,6 @@ export function AgendaDayView({ date }: AgendaDayViewProps) {
       </div>
     )
   }
-
-  const appointments = result.data as Appointment[]
 
   if (appointments.length === 0) {
     return (
@@ -100,7 +82,7 @@ export function AgendaDayView({ date }: AgendaDayViewProps) {
           </h3>
           <div className="divide-y divide-[var(--color-border)]">
             {apts.map((apt) => (
-              <TurnoCard key={apt.appointment_id} appointment={apt} />
+              <TurnoCard key={apt.appointment_id} appointment={apt} onReschedule={onReschedule} />
             ))}
           </div>
         </section>

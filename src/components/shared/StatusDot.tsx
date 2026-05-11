@@ -24,6 +24,8 @@ export function statusToVariant(status: AppointmentStatus): StatusDotVariant {
       return 'inactive'
     case 'no_show':
       return 'alert'
+    default:
+      return 'inactive'
   }
 }
 

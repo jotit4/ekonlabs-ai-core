@@ -4,11 +4,14 @@ import { useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { formatISO, parseISO, addDays, isToday, format, isValid } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { AgendaDayView } from '@/components/agenda/AgendaDayView'
+import { CalendarView } from '@/components/agenda/CalendarView'
 import { KPIStrip } from '@/components/agenda/KPIStrip'
 import { NewTurnoModal } from '@/components/agenda/NewTurnoModal'
+import { RescheduleTurnoModal } from '@/components/agenda/RescheduleTurnoModal'
 import { useAgendaRealtime } from '@/hooks/use-agenda-realtime'
 import { useAppointments } from '@/hooks/use-appointments'
+import { useGCalChannelStatus } from '@/hooks/use-gcal-channel-status'
+import type { Appointment } from '@/types/appointments'
 
 function parseValidDate(str: string | null): Date {
   if (!str || !/^\d{4}-\d{2}-\d{2}$/.test(str)) return new Date()
@@ -26,12 +29,26 @@ export default function AgendaPage() {
   useAgendaRealtime(isoDate)
 
   const { appointments, isLoading, isError, refetch } = useAppointments(isoDate)
+  const { status: gcalStatus } = useGCalChannelStatus()
 
   const prevISO = formatISO(addDays(selectedDate, -1), { representation: 'date' })
   const nextISO = formatISO(addDays(selectedDate, 1), { representation: 'date' })
   const hoy = isToday(selectedDate)
 
   const [showNewTurnoModal, setShowNewTurnoModal] = useState(false)
+  const [showRescheduleTurnoModal, setShowRescheduleTurnoModal] = useState(false)
+  const [selectedAppointmentForReschedule, setSelectedAppointmentForReschedule] =
+    useState<Appointment | null>(null)
+
+  function handleOpenReschedule(appointment: Appointment) {
+    setSelectedAppointmentForReschedule(appointment)
+    setShowRescheduleTurnoModal(true)
+  }
+
+  function handleCloseReschedule() {
+    setShowRescheduleTurnoModal(false)
+    setSelectedAppointmentForReschedule(null)
+  }
 
   return (
     <section className="mx-auto w-full max-w-6xl px-6 py-8">
@@ -81,16 +98,24 @@ export default function AgendaPage() {
         </div>
       </header>
       <KPIStrip appointments={appointments} isLoading={isLoading} isError={isError} />
-      <AgendaDayView
+      <CalendarView
         date={isoDate}
         appointments={appointments}
         isLoading={isLoading}
         isError={isError}
         onRefetch={refetch}
+        onReschedule={handleOpenReschedule}
+        gcalStatus={gcalStatus}
       />
       <NewTurnoModal
         open={showNewTurnoModal}
         onClose={() => setShowNewTurnoModal(false)}
+        date={isoDate}
+      />
+      <RescheduleTurnoModal
+        open={showRescheduleTurnoModal}
+        onClose={handleCloseReschedule}
+        appointment={selectedAppointmentForReschedule}
         date={isoDate}
       />
     </section>

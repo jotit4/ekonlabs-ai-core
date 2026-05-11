@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { Refine } from '@refinedev/core'
 import routerProvider from '@refinedev/nextjs-router'
 import { dataProvider as supabaseDataProvider } from '@refinedev/supabase'
@@ -8,7 +9,7 @@ import { fastapiDataProvider } from '@/lib/refine/providers'
 import { createSupabaseBrowserClient } from '@/lib/supabase/client'
 
 export function DashboardProviders({ children }: { children: React.ReactNode }) {
-  const supabase = createSupabaseBrowserClient()
+  const [supabase] = useState(() => createSupabaseBrowserClient())
 
   return (
     <Refine
