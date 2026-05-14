@@ -1,12 +1,14 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useList } from '@refinedev/core'
+import { useQuery } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { Dialog } from '@base-ui/react/dialog'
 import { PatientRowItem } from '@/components/pacientes/PatientRowItem'
 import { PatientForm } from '@/components/pacientes/PatientForm'
 import type { Patient } from '@/types/patients'
+import type { ConversationSummary } from '@/types/conversations'
 
 // ─── Skeleton de carga ───────────────────────────────────────────────────────
 
@@ -75,8 +77,7 @@ export default function PacientesPage() {
         dni,
         obra_social,
         deletion_requested_at,
-        appointments(appointment_id, start_at, end_at, status),
-        thread_states(status, paused_reason)
+        appointments(appointment_id, start_at, end_at, status)
       `,
     },
     filters:
@@ -103,6 +104,30 @@ export default function PacientesPage() {
   const isPending = listQuery.isPending
   const isError = listQuery.isError
   const patients: Patient[] = (result?.data ?? []) as Patient[]
+
+  const { data: conversations = [] } = useQuery<ConversationSummary[]>({
+    queryKey: ['conversations', 'list', { status: 'all' }],
+    queryFn: async () => {
+      const res = await fetch('/api/conversations')
+      const json = await res.json() as { conversations: ConversationSummary[] }
+      return json.conversations
+    },
+    staleTime: 0,
+  })
+
+  const threadStateByPhone = useMemo(() => {
+    const map = new Map<string, { status: 'active' | 'paused'; paused_reason: string | null }>()
+    for (const conv of conversations) {
+      if (conv.status === 'resolved') continue
+      const status = conv.status === 'ai_active' ? 'active' : 'paused'
+      const paused_reason =
+        conv.status === 'human_takeover' ? 'human_takeover'
+        : conv.status === 'needs_intervention' ? 'low_confidence'
+        : null
+      map.set(conv.phone_number, { status, paused_reason })
+    }
+    return map
+  }, [conversations])
 
   const handlePatientCreated = (patientId: string) => {
     setDialogOpen(false)
@@ -284,6 +309,7 @@ export default function PacientesPage() {
                       key={p.patient_id}
                       patient={p}
                       onClick={() => router.push(`/pacientes/${p.patient_id}`)}
+                      threadState={threadStateByPhone.get(p.phone_number) ?? null}
                     />
                   ))}
                 </tbody>

@@ -125,10 +125,9 @@ describe('PatientRowItem', () => {
   it('StatusDot active cuando thread_state.status = active', () => {
     renderInTable(
       <PatientRowItem
-        patient={makePatient({
-          thread_states: [{ status: 'active', paused_reason: null }],
-        })}
+        patient={makePatient()}
         onClick={() => {}}
+        threadState={{ status: 'active', paused_reason: null }}
       />
     )
     expect(screen.getByText('IA activa')).toBeInTheDocument()
@@ -137,12 +136,9 @@ describe('PatientRowItem', () => {
   it('StatusDot warning cuando thread_state.status = paused y paused_reason = low_confidence', () => {
     renderInTable(
       <PatientRowItem
-        patient={makePatient({
-          thread_states: [
-            { status: 'paused', paused_reason: 'low_confidence' },
-          ],
-        })}
+        patient={makePatient()}
         onClick={() => {}}
+        threadState={{ status: 'paused', paused_reason: 'low_confidence' }}
       />
     )
     expect(screen.getByText('Necesita ayuda')).toBeInTheDocument()
@@ -151,8 +147,9 @@ describe('PatientRowItem', () => {
   it('StatusDot inactive cuando no hay thread_state', () => {
     renderInTable(
       <PatientRowItem
-        patient={makePatient({ thread_states: [] })}
+        patient={makePatient()}
         onClick={() => {}}
+        threadState={null}
       />
     )
     expect(screen.getByText('Sin conversación')).toBeInTheDocument()

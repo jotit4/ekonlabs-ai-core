@@ -69,11 +69,11 @@ function getInitials(fullName: string): string {
 interface PatientRowItemProps {
   patient: Patient
   onClick: () => void
+  threadState?: ThreadStateSlim | null
 }
 
-export function PatientRowItem({ patient, onClick }: PatientRowItemProps) {
+export function PatientRowItem({ patient, onClick, threadState = null }: PatientRowItemProps) {
   const { lastTurno, nextTurno } = calcTurnos(patient.appointments)
-  const threadState = patient.thread_states?.[0] ?? null
   const { variant, label } = patientStatusDot(threadState)
   const initials = getInitials(patient.full_name)
 

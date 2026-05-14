@@ -53,6 +53,11 @@ vi.mock('@refinedev/core', () => ({
   useList: () => ({ query: mockListQuery, ...mockUseListState }),
 }))
 
+// Mock @tanstack/react-query — useQuery para conversaciones
+vi.mock('@tanstack/react-query', () => ({
+  useQuery: () => ({ data: [], isLoading: false, isError: false }),
+}))
+
 // Importar componente después de mocks
 import PacientesPage from './page'
 
