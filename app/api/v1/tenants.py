@@ -134,6 +134,79 @@ async def clear_dedup_cache(
     )
 
 
+@router.get("/tenants/{tenant_id}/conversations/{phone}/context")
+async def get_conversation_context(
+    tenant_id: UUID,
+    phone: str,
+    _: None = Depends(_require_admin_api_key),
+) -> JSONResponse:
+    """Retorna el contexto capturado por el agente para el panel del dashboard."""
+    from app.core.database import get_supabase_client
+    from app.services.booking_draft_service import get_draft
+
+    sb = get_supabase_client()
+
+    # 1. Datos del paciente registrado
+    patient_res = (
+        sb.table("patients")
+        .select("full_name,dni,obra_social")
+        .eq("tenant_id", str(tenant_id))
+        .eq("phone_number", phone)
+        .limit(1)
+        .execute()
+    )
+    patient = patient_res.data[0] if patient_res.data else None
+
+    # 2. Estado del hilo
+    thread_res = (
+        sb.table("thread_states")
+        .select("status,paused_reason")
+        .eq("tenant_id", str(tenant_id))
+        .eq("phone_number", phone)
+        .limit(1)
+        .execute()
+    )
+    thread = thread_res.data[0] if thread_res.data else None
+
+    # 3. Draft de booking en curso desde Redis
+    draft = await asyncio.to_thread(get_draft, str(tenant_id), phone)
+
+    # Mapear paused_reason a texto legible
+    paused_reason = thread.get("paused_reason") if thread else None
+    current_block = None
+    if paused_reason == "low_confidence":
+        current_block = "Baja confianza — requiere intervención"
+    elif paused_reason == "human_takeover":
+        current_block = "Humano en control"
+
+    # Intent inferido desde draft
+    detected_intent = None
+    if draft and (draft.get("selected_service_name") or draft.get("booked_slot")):
+        detected_intent = "agendar_turno"
+
+    # Slot reservado o seleccionado
+    slot_requested = None
+    if draft:
+        booked = draft.get("booked_slot")
+        if isinstance(booked, dict):
+            slot_requested = booked.get("display") or booked.get("start")
+
+    context = {
+        "patient_name": (patient or {}).get("full_name") or (draft or {}).get("patient_name"),
+        "phone_number": phone,
+        "detected_intent": detected_intent,
+        "dni": (patient or {}).get("dni") or (draft or {}).get("patient_dni"),
+        "service_requested": (draft or {}).get("selected_service_name"),
+        "slot_requested": slot_requested,
+        "availability_info": None,
+        "obra_social": (patient or {}).get("obra_social"),
+        "current_block": current_block,
+        "is_resolved": False,
+    }
+
+    return JSONResponse(status_code=status.HTTP_200_OK, content=context)
+
+
 @router.post("/tenants/{tenant_id}/conversations/{phone}/takeover")
 async def takeover_conversation(
     tenant_id: UUID,
