@@ -81,7 +81,7 @@ function setupAdminAuth() {
     },
   })
   mockParseJwt.mockReturnValue({
-    role: 'admin',
+    app_role: 'admin',
     tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4',
   })
 }
@@ -110,7 +110,7 @@ describe('POST /api/patients/[id]/deletion-request', () => {
     mockGetSession.mockResolvedValue({
       data: { session: { access_token: 'some-token' } },
     })
-    mockParseJwt.mockReturnValue({ role: 'doctor', tenant_id: 'tenant-1' })
+    mockParseJwt.mockReturnValue({ app_role: 'doctor', tenant_id: 'tenant-1' })
 
     const res = await POST(new Request('http://localhost', { method: 'POST' }), makeContext('p1'))
     expect(res.status).toBe(403)
@@ -126,7 +126,7 @@ describe('POST /api/patients/[id]/deletion-request', () => {
     mockGetSession.mockResolvedValue({
       data: { session: { access_token: 'some-token' } },
     })
-    mockParseJwt.mockReturnValue({ role: 'receptionist', tenant_id: 'tenant-1' })
+    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
 
     const res = await POST(new Request('http://localhost', { method: 'POST' }), makeContext('p1'))
     expect(res.status).toBe(403)

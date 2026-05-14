@@ -40,7 +40,7 @@ import { PATCH } from './route'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function makeJwt(claims: Record<string, unknown> = { tenant_id: 'tenant-uuid-1234', role: 'receptionist' }) {
+function makeJwt(claims: Record<string, unknown> = { tenant_id: 'tenant-uuid-1234', app_role: 'receptionist' }) {
   const encoded = btoa(JSON.stringify(claims))
     .replace(/=/g, '')
     .replace(/\+/g, '-')

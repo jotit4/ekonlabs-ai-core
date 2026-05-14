@@ -45,7 +45,7 @@ import { POST } from './route'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function makeJwt(claims: Record<string, unknown> = { tenant_id: 'tenant-uuid-1234', role: 'receptionist' }) {
+function makeJwt(claims: Record<string, unknown> = { tenant_id: 'tenant-uuid-1234', app_role: 'receptionist' }) {
   const encoded = btoa(JSON.stringify(claims))
     .replace(/=/g, '')
     .replace(/\+/g, '-')
@@ -119,7 +119,7 @@ describe('POST /api/patients', () => {
   })
 
   it('retorna 403 si el role no es receptionist ni admin', async () => {
-    const token = makeJwt({ tenant_id: 'tenant-uuid-1234', role: 'doctor' })
+    const token = makeJwt({ tenant_id: 'tenant-uuid-1234', app_role: 'doctor' })
     mockGetSession.mockResolvedValue({ data: { session: { access_token: token } } })
 
     const res = await POST(makeRequest(VALID_BODY))
