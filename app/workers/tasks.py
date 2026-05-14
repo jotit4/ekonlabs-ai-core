@@ -13,7 +13,7 @@ from app.core.logging import get_logger
 from app.logging.processors import hash_pii
 from app.services.conversation_service import get_conversation_history, save_message
 from app.services.tenant_service import get_tenant_config
-from app.services.thread_state_service import get_thread_status, set_thread_active, set_thread_paused
+from app.services.thread_state_service import ensure_thread_registered, get_thread_status, set_thread_active, set_thread_paused
 from app.core.config import settings
 from app.services.whatsapp_service import send_message as send_whatsapp_message
 
@@ -284,6 +284,11 @@ def process_whatsapp_message(payload: dict, tenant_id: str) -> None:
             phone_number=phone_number,
         )
         return
+
+    # --- 2c. Registrar hilo activo en thread_states si no existe ---
+    # Garantiza que el dashboard pueda listar todas las conversaciones activas.
+    # ON CONFLICT DO NOTHING — no interfiere con estados paused existentes.
+    ensure_thread_registered(tenant_id=tenant_id, phone_number=phone_number)
 
     # --- 3. Construir estado inicial del grafo ---
     initial_state: ConversationState = {

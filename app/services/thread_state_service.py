@@ -109,6 +109,45 @@ def set_thread_paused(
     )
 
 
+def ensure_thread_registered(tenant_id: str, phone_number: str) -> None:
+    """Registra el hilo en thread_states si no existe — ON CONFLICT DO NOTHING.
+
+    Garantiza que cualquier conversación activa tenga una fila en la tabla,
+    lo que permite al dashboard listar todas las conversaciones (no solo las pausadas).
+    No modifica filas existentes — no interfiere con estados paused ni human_takeover.
+
+    Llamar después del guardia de pausa en tasks.py, antes de invocar el grafo.
+    """
+    client = get_supabase_client()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        client.table("thread_states").upsert(
+            {
+                "tenant_id": tenant_id,
+                "phone_number": phone_number,
+                "status": "active",
+                "paused_reason": None,
+                "paused_at": None,
+                "updated_at": now_iso,
+            },
+            on_conflict="tenant_id,phone_number",
+            ignore_duplicates=True,
+        ).execute()
+    except Exception as exc:
+        logger.warning(
+            "thread_state_service.ensure_registered.error — continuando sin registro",
+            tenant_id=tenant_id,
+            phone=phone_number,
+            error=str(exc),
+        )
+
+    logger.debug(
+        "thread_state_service.ensure_registered",
+        tenant_id=tenant_id,
+        phone=phone_number,
+    )
+
+
 def set_thread_active(tenant_id: str, phone_number: str) -> None:
     """Revierte el estado del hilo a ACTIVE (idempotente).
 
