@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.models.tenant import TenantCreate, TenantRulesUpdate
 from app.services.tenant_service import create_tenant, update_tenant_rules
 from app.services.rag_service import ingest_document, ingest_text
+from app.services.thread_state_service import set_thread_paused, set_thread_active
 
 router = APIRouter()
 
@@ -130,6 +131,34 @@ async def clear_dedup_cache(
             "data": {"keys_deleted": deleted},
             "meta": {"timestamp": datetime.now(timezone.utc).isoformat()},
         },
+    )
+
+
+@router.post("/tenants/{tenant_id}/conversations/{phone}/takeover")
+async def takeover_conversation(
+    tenant_id: UUID,
+    phone: str,
+    _: None = Depends(_require_admin_api_key),
+) -> JSONResponse:
+    """Pausa el agente IA en el hilo dado (human_takeover). Llamado desde el dashboard."""
+    await asyncio.to_thread(set_thread_paused, str(tenant_id), phone, "human_takeover")
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={"status": "ok", "meta": {"timestamp": datetime.now(timezone.utc).isoformat()}},
+    )
+
+
+@router.post("/tenants/{tenant_id}/conversations/{phone}/release")
+async def release_conversation(
+    tenant_id: UUID,
+    phone: str,
+    _: None = Depends(_require_admin_api_key),
+) -> JSONResponse:
+    """Reactiva el agente IA en el hilo dado. Llamado desde el dashboard."""
+    await asyncio.to_thread(set_thread_active, str(tenant_id), phone)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={"status": "ok", "meta": {"timestamp": datetime.now(timezone.utc).isoformat()}},
     )
 
 
