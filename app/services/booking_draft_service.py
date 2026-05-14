@@ -3,8 +3,12 @@
 El grafo LangGraph no tiene checkpointer: el estado se resetea en cada turno.
 Los mensajes se persisten en Supabase, pero campos como booked_slot, patient_name,
 name_collection_active, etc. son efímeros. Este servicio los guarda en Redis con
-TTL de 30 minutos (igual que el slot_presented_at check) para que booking_node y
-generation_node puedan re-hidratar el estado en turnos subsiguientes.
+TTL de 24 horas para que booking_node y generation_node puedan re-hidratar el
+estado en turnos subsiguientes durante el día.
+
+Nota: el check de slot_presented_at (NAME-07) sigue expirando a los 30 minutos
+de forma independiente al TTL del draft. El draft puede vivir 24h mientras que
+una oferta de slot específica expira a los 30 min.
 """
 from __future__ import annotations
 
@@ -17,7 +21,7 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-_DRAFT_TTL = 1800  # 30 minutos — igual que el slot expiry check (NAME-07)
+_DRAFT_TTL = 86_400  # 24 horas — el contexto del paciente persiste el día entero
 
 
 def _key(tenant_id: str, phone_number: str) -> str:
@@ -25,7 +29,7 @@ def _key(tenant_id: str, phone_number: str) -> str:
 
 
 def save_draft(tenant_id: str, phone_number: str, draft: dict) -> None:
-    """Guarda o sobreescribe el booking draft en Redis con TTL de 30 minutos."""
+    """Guarda o sobreescribe el booking draft en Redis con TTL de 24 horas."""
     try:
         r = Redis.from_url(settings.REDIS_URL, socket_connect_timeout=2)
         r.setex(_key(tenant_id, phone_number), _DRAFT_TTL, json.dumps(draft))
