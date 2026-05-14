@@ -179,9 +179,9 @@ async def get_conversation_context(
     elif paused_reason == "human_takeover":
         current_block = "Humano en control"
 
-    # Intent inferido desde draft
+    # Intent inferido desde draft — si hay draft activo, el flujo ya inició
     detected_intent = None
-    if draft and (draft.get("selected_service_name") or draft.get("booked_slot")):
+    if draft:
         detected_intent = "agendar_turno"
 
     # Slot reservado o seleccionado
