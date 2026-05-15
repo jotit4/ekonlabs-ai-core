@@ -4,6 +4,380 @@ Registro de trabajo por Epic/Story — decisiones técnicas, hallazgos de code r
 
 ---
 
+## Sesión de alineación backend ↔ dashboard — 2026-05-15
+
+**Tipo:** Verificación de alineación + implementación en backend | **Tests dashboard:** 1270 passing (sin cambios en dashboard)
+
+### Contexto
+
+Sesión de verificación exhaustiva entre ekonlabs-dashboard (Next.js 16, Epics 1–9 done) y ekonlabs-ai-core (Python/FastAPI/LangGraph). El objetivo fue confirmar que las operaciones del agente IA vía WhatsApp se reflejen correctamente en el dashboard.
+
+### Gap crítico encontrado y resuelto
+
+**Problema:** El backend nunca implementó el path de calendario nativo. El flag `uses_native_calendar = TRUE` existía en la DB de ISADI, pero el agente ignoraba el flag y llamaba a `calendar_service.py` (Google Calendar API), que nunca fue configurado para ISADI. Resultado: el agente fallaba silenciosamente al buscar disponibilidad, las reservas no se completaban, y los turnos creados por IA tenían `professional_id = NULL` → invisibles en "Mi Agenda" del dashboard.
+
+**Solución implementada en el backend** (`ekonlabs-ai-core`, commit `aed45d7`):
+- `availability_service.py` — nuevo servicio que lee `professional_schedules`, `blocked_times`, `service_professionals`, y `appointments` de Supabase
+- Branch `uses_native_calendar` en `scheduling_node`, `booking_node`, y `generation_node._finalize_registration()`
+- `professional_id` escrito en cada turno creado por el agente → turnos visibles en "Mi Agenda"
+- Backward-compatible: `getattr(tenant_config, "uses_native_calendar", False)` — tenants GCal sin cambios
+
+### Alineación verificada
+
+| Funcionalidad del dashboard | Alineación con backend |
+|---|---|
+| "Mi Agenda" filtra por `professional_id` | ✅ Backend ahora escribe `professional_id` |
+| Bandeja de conversaciones con context del agente | ✅ Via FastAPI `/conversations/{phone}/context` |
+| Takeover de conversación | ✅ Via FastAPI `/takeover` |
+| Config del agente (system prompt) | ✅ Escribe directo en `tenants.system_prompt_override` |
+| Shadow mode | ✅ Escribe directo en `tenants.shadow_mode_enabled` |
+| Banners GCal ocultos para ISADI | ✅ `uses_native_calendar=TRUE` en DB |
+
+---
+
+## QA Sprint — Pre-lanzamiento ISADI
+
+**Fecha:** 2026-05-15 | **Tipo:** Sweep de bugs + verificación visual completa | **Tests finales:** 1270 passing, 0 fallos
+
+### Contexto
+
+Sesión de QA exhaustiva previa al primer mes de prueba de ISADI. Se navegó manualmente cada sección del dashboard con browser automation, se identificaron y corrigieron 9 bugs (5 críticos de seguridad/auth, 2 visuales, 1 de hydration React 19, 1 de datos de test).
+
+### Bugs encontrados y resueltos
+
+#### 1. Telemetría Refine generando ruido en logs (503 silencioso)
+- **Archivo:** `src/app/(dashboard)/providers.tsx`
+- **Fix:** `options={{ ..., disableTelemetry: true }}` en `<Refine>`
+- `telemetry.refine.dev` era contactado en cada carga de página, generando errores 503 en los logs
+
+#### 2. Header de Agenda con capitalización incorrecta ("Viernes 15 De Mayo")
+- **Archivo:** `src/app/(dashboard)/agenda/page.tsx`
+- **Causa:** CSS `text-transform: capitalize` capitaliza CADA palabra; date-fns con locale `es` retorna todo en minúsculas
+- **Fix:** Removido el class `capitalize`, reemplazado por JS: `title.charAt(0).toUpperCase() + title.slice(1)`
+- Resultado correcto: "Viernes 15 de mayo"
+
+#### 3. Banner GCal visible durante carga (flash indeseable para ISADI)
+- **Archivo:** `src/app/(dashboard)/agenda/page.tsx`
+- **Causa:** `usesNativeCalendar` defaul a `false` antes de cargar config del tenant → banner de Google Calendar aparecía ~2s al cargar la página, aunque ISADI usa calendario nativo
+- **Fix:** Render condicional guarded con `!tenantConfigPending && !usesNativeCalendar`
+
+#### 4. Hydration mismatch en AgentPromptEditor (React 19)
+- **Archivo:** `src/components/configuracion/AgentPromptEditor.tsx`
+- **Causa:** En segunda visita, TanStack Query tenía datos cacheados (`isPending=false` inmediato en cliente), pero SSR renderizaba skeleton. React 19 detectó la discordancia de estructura y lanzó error de hidratación
+- **Fix:** Patrón `mounted` state — SSR y primer render cliente siempre muestran skeleton: `if (!mounted || isPending)`
+
+#### 5–9. Bug sistémico: JWT claim `role` vs `app_role` (5 archivos)
+- **Causa raíz:** En Supabase, `claims?.role` es el rol interno de Postgres (`'authenticated'`), NO el rol de la aplicación. El claim correcto es `claims?.app_role`, inyectado por `custom_access_token_hook`
+- **Impacto:** Todos los checks de autorización que usaban `claims?.role !== 'admin'` fallaban silenciosamente — retornaban 403 incluso para admins válidos
+
+| Archivo | Síntoma observable |
+|---|---|
+| `src/hooks/use-current-tenant.ts` | Sección Usuarios mostraba "Acceso denegado" a admins |
+| `src/app/api/patients/route.ts` | POST /api/patients retornaba 403 (imposible crear pacientes) |
+| `src/app/api/patients/[id]/route.ts` | PATCH /api/patients/[id] retornaba 403 (imposible editar pacientes) |
+| `src/app/api/patients/[id]/deletion-request/route.ts` | POST deletion-request retornaba 403 |
+| `src/app/api/usuarios/route.ts` | POST /api/usuarios retornaba 403 (imposible crear usuarios) |
+| `src/app/api/usuarios/[userId]/route.ts` | PATCH /api/usuarios/[id] retornaba 403 (imposible activar/desactivar usuarios) |
+
+- **Fix en todos:** `claims?.role` → `(claims?.app_role ?? claims?.role)` (patrón ya correcto en `useUserRole` — usado como referencia)
+
+#### 10. Datos de mock duplicados en ServicesView.test.tsx
+- **Archivo:** `src/components/configuracion/ServicesView.test.tsx`
+- **Causa:** `INACTIVE_SERVICE` spread de `ACTIVE_SERVICE` sin override de `calendar_id` → ambos servicios mostraban `kin@cal.com` → `getByText(/Cal: kin@cal\.com/)` encontraba 2 elementos y fallaba
+- **Fix:** Agregado `calendar_id: 'pilates@cal.com'` al mock del servicio inactivo
+
+### QA visual — secciones verificadas
+
+| Sección | Ruta | Estado |
+|---|---|---|
+| Dashboard / Inicio | `/dashboard` | ✅ OK |
+| Bandeja de mensajes | `/dashboard/bandeja` | ✅ OK |
+| Pacientes | `/dashboard/pacientes` | ✅ OK |
+| Detalle de paciente | `/dashboard/pacientes/[id]` | ✅ OK |
+| Agenda | `/dashboard/agenda` | ✅ OK (bugs 2+3 resueltos) |
+| KPIs / Analytics | `/dashboard/kpis` | ✅ OK |
+| Audit Trail | `/dashboard/audit` | ✅ OK |
+| Config — Agente IA | `/dashboard/configuracion/agente` | ✅ OK (bug 4 resuelto) |
+| Config — Servicios | `/dashboard/configuracion/servicios` | ✅ OK |
+| Config — Profesionales | `/dashboard/configuracion/profesionales` | ✅ OK |
+| Config — Horarios | `/dashboard/configuracion/horarios` | ✅ OK |
+| Config — Usuarios | `/dashboard/configuracion/usuarios` | ✅ OK (bug 5 resuelto) |
+
+### Resultado de tests
+
+```
+Tests antes del sprint: ~970 passing, 12 failing (pre-existentes)
+Tests después del sprint: 1270 passing, 0 failing
+```
+
+Los 12 fallos pre-existentes correspondían exactamente a los bugs 5–10 documentados arriba (11 por claim JWT incorrecto en rutas API, 1 por datos de mock duplicados).
+
+---
+
+## Epic 9 — Módulo Calendario Nativo
+
+**Estado:** done | **Período:** 2026-05-14/15 | **Stories:** 9.1–9.7 | **Tests finales:** ~970
+
+### Story 9.1 — Migraciones: Tablas de Calendario Nativo
+
+**Implementado:**
+- 7 migraciones secuenciales: `professionals`, `service_professionals`, `professional_schedules`, `blocked_times`
+- `ALTER TABLE patients ADD COLUMN preferred_professional_id UUID REFERENCES professionals`
+- `ALTER TABLE appointments ADD COLUMN professional_id UUID REFERENCES professionals`
+- `ALTER TABLE tenants ADD COLUMN uses_native_calendar BOOLEAN DEFAULT FALSE`
+- Seed data ISADI: Patricia Pérez Bernal + Aldo Luque, service_professionals para Kinesiología/Fisioterapia/Rehabilitación, schedules Lun–Vie 08:00–18:00
+
+**Decisiones técnicas:**
+- `day_of_week` usa convención ISO (0=Lunes, 6=Domingo) en `professional_schedules` — difiere de `service_hours` donde 0=Domingo; se documentó la diferencia en el modelo
+- `capacity_per_slot` en `services` ya existía — `professional_schedules` no lo repite
+- Retrocompatibilidad garantizada via flag `uses_native_calendar`; `calendar_service.py` intacto para otros tenants
+- Seed data aplica solo al tenant ISADI (`5298fcc5-15bf-494c-9655-b49d759cfef4`) via `WHERE tenant_id =`
+
+---
+
+### Story 9.2 — RLS Tablas Calendario Nativo
+
+**Implementado:**
+- RLS + FORCE ROW LEVEL SECURITY en `professionals`, `service_professionals`, `professional_schedules`, `blocked_times`
+- Políticas SELECT: tenant aislado via `auth.jwt() ->> 'tenant_id'`
+- Políticas INSERT/UPDATE/DELETE: solo admin O el propio profesional (match por email)
+- `auth.email()` para identificar al profesional logueado
+
+**Bug crítico (resuelto en 9.3):**
+- Migraciones `20260516000008` y `20260516000009` usaron `auth.jwt() ->> 'role'` en lugar de `auth.jwt() ->> 'app_role'` — todas las operaciones de escritura habrían fallado silenciosamente en producción
+- Fix aplicado en migración `20260516000012_fix_professionals_rls_write_claim.sql` (DROP + recrear las 6 políticas)
+
+---
+
+### Story 9.3 — CRUD Profesionales
+
+**Implementado:**
+- `ProfesionalesView` — listado con estado activo/inactivo visual, creación y edición inline
+- `POST /api/profesionales` — crea professional + seed de service_professionals
+- `PATCH /api/profesionales/[id]` — actualiza nombre/email, toggle `active`
+- `GET /api/profesionales` — lista todos (admin) o solo el propio (doctor)
+- Confirmación en 2 clicks para desactivar (guard contra desactivación accidental)
+
+**Decisiones técnicas:**
+- CR(9-3) retornó REJECTED Blocker por el bug de `role` vs `app_role` en las políticas RLS de 9.2; se relanzó DS tras aplicar la migración de fix
+- Deactivate (soft delete) preferido sobre DELETE — preserva integridad referencial con `appointments.professional_id`
+
+---
+
+### Story 9.4 — Gestión de Horarios del Profesional
+
+**Implementado:**
+- `HorariosView` — tabla semanal Lun–Dom con rangos horarios por día
+- `POST /api/profesionales/[id]/horarios` — crea `professional_schedules`
+- `DELETE /api/profesionales/[id]/horarios/[scheduleId]` — elimina un rango
+- `POST /api/profesionales/[id]/bloqueos` — crea `blocked_times` con `date_from`/`date_to`/`reason`
+- `DELETE /api/profesionales/[id]/bloqueos/[blockId]`
+- Validación server-side: `start_time < end_time`, solapamientos detectados antes del INSERT
+
+**Decisiones técnicas:**
+- No hay PATCH para horarios — se borra y recrea (inmutable por diseño, evita edge cases de solapamiento parcial)
+- `blocked_times.reason` opcional — vacaciones, licencia o cualquier bloqueo sin etiqueta
+- El profesional solo puede gestionar sus propios horarios (RLS via `auth.email()`)
+
+---
+
+### Story 9.5 — Vista "Mi Agenda"
+
+**Implementado:**
+- `/agenda/mi-agenda` — página exclusiva para el rol `doctor`
+- `GET /api/appointments/mi-agenda` — filtra por `professional_id` via lookup de email en `professionals`
+- Navegación por fecha via URL `?fecha=YYYY-MM-DD` (estado en URL, shareable)
+- `AgendaDayView` reutilizado; sin filtros de profesional (ya está filtrado por identidad)
+- Sidebar: entrada "Mi Agenda" visible solo para doctores
+
+**Decisiones técnicas:**
+- Lookup por email (no por UUID en JWT) — el JWT no incluye `professional_id`; el email es la llave de identidad del profesional en el dashboard
+- Sin `preferred_professional_id` en esta vista — no aplica al doctor viendo sus propios turnos
+
+---
+
+### Story 9.6 — Vista Agenda General
+
+**Implementado:**
+- `/agenda` extendida para admins con `AgendaFilters` component
+- `AgendaFilters` — selector de profesional + selector de servicio; ambos opcionales; botón "Limpiar"
+- Filtros persistidos en URL params (`?professional=uuid&service=uuid`)
+- `GET /api/appointments` extendido: acepta `professionalId` y `serviceId` como query params
+- `useTenantConfig` hook — `GET /api/tenant/config` con 5min staleTime; fallback `false` on error
+- Banners de GCal (`SyncStatusBanner`, `GCalDegradationBanner`) condicionales: solo se montan si `uses_native_calendar === false`; `useGCalChannelStatus` acepta parámetro `enabled`
+
+**Decisiones técnicas:**
+- Admin ve todos los profesionales; `uses_native_calendar` apaga los banners GCal globalmente
+- Filtros opcionales y acumulativos — sin filtro = vista completa del tenant
+- WCAG: `htmlFor` + `id` en todos los selects del filtro
+
+---
+
+### Story 9.7 — Deprecar GCal / Activar Calendario Nativo para ISADI
+
+**Implementado:**
+- Script SQL de activación: `UPDATE tenants SET uses_native_calendar = TRUE WHERE tenant_id = '5298fcc5...'`
+- Guía de deprecación en docs: verificar seed data → aplicar script → verificar banners GCal desaparecen
+- `calendar_service.py` marcado como legacy en comentario — no eliminado (retrocompatibilidad)
+- Tests de integración: `uses_native_calendar = true` oculta banners GCal, `false` los muestra
+
+**Decisiones técnicas:**
+- Flag de tenant (no env var) — permite activación por tenant sin redeploy
+- `calendar_service.py` se mantiene intacto — otros tenants hipotéticos podrían seguir usándolo
+- No se eliminan las columnas `calendar_id` ni `calendar_event_id` en esta iteración — la limpieza queda para v2
+
+---
+
+## Epic 8 — Bugfixes, Calidad y Seguridad
+
+**Estado:** done | **Período:** 2026-05-14/15 | **Stories:** 8.1–8.10 | **Tests finales:** ~900
+
+### Story 8.1 — JWT RLS Críticos
+
+**Implementado:**
+- Migración `20260515000001_fix_jwt_claim_app_role.sql`: auth hook reescrito — emite `app_role` en lugar de `role` en los custom claims del JWT
+- Helper `public.user_role()` actualizado para leer `app_role`
+- `ALTER TABLE appointments ENABLE ROW LEVEL SECURITY; ALTER TABLE appointments FORCE ROW LEVEL SECURITY`
+- 4 políticas RLS en `appointments`: SELECT/INSERT/UPDATE/DELETE filtradas por `tenant_id` via `app_role`
+- Fix en `layout.tsx` línea 24: `claims?.role` → `(claims?.app_role ?? claims?.role)` — resolvió auto-logout crítico post-login
+
+**Bug crítico resuelto:**
+- Después de la migración del hook JWT, todos los usuarios eran redirigidos a `/login` inmediatamente tras autenticarse. El layout leía `claims?.role` pero el hook ahora emite `app_role`. El fallback `?? claims?.role` mantiene compatibilidad con sesiones activas previas a la migración.
+
+**Decisiones técnicas:**
+- `app_role` como nombre canónico del claim — evita colisión con el claim `role` de Supabase Auth interno
+- `FORCE ROW LEVEL SECURITY` en `appointments` — aplica incluso al owner de la tabla (previene bypass accidental en funciones `SECURITY DEFINER`)
+
+---
+
+### Story 8.2 — Audit Logs: Admin, Usuarios y API Route
+
+**Implementado:**
+- `GET /api/usuarios` — nuevo handler admin-only; retorna `{ users }` desde `dashboard_users`; sin `.eq('tenant_id', ...)` (RLS filtra, AR14)
+- `POST /api/usuarios` fix: `claims?.role` → `claims?.app_role`
+- `use-user-management.ts` refactorizado: reemplaza query Supabase directa del browser por `fetch('/api/usuarios')`; optimistic update con rollback (`previousUsers` capture)
+- Migración `20260515000005_audit_logs_admin_only_select.sql`: SELECT en `audit_logs` restringido a `app_role = 'admin'`
+
+**Decisiones técnicas:**
+- Componentes/hooks NUNCA acceden a Supabase browser en tablas con datos sensibles de gestión — solo via API Routes (AR15)
+- Rollback optimista: `queryClient.setQueryData(key, previousUsers)` en `onError`
+
+---
+
+### Story 8.3 — Realtime con Filtro de Tenant
+
+**Implementado:**
+- `use-conversations-realtime.ts`: `useState(false)` (no `true`) para `isConnected`; `filter: tenant_id=eq.${tenantId}` en `postgres_changes`
+- `use-agenda-realtime.ts`: `filter: tenant_id=eq.${tenantId}`; `exact: false` en `invalidateQueries` para invalidar queries con variantes de filtro
+- Migración `20260515000004_realtime_replica_identity.sql`: `REPLICA IDENTITY FULL` en `appointments` y `thread_states`; ADD TABLE a `supabase_realtime` publication
+- Migración `20260515000006_conversations_replica_identity.sql`: `REPLICA IDENTITY FULL` en `conversations`
+
+**Decisiones técnicas:**
+- Sin `filter` en Realtime: todos los eventos del servidor llegan a todos los tenants conectados — violación de aislamiento
+- `exact: false` en invalidation: necesario cuando el queryKey incluye filtros opcionales (profesional, servicio) que pueden variar
+- `REPLICA IDENTITY FULL`: requerido para que Supabase Realtime incluya el `tenant_id` en el payload de eventos UPDATE/DELETE
+
+---
+
+### Story 8.4 — Timezone, DnD y Modales de Agenda
+
+**Implementado:**
+- `NewTurnoModal`: timestamps con offset `-03:00` explícito; `toLocaleDateString('en-CA')` para atributo `min` del date input
+- `RescheduleTurnoModal`: `useEffect` con `appointment_id` como dependencia para resetear el formulario al cambiar de turno
+- `CalendarView`: guard para estados `cancelled`/`no_show` en `handleEventDrop` (bloquea DnD para turnos no reprogramables)
+- Banners de GCal movidos de `CalendarView` a `agenda/page.tsx` — componente de agenda es presentacional puro
+
+**Decisiones técnicas:**
+- Offset `-03:00` hardcodeado (Buenos Aires, sin DST) — suficiente para ISADI; timezone dinámica queda para v2
+- `useEffect` reset dependiente de `appointment_id` — evita que el formulario muestre datos del turno anterior al abrir para un turno diferente
+
+---
+
+### Story 8.5 — Métricas, Loading y Pagination
+
+**Implementado:**
+- Skeleton loaders en vistas de KPIs y analytics que no los tenían
+- Pagination en listados de pacientes y conversaciones (limit/offset via query params)
+- `GET /api/audit-logs` — paginación con `range()` de Supabase; retorna `{ data, count, total_pages }`
+- Loading states con `isPending` (TanStack Query v5) en formularios de submit
+
+**Decisiones técnicas:**
+- TanStack Query v5: `isLoading` vs `isPending` — `isLoading = isPending && !hasData`; usar `isPending` en formularios
+- Pagination server-side (Supabase `range()`) — no client-side para audit logs (tabla grande)
+
+---
+
+### Story 8.6 — Seguridad en API Routes
+
+**Implementado:**
+- Validación de auth en todas las API Routes: `getUser()` + extracción de `tenant_id` y `app_role` del JWT antes de cualquier operación
+- `FastAPIClient` — wrapper server-side para llamadas al backend Python; `FASTAPI_BASE_URL` nunca expuesto al browser
+- Rate limiting básico via headers de Supabase (documentado, no implementado a nivel app)
+- Inputs sanitizados: UUID validation antes de queries; `z.string().uuid()` en schemas de request
+
+**Decisiones técnicas:**
+- `parseJwtPayload` en todas las routes — no confiar en cookies o body para `tenant_id`
+- `admin.ts` (Supabase service role) solo importable desde API Routes y lib server-side (AR15)
+
+---
+
+### Story 8.7 — Cache, PATCH 404 y Último Mensaje
+
+**Implementado:**
+- Migración `20260515000007_get_latest_messages_rpc.sql`: función `get_latest_messages_by_phone` con `DISTINCT ON (phone_number)` + `SECURITY DEFINER`
+- `GET /api/conversations` extendido: incluye `last_message` via RPC en lugar de subquery ineficiente
+- `PATCH /api/appointments/[id]`: fix 404 cuando el turno no pertenece al tenant — ahora retorna 403 con mensaje claro
+- Cache headers en responses de lectura: `Cache-Control: private, max-age=0` para responses con datos de sesión
+
+**Decisiones técnicas:**
+- `DISTINCT ON` + `ORDER BY phone_number, created_at DESC` — patrón eficiente PostgreSQL para "el más reciente por grupo"
+- `SECURITY DEFINER` en la RPC — ejecuta con permisos del owner, RLS del llamador no aplica; la función valida `tenant_id` internamente
+
+---
+
+### Story 8.8 — Error Boundaries y Security Headers
+
+**Implementado:**
+- `src/app/(dashboard)/error.tsx`: error boundary con `unstable_retry()` (API de Next.js 16.2.4)
+- `src/app/global-error.tsx`: global error boundary con `<html>` y `<body>` propios
+- `next.config.ts`: security headers vía `headers()` async function — `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, CSP con `frame-ancestors 'none'`
+
+**Decisiones técnicas:**
+- `unstable_retry()` disponible en Next.js 16.2.4 — permite al usuario reintentar sin reload completo
+- CSP permisivo en desarrollo (script-src incluye `'unsafe-eval'` para Turbopack) — restringido en producción
+- `global-error.tsx` requiere `<html>`/`<body>` propios porque reemplaza el root layout en errores críticos
+
+---
+
+### Story 8.9 — WhatsApp History Fix
+
+**Implementado:**
+- `WhatsAppHistory.tsx` refactorizado: usa `phoneNumber` directamente en lugar de UUID de Chatwoot
+- Split en `WhatsAppHistory` (outer, con condicional) + `WhatsAppHistoryInner` (inner, hooks sin condicional) — evita violación de reglas de hooks
+- `GET /api/chatwoot/conversations/[conversation_id]/messages`: heurística `/^\+?\d{9,}$/` para detectar phone numbers y resolver a `conversation_id` via `contacts/search` de Chatwoot
+- Manejo de `conversation_id` inexistente: retorna `{ messages: [] }` en lugar de 404
+
+**Decisiones técnicas:**
+- El `conversation_id` en Chatwoot no coincide con el UUID de conversación de la DB — la resolución via phone es más robusta
+- Split de componente necesario porque hooks no pueden llamarse condicionalmente (Rules of Hooks)
+
+---
+
+### Story 8.10 — Calidad TypeScript y Logger
+
+**Implementado:**
+- `src/lib/logger.ts` — logger JSON estructurado server-side: `logger.info/warn/error({ context }, message)`
+- Logger adoptado en todas las API Routes que tenían `console.log/error`
+- TypeScript strict fixes: eliminación de `any` implícitos, `as unknown as T` donde necesario, tipos explícitos en generics de TanStack Query
+- `vitest.config.ts`: `pool: 'vmThreads'` + `maxWorkers: 2` — resuelve timeout en fork mode sobre filesystem externo con espacios en el path
+
+**Decisiones técnicas:**
+- Logger server-side only (`'server-only'` import guard) — nunca bundleado al cliente
+- `vmThreads` vs `forks`: el path con espacios y corchetes en el filesystem USB causaba que los workers forkeados fallaran al resolver módulos; `vmThreads` usa workers de Node en el mismo proceso
+- `maxWorkers: 2` conservador — el filesystem USB tiene I/O lento; más workers = más contención
+
+---
+
 ## Epic 2 — Agenda del Día en Tiempo Real
 
 **Estado:** done | **Período:** 2026-05-08 | **Stories:** 2.1–2.7 | **Tests finales:** 162
