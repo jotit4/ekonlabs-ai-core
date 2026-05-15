@@ -31,7 +31,9 @@ def _tenant_config_with_calendar(calendar_id: str = _CALENDAR_ID, credentials: d
     tenant = MagicMock()
     tenant.calendar_id = calendar_id
     tenant.calendar_credentials = credentials or {"type": "service_account"}
+    tenant.calendar_credentials_ref = None
     tenant.shadow_mode_enabled = False
+    tenant.uses_native_calendar = False
     return tenant
 
 
@@ -39,7 +41,9 @@ def _tenant_config_no_calendar() -> MagicMock:
     tenant = MagicMock()
     tenant.calendar_id = None
     tenant.calendar_credentials = None
+    tenant.calendar_credentials_ref = None
     tenant.shadow_mode_enabled = False
+    tenant.uses_native_calendar = False
     return tenant
 
 
@@ -47,7 +51,19 @@ def _tenant_config_shadow_mode() -> MagicMock:
     tenant = MagicMock()
     tenant.calendar_id = _CALENDAR_ID
     tenant.calendar_credentials = {"type": "service_account"}
+    tenant.calendar_credentials_ref = None
     tenant.shadow_mode_enabled = True
+    tenant.uses_native_calendar = False
+    return tenant
+
+
+def _tenant_config_native_calendar() -> MagicMock:
+    tenant = MagicMock()
+    tenant.calendar_id = None
+    tenant.calendar_credentials = None
+    tenant.calendar_credentials_ref = None
+    tenant.shadow_mode_enabled = False
+    tenant.uses_native_calendar = True
     return tenant
 
 
@@ -648,3 +664,79 @@ def test_gated_prerequisite_not_met_random_message():
         return re.sub(r"\s+", " ", ascii_text.lower()).strip()
 
     assert not any(kw in _norm("quiero turno para aquagym") for kw in GATED_PREREQUISITE_MET_KEYWORDS)
+
+
+# ---------------------------------------------------------------------------
+# Tests — Native calendar path (uses_native_calendar=True)
+# ---------------------------------------------------------------------------
+
+def test_native_calendar_uses_availability_service():
+    """Cuando uses_native_calendar=True, el nodo llama a availability_service.get_available_slots
+    y NO llama a calendar_service.get_available_slots."""
+    from app.agent.nodes.scheduling import scheduling_node
+
+    state = _base_state(messages=[HumanMessage(content="quiero sacar turno")])
+
+    with (
+        patch("app.agent.nodes.scheduling.tenant_service") as mock_ts,
+        patch("app.agent.nodes.scheduling.calendar_service") as mock_cs,
+        patch("app.agent.nodes.scheduling.settings") as mock_settings,
+        patch("app.services.availability_service.get_available_slots", return_value=_FAKE_SLOTS) as mock_avail,
+    ):
+        mock_ts.get_tenant_config.return_value = _tenant_config_native_calendar()
+        mock_ts.get_tenant_services.return_value = []
+        mock_settings.DEFAULT_SLOT_DURATION_MINUTES = 60
+        mock_settings.SCHEDULING_LOOKAHEAD_HOURS = 72
+
+        result = scheduling_node(state)
+
+    assert result["scheduling_intent"] is True
+    mock_avail.assert_called_once()
+    mock_cs.get_available_slots.assert_not_called()
+
+
+def test_native_calendar_returns_slots():
+    """Con uses_native_calendar=True, los slots retornados provienen de availability_service."""
+    from app.agent.nodes.scheduling import scheduling_node
+
+    state = _base_state(messages=[HumanMessage(content="quiero reservar turno")])
+
+    with (
+        patch("app.agent.nodes.scheduling.tenant_service") as mock_ts,
+        patch("app.agent.nodes.scheduling.calendar_service"),
+        patch("app.agent.nodes.scheduling.settings") as mock_settings,
+        patch("app.services.availability_service.get_available_slots", return_value=_FAKE_SLOTS),
+    ):
+        mock_ts.get_tenant_config.return_value = _tenant_config_native_calendar()
+        mock_ts.get_tenant_services.return_value = []
+        mock_settings.DEFAULT_SLOT_DURATION_MINUTES = 60
+        mock_settings.SCHEDULING_LOOKAHEAD_HOURS = 72
+
+        result = scheduling_node(state)
+
+    assert result["scheduling_intent"] is True
+    assert result["available_slots"] == _FAKE_SLOTS
+
+
+def test_legacy_calendar_uses_calendar_service():
+    """Cuando uses_native_calendar=False, el nodo sigue usando calendar_service.get_available_slots."""
+    from app.agent.nodes.scheduling import scheduling_node
+
+    state = _base_state(messages=[HumanMessage(content="quiero sacar turno")])
+
+    with (
+        patch("app.agent.nodes.scheduling.tenant_service") as mock_ts,
+        patch("app.agent.nodes.scheduling.calendar_service") as mock_cs,
+        patch("app.agent.nodes.scheduling.settings") as mock_settings,
+    ):
+        mock_ts.get_tenant_config.return_value = _tenant_config_with_calendar()
+        mock_ts.get_tenant_services.return_value = []
+        mock_cs.get_available_slots.return_value = _FAKE_SLOTS
+        mock_settings.DEFAULT_SLOT_DURATION_MINUTES = 60
+        mock_settings.SCHEDULING_LOOKAHEAD_HOURS = 72
+
+        result = scheduling_node(state)
+
+    assert result["scheduling_intent"] is True
+    assert result["available_slots"] == _FAKE_SLOTS
+    mock_cs.get_available_slots.assert_called_once()

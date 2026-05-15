@@ -187,6 +187,7 @@ def test_graph_scheduling_intent_bypasses_rag():
     mock_tenant.calendar_id = "clinic@group.calendar.google.com"
     mock_tenant.calendar_credentials = {"type": "service_account"}
     mock_tenant.shadow_mode_enabled = False
+    mock_tenant.uses_native_calendar = False
 
     fake_slots = [
         {"start": "2026-03-30T10:00:00+00:00", "end": "2026-03-30T11:00:00+00:00", "display": "Lunes 30 de Marzo — 10:00 a 11:00 hs"}
@@ -233,6 +234,7 @@ def test_graph_booking_confirm_bypasses_scheduling_and_rag():
     mock_tenant.calendar_id = "clinic@group.calendar.google.com"
     mock_tenant.calendar_credentials = {"type": "service_account"}
     mock_tenant.shadow_mode_enabled = False
+    mock_tenant.uses_native_calendar = False
 
     fake_slot = {
         "start": "2026-03-30T10:00:00-03:00",
@@ -277,6 +279,7 @@ def test_graph_shadow_mode_returns_redirect_without_rag_or_llm():
     mock_tenant.calendar_id = "clinic@group.calendar.google.com"
     mock_tenant.calendar_credentials = {"type": "service_account"}
     mock_tenant.shadow_mode_enabled = True
+    mock_tenant.uses_native_calendar = False
 
     with (
         patch("app.agent.nodes.consent.has_active_consent", return_value=True),

@@ -200,6 +200,7 @@ class TestExtendedPhaseD:
                 calendar_id="cal@example.com",
                 calendar_credentials={},
                 calendar_credentials_ref=None,
+                uses_native_calendar=False,
             )
             mock_ts.get_tenant_services.return_value = []
             mock_ps.get_or_create_patient.return_value = mock_patient
@@ -245,6 +246,7 @@ class TestExtendedPhaseD:
                 calendar_id="cal@example.com",
                 calendar_credentials={},
                 calendar_credentials_ref=None,
+                uses_native_calendar=False,
             )
             mock_ts.get_tenant_services.return_value = []
             mock_ps.get_or_create_patient.return_value = mock_patient
@@ -304,6 +306,7 @@ class TestExtendedPhaseD:
                 calendar_id="cal@example.com",
                 calendar_credentials={},
                 calendar_credentials_ref=None,
+                uses_native_calendar=False,
             )
             mock_ts.get_tenant_services.return_value = []
             mock_ps.get_or_create_patient.return_value = mock_patient
@@ -352,6 +355,7 @@ class TestExtendedPhaseD:
                 calendar_id="cal@example.com",
                 calendar_credentials={},
                 calendar_credentials_ref=None,
+                uses_native_calendar=False,
             )
             mock_ts.get_tenant_services.return_value = []
             mock_ps.get_or_create_patient.return_value = mock_patient
@@ -395,6 +399,7 @@ class TestExtendedPhaseD:
                 calendar_id="cal@example.com",
                 calendar_credentials={},
                 calendar_credentials_ref=None,
+                uses_native_calendar=False,
             )
             mock_ts.get_tenant_services.return_value = []
             mock_ps.get_or_create_patient.return_value = mock_patient

@@ -45,6 +45,8 @@ class TenantConfig(BaseModel):
     # F0.1: prefer calendar_credentials_ref (env var / Vault secret name) over legacy JSONB
     calendar_credentials_ref: str | None = None
     calendar_credentials: dict | None = None  # deprecated: being drained to NULL
+    # Native calendar (Supabase) — cuando True, usa availability_service en lugar de calendar_service
+    uses_native_calendar: bool = False
 
     model_config = ConfigDict(str_strip_whitespace=True)
 

@@ -932,6 +932,8 @@ def _mock_tenant_with_calendar():
     mock = MagicMock()
     mock.calendar_id = "clinic@group.calendar.google.com"
     mock.calendar_credentials = {"type": "service_account"}
+    mock.calendar_credentials_ref = None
+    mock.uses_native_calendar = False
     return mock
 
 
@@ -1200,3 +1202,139 @@ def test_gated_service_fallback_note_when_none():
     call_args = mock_llm.invoke.call_args[0][0]
     system_msg = call_args[0]
     assert "consulta médica previa" in system_msg.content
+
+
+# ---------------------------------------------------------------------------
+# Tests — Native calendar path in _finalize_registration (Wave 2)
+# ---------------------------------------------------------------------------
+
+
+def _mock_tenant_native():
+    """Tenant config mock con uses_native_calendar=True."""
+    mock = MagicMock()
+    mock.calendar_id = None
+    mock.calendar_credentials = None
+    mock.calendar_credentials_ref = None
+    mock.uses_native_calendar = True
+    return mock
+
+
+def _phase_d_state_native(patient_name: str, service_id: str = "svc-001") -> dict:
+    """Build Phase D state for native-calendar finalization tests.
+
+    Uses extended_attempts=2 to trigger the 'time up → Fase C' branch
+    (extracted data empty + attempts exhausted → calls _finalize_registration).
+    """
+    from datetime import datetime, timezone
+    slot_ts = datetime.now(timezone.utc).isoformat()
+    return {
+        "tenant_id": _TENANT_ID,
+        "phone_number": _PHONE,
+        "messages": [HumanMessage(content="OSEP")],
+        "name_collection_active": False,
+        "dni_collection_active": False,
+        "extended_collection_active": True,
+        "extended_attempts": 2,
+        "booked_slot": {
+            "start": "2026-05-20T10:00:00-03:00",
+            "end": "2026-05-20T11:00:00-03:00",
+            "display": "Martes 20 de Mayo — 10:00 a 11:00 hs",
+        },
+        "slot_presented_at": slot_ts,
+        "patient_name": patient_name,
+        "patient_dni": "32456789",
+        "selected_service_id": service_id,
+        "selected_service_name": "Kinesiología",
+        "booking_intent": False,
+    }
+
+
+def test_finalize_registration_native_no_gcal():
+    """Native path: uses_native_calendar=True → NO llama a calendar_service.create_event,
+    SÍ llama a patient_service.create_appointment con professional_id."""
+    from app.agent.nodes.generation import generation_node
+
+    with (
+        patch("app.agent.nodes.generation._llm", _make_mock_llm("Listo, turno reservado.")),
+        patch("app.agent.nodes.generation._extract_extended_data", return_value={}),
+        patch("app.agent.nodes.generation.tenant_service") as mock_ts,
+        patch("app.agent.nodes.generation.calendar_service") as mock_cs,
+        patch("app.agent.nodes.generation.patient_service") as mock_ps,
+        patch("app.agent.nodes.generation.booking_draft_service") as mock_draft,
+        patch("app.services.availability_service.resolve_professional_id", return_value="prof-42"),
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant_native()
+        mock_ts.get_tenant_services.return_value = []
+        mock_ps.get_or_create_patient.return_value = MagicMock(patient_id="pat-native-01")
+        mock_draft.get_draft.return_value = {}
+
+        generation_node(_phase_d_state_native("Juan Pérez"))
+
+    # GCal NO debe ser llamado
+    mock_cs.create_event.assert_not_called()
+
+    # patient_service.create_appointment SÍ debe ser llamado
+    mock_ps.create_appointment.assert_called_once()
+    call_kwargs = mock_ps.create_appointment.call_args[1]
+    assert call_kwargs.get("calendar_event_id") is None
+
+
+def test_finalize_registration_native_event_id_is_none():
+    """Native path: event_id es None internamente y el resultado no crashea."""
+    from app.agent.nodes.generation import generation_node
+
+    with (
+        patch("app.agent.nodes.generation._llm", _make_mock_llm("Turno confirmado.")),
+        patch("app.agent.nodes.generation._extract_extended_data", return_value={}),
+        patch("app.agent.nodes.generation.tenant_service") as mock_ts,
+        patch("app.agent.nodes.generation.calendar_service") as mock_cs,
+        patch("app.agent.nodes.generation.patient_service") as mock_ps,
+        patch("app.agent.nodes.generation.booking_draft_service") as mock_draft,
+        patch("app.services.availability_service.resolve_professional_id", return_value=None),
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant_native()
+        mock_ts.get_tenant_services.return_value = []
+        mock_ps.get_or_create_patient.return_value = MagicMock(patient_id="pat-native-02")
+        mock_draft.get_draft.return_value = {}
+
+        result = generation_node(_phase_d_state_native("Ana García"))
+
+    # No debe haber excepción; result debe contener mensajes
+    assert "messages" in result
+    assert isinstance(result["messages"][0], AIMessage)
+    # calendar_event_id en el resultado es None (no crashea)
+    assert result.get("calendar_event_id") is None
+    # GCal NO llamado
+    mock_cs.create_event.assert_not_called()
+
+
+def test_finalize_registration_legacy_uses_gcal():
+    """Legacy path (uses_native_calendar=False): sigue llamando a calendar_service.create_event."""
+    from app.agent.nodes.generation import generation_node
+
+    mock_legacy_tenant = MagicMock()
+    mock_legacy_tenant.calendar_id = "clinic@group.calendar.google.com"
+    mock_legacy_tenant.calendar_credentials = {"type": "service_account"}
+    mock_legacy_tenant.calendar_credentials_ref = None
+    mock_legacy_tenant.uses_native_calendar = False
+
+    with (
+        patch("app.agent.nodes.generation._llm", _make_mock_llm("Turno agendado en GCal.")),
+        patch("app.agent.nodes.generation._extract_extended_data", return_value={}),
+        patch("app.agent.nodes.generation.tenant_service") as mock_ts,
+        patch("app.agent.nodes.generation.calendar_service") as mock_cs,
+        patch("app.agent.nodes.generation.patient_service") as mock_ps,
+        patch("app.agent.nodes.generation.booking_draft_service") as mock_draft,
+    ):
+        mock_ts.get_tenant_config.return_value = mock_legacy_tenant
+        mock_ts.get_tenant_services.return_value = []
+        mock_ps.get_or_create_patient.return_value = MagicMock(patient_id="pat-legacy-01")
+        mock_cs.create_event.return_value = "gcal_evt_legacy_001"
+        mock_draft.get_draft.return_value = {}
+
+        result = generation_node(_phase_d_state_native("Carlos López"))
+
+    # GCal SÍ debe ser llamado en el path legacy
+    mock_cs.create_event.assert_called_once()
+    # El event_id en el resultado debe ser el devuelto por GCal
+    assert result.get("calendar_event_id") == "gcal_evt_legacy_001"

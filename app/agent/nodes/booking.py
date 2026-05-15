@@ -213,6 +213,9 @@ def booking_node(state: ConversationState) -> dict:
             logger.info("booking_node.shadow_mode_active", tenant_id=tenant_id)
             return {"booking_intent": False, "shadow_mode_active": True}
 
+        # Detectar modo nativo vs legacy
+        uses_native = getattr(tenant_config, "uses_native_calendar", False)
+
         # Cancelación tiene precedencia sobre confirmación si ambas se detectan
         booking_action = "cancel" if is_cancel else "confirm"
 
@@ -234,7 +237,7 @@ def booking_node(state: ConversationState) -> dict:
         else:
             calendar_id = tenant_config.calendar_id
 
-        if not calendar_id:
+        if not calendar_id and not uses_native:
             logger.warning("booking_node.no_calendar_id", tenant_id=tenant_id)
             logger.info(
                 "booking_node.done",
@@ -253,15 +256,19 @@ def booking_node(state: ConversationState) -> dict:
         if existing_draft and existing_draft.get("pending_cancellation"):
             if is_confirm and not is_cancel:
                 # Second step confirmed — execute the pending cancel
-                pending_event_id = existing_draft.get("cancel_event_id")
+                pending_ref_id = existing_draft.get("cancel_event_id")
                 booking_draft_service.delete_draft(tenant_id, phone_number)
-                if pending_event_id:
-                    calendar_service.delete_event(
-                        calendar_id=calendar_id,
-                        credentials_dict=credentials_dict,
-                        event_id=pending_event_id,
-                    )
-                    patient_service.cancel_appointment_by_event_id(pending_event_id)
+                if pending_ref_id:
+                    if uses_native:
+                        patient_service.cancel_appointment_by_id(pending_ref_id)
+                    else:
+                        calendar_service.delete_event(
+                            calendar_id=calendar_id,
+                            credentials_dict=credentials_dict,
+                            event_id=pending_ref_id,
+                        )
+                        patient_service.cancel_appointment_by_event_id(pending_ref_id)
+                pending_event_id = pending_ref_id
                 logger.info(
                     "booking_node.done",
                     tenant_id=tenant_id,
@@ -296,16 +303,21 @@ def booking_node(state: ConversationState) -> dict:
             # Use 2× the booking window (minimum 2 weeks) so patients can cancel
             # appointments booked further ahead than the standard lookahead.
             cancel_lookahead = max(settings.SCHEDULING_LOOKAHEAD_HOURS * 2, 336)
-            event_id = calendar_service.find_event_by_phone(
-                calendar_id=calendar_id,
-                credentials_dict=credentials_dict,
-                phone_number=phone_number,
-                lookahead_hours=cancel_lookahead,
-            )
+            if uses_native:
+                upcoming = patient_service.find_upcoming_appointment(tenant_id, phone_number)
+                cancel_ref_id = upcoming["appointment_id"] if upcoming else None
+            else:
+                cancel_ref_id = calendar_service.find_event_by_phone(
+                    calendar_id=calendar_id,
+                    credentials_dict=credentials_dict,
+                    phone_number=phone_number,
+                    lookahead_hours=cancel_lookahead,
+                )
             # First step: save pending state and ask for explicit confirmation
+            event_id = cancel_ref_id  # appointment_id (nativo) o GCal event_id (legacy)
             booking_draft_service.save_draft(tenant_id, phone_number, {
                 "pending_cancellation": True,
-                "cancel_event_id": event_id,
+                "cancel_event_id": cancel_ref_id,  # appointment_id (nativo) o GCal event_id (legacy)
             })
             logger.info(
                 "booking_node.done",
@@ -439,33 +451,52 @@ def booking_node(state: ConversationState) -> dict:
             extra_state.get("patient_dni") if extra_state else None
         )
         event_title = f"{service_name} — {patient_name}" if service_name else f"Turno — {patient_name}"
-        event_id = calendar_service.create_event(
-            calendar_id=calendar_id,
-            credentials_dict=credentials_dict,
-            start_iso=chosen_slot["start"],
-            end_iso=chosen_slot["end"],
-            phone_number=phone_number,
-            title=event_title,
-        )
 
-        # v1.4: persistir appointment en DB si tenemos patient_id (fail-safe)
         pid = existing_patient_id or state.get("patient_id")
-        if pid and event_id:
-            try:
-                patient_service.create_appointment(
-                    tenant_id=tenant_id,
-                    patient_id=pid,
-                    service_id=selected_service_id,
-                    calendar_event_id=event_id,
-                    start_iso=chosen_slot["start"],
-                    end_iso=chosen_slot["end"],
-                )
-            except Exception as appt_exc:
-                logger.error(
-                    "booking_node.appointment_error",
-                    tenant_id=tenant_id,
-                    error=str(appt_exc),
-                )
+        if uses_native:
+            # Nativo: el appointment en Supabase ES el evento — no hay GCal
+            event_id = None
+            if pid:
+                try:
+                    from app.services import availability_service as _avail_svc
+                    prof_id = _avail_svc.resolve_professional_id(selected_service_id)
+                    patient_service.create_appointment(
+                        tenant_id=tenant_id,
+                        patient_id=pid,
+                        service_id=selected_service_id,
+                        calendar_event_id=None,
+                        start_iso=chosen_slot["start"],
+                        end_iso=chosen_slot["end"],
+                        professional_id=prof_id,
+                    )
+                except Exception as appt_exc:
+                    logger.error("booking_node.native_appointment_error", tenant_id=tenant_id, error=str(appt_exc))
+        else:
+            # Legacy: crear evento en GCal y luego el appointment
+            event_id = calendar_service.create_event(
+                calendar_id=calendar_id,
+                credentials_dict=credentials_dict,
+                start_iso=chosen_slot["start"],
+                end_iso=chosen_slot["end"],
+                phone_number=phone_number,
+                title=event_title,
+            )
+            if pid and event_id:
+                try:
+                    patient_service.create_appointment(
+                        tenant_id=tenant_id,
+                        patient_id=pid,
+                        service_id=selected_service_id,
+                        calendar_event_id=event_id,
+                        start_iso=chosen_slot["start"],
+                        end_iso=chosen_slot["end"],
+                    )
+                except Exception as appt_exc:
+                    logger.error(
+                        "booking_node.appointment_error",
+                        tenant_id=tenant_id,
+                        error=str(appt_exc),
+                    )
 
     except Exception as exc:
         logger.error("booking_node.error", tenant_id=tenant_id, error=str(exc))

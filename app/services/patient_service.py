@@ -119,6 +119,7 @@ def create_appointment(
     calendar_event_id: str | None,
     start_iso: str,
     end_iso: str,
+    professional_id: str | None = None,
 ) -> Appointment:
     """Persiste un turno en la tabla appointments.
 
@@ -140,6 +141,8 @@ def create_appointment(
         "status": "confirmed",
         "booked_via": "whatsapp",
     }
+    if professional_id is not None:
+        insert_data["professional_id"] = professional_id
 
     response = client.table("appointments").insert(insert_data).execute()
 
@@ -158,6 +161,80 @@ def create_appointment(
         calendar_event_id=calendar_event_id,
     )
     return appt
+
+
+def find_upcoming_appointment(tenant_id: str, phone_number: str) -> dict | None:
+    """Busca el próximo appointment confirmado de un paciente por número de teléfono.
+
+    Retorna el dict del appointment (con appointment_id) o None si no hay ninguno.
+    Fail-safe: errores se loggean pero no se propagan.
+    """
+    try:
+        patient = get_patient_by_phone(tenant_id, phone_number)
+        if patient is None:
+            return None
+        client = get_supabase_client()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        result = (
+            client.table("appointments")
+            .select("*")
+            .eq("patient_id", patient.patient_id)
+            .eq("status", "confirmed")
+            .gte("start_at", now_iso)
+            .order("start_at", desc=False)
+            .limit(1)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+    except Exception as exc:
+        logger.error(
+            "patient_service.find_upcoming_appointment.error",
+            tenant_id=tenant_id,
+            phone_number=phone_number,
+            error=str(exc),
+        )
+        return None
+
+
+def cancel_appointment_by_id(
+    appointment_id: str,
+    cancelled_by: str = "patient",
+    cancellation_reason: str | None = None,
+) -> bool:
+    """Marca el appointment como cancelado por appointment_id.
+
+    Retorna True si se actualizó algún registro, False si no encontró nada.
+    Fail-safe: errores se loggean pero no se propagan.
+    """
+    try:
+        client = get_supabase_client()
+        update_data: dict = {
+            "status": "cancelled",
+            "cancelled_at": datetime.now(timezone.utc).isoformat(),
+            "cancelled_by": cancelled_by,
+        }
+        if cancellation_reason is not None:
+            update_data["cancellation_reason"] = cancellation_reason
+        response = (
+            client.table("appointments")
+            .update(update_data)
+            .eq("appointment_id", appointment_id)
+            .execute()
+        )
+        updated = bool(response.data)
+        logger.info(
+            "patient_service.cancel_appointment_by_id.done",
+            appointment_id=appointment_id,
+            updated=updated,
+        )
+        return updated
+    except Exception as exc:
+        logger.error(
+            "patient_service.cancel_appointment_by_id.error",
+            appointment_id=appointment_id,
+            error=str(exc),
+        )
+        return False
 
 
 def cancel_appointment_by_event_id(

@@ -441,33 +441,56 @@ def _finalize_registration(
         address=state.get("patient_address"),
     )
 
-    # Crear evento en Google Calendar
+    # Crear evento en Google Calendar o en calendario nativo (Supabase)
     event_title = f"{service_name} — {patient_name}" if service_name else f"Turno — {patient_name}"
-    event_id = calendar_service.create_event(
-        calendar_id=cal_id,
-        credentials_dict=creds,
-        start_iso=booked_slot["start"],
-        end_iso=booked_slot["end"],
-        phone_number=phone_number,
-        title=event_title,
-    )
+    uses_native = getattr(tenant_config, "uses_native_calendar", False)
 
-    # Persistir appointment en DB (fail-safe: no bloquea si falla)
-    try:
-        patient_service.create_appointment(
-            tenant_id=tenant_id,
-            patient_id=patient.patient_id,
-            service_id=selected_service_id,
-            calendar_event_id=event_id,
+    if uses_native:
+        # Nativo: sin GCal — el appointment en Supabase ES el evento
+        from app.services import availability_service as _avail_svc
+        prof_id = _avail_svc.resolve_professional_id(selected_service_id)
+        try:
+            patient_service.create_appointment(
+                tenant_id=tenant_id,
+                patient_id=patient.patient_id,
+                service_id=selected_service_id,
+                calendar_event_id=None,
+                start_iso=booked_slot["start"],
+                end_iso=booked_slot["end"],
+                professional_id=prof_id,
+            )
+        except Exception as appt_exc:
+            logger.error(
+                "generation_node.native_appointment_error",
+                tenant_id=tenant_id,
+                error=str(appt_exc),
+            )
+        event_id = None
+    else:
+        # Legacy: GCal como fuente de verdad
+        event_id = calendar_service.create_event(
+            calendar_id=cal_id,
+            credentials_dict=creds,
             start_iso=booked_slot["start"],
             end_iso=booked_slot["end"],
+            phone_number=phone_number,
+            title=event_title,
         )
-    except Exception as appt_exc:
-        logger.error(
-            "generation_node.registration_appointment_error",
-            tenant_id=tenant_id,
-            error=str(appt_exc),
-        )
+        try:
+            patient_service.create_appointment(
+                tenant_id=tenant_id,
+                patient_id=patient.patient_id,
+                service_id=selected_service_id,
+                calendar_event_id=event_id,
+                start_iso=booked_slot["start"],
+                end_iso=booked_slot["end"],
+            )
+        except Exception as appt_exc:
+            logger.error(
+                "generation_node.registration_appointment_error",
+                tenant_id=tenant_id,
+                error=str(appt_exc),
+            )
 
     # INFRA-06: registration complete — delete Redis draft
     booking_draft_service.delete_draft(tenant_id, phone_number)

@@ -53,6 +53,7 @@ def _mock_tenant(calendar_id=_CALENDAR_ID, credentials=None, shadow_mode=False):
     t.calendar_id = calendar_id
     t.calendar_credentials = credentials or {"type": "service_account"}
     t.shadow_mode_enabled = shadow_mode
+    t.uses_native_calendar = False
     return t
 
 

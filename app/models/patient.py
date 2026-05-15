@@ -27,6 +27,7 @@ class Appointment(BaseModel):
     tenant_id: str
     patient_id: str
     service_id: str | None = None
+    professional_id: str | None = None
     calendar_event_id: str | None = None
     start_at: datetime
     end_at: datetime

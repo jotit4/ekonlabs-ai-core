@@ -425,13 +425,7 @@ def scheduling_node(state: ConversationState) -> dict:
             logger.info("scheduling_node.shadow_mode_active", tenant_id=tenant_id)
             return {"scheduling_intent": False, "shadow_mode_active": True}
 
-        try:
-            credentials_dict = resolve_calendar_credentials(
-                tenant_config.calendar_credentials_ref,
-                tenant_config.calendar_credentials,
-            )
-        except ValueError:
-            credentials_dict = {}
+        uses_native = getattr(tenant_config, "uses_native_calendar", False)
 
         # v1.3: soporte multi-servicio
         svc = None  # se asigna en paths 2/3; None en path 1 (tenant sin servicios)
@@ -552,20 +546,6 @@ def scheduling_node(state: ConversationState) -> dict:
                     result["selected_service_id"] = selected_service_id
                 return result
 
-        if not calendar_id:
-            logger.warning(
-                "scheduling_node.no_calendar_id",
-                tenant_id=tenant_id,
-            )
-            logger.info(
-                "scheduling_node.done",
-                tenant_id=tenant_id,
-                scheduling_intent=True,
-                slots_count=0,
-                query_preview=query[:80],
-            )
-            return {"scheduling_intent": True, "available_slots": []}
-
         # Detectar preferencia de fecha del paciente para evitar mostrar siempre
         # los slots más próximos ignorando lo que el paciente pidió.
         start_date: datetime | None = None
@@ -588,13 +568,43 @@ def scheduling_node(state: ConversationState) -> dict:
                     start_date=start_date.isoformat(),
                 )
 
-        slots = calendar_service.get_available_slots(
-            calendar_id=calendar_id,
-            credentials_dict=credentials_dict,
-            duration_minutes=duration_minutes,
-            lookahead_hours=settings.SCHEDULING_LOOKAHEAD_HOURS,
-            start_date=start_date,
-        )
+        if uses_native:
+            from app.services import availability_service as _avail_svc
+            slots = _avail_svc.get_available_slots(
+                tenant_id=tenant_id,
+                service_id=selected_service_id or "",
+                duration_minutes=duration_minutes,
+                lookahead_hours=settings.SCHEDULING_LOOKAHEAD_HOURS,
+                start_date=start_date,
+            )
+        else:
+            try:
+                credentials_dict = resolve_calendar_credentials(
+                    tenant_config.calendar_credentials_ref,
+                    tenant_config.calendar_credentials,
+                )
+            except ValueError:
+                credentials_dict = {}
+            if not calendar_id:
+                logger.warning(
+                    "scheduling_node.no_calendar_id",
+                    tenant_id=tenant_id,
+                )
+                logger.info(
+                    "scheduling_node.done",
+                    tenant_id=tenant_id,
+                    scheduling_intent=True,
+                    slots_count=0,
+                    query_preview=query[:80],
+                )
+                return {"scheduling_intent": True, "available_slots": []}
+            slots = calendar_service.get_available_slots(
+                calendar_id=calendar_id,
+                credentials_dict=credentials_dict,
+                duration_minutes=duration_minutes,
+                lookahead_hours=settings.SCHEDULING_LOOKAHEAD_HOURS,
+                start_date=start_date,
+            )
 
     except Exception as exc:
         logger.error("scheduling_node.error", tenant_id=tenant_id, error=str(exc))

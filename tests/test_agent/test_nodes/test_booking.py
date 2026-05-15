@@ -44,7 +44,9 @@ def _mock_tenant(with_calendar=True, shadow_mode=False):
     mock = MagicMock()
     mock.calendar_id = _CALENDAR_ID if with_calendar else None
     mock.calendar_credentials = {"type": "service_account"}
+    mock.calendar_credentials_ref = None
     mock.shadow_mode_enabled = shadow_mode
+    mock.uses_native_calendar = False  # legacy mode by default
     return mock
 
 
@@ -633,3 +635,148 @@ def test_booking_node_creates_event_with_patient_name_in_title():
     assert result.get("name_collection_active") is not True  # not deferred
     call_kwargs = mock_cs.create_event.call_args[1]
     assert call_kwargs.get("title") == "Turno — Juan Pérez"
+
+
+# ── Wave 2: Native calendar support ─────────────────────────────────────────
+
+_APPT_ID = "appt-uuid-native-001"
+
+
+def _mock_tenant_native(shadow_mode=False):
+    """Tenant con uses_native_calendar=True y sin calendar_id."""
+    mock = MagicMock()
+    mock.calendar_id = None  # native tenants have no GCal calendar_id
+    mock.calendar_credentials = {}
+    mock.calendar_credentials_ref = None
+    mock.shadow_mode_enabled = shadow_mode
+    mock.uses_native_calendar = True
+    return mock
+
+
+def test_native_confirm_known_patient_creates_appointment_no_gcal():
+    """Con uses_native_calendar=True y paciente conocido:
+    - NO llama a calendar_service.create_event
+    - SÍ llama a patient_service.create_appointment con professional_id
+    """
+    from unittest.mock import MagicMock, patch
+    from app.agent.nodes.booking import booking_node
+
+    mock_patient = MagicMock()
+    mock_patient.full_name = "Ana García"
+    mock_patient.patient_id = "patient-native-001"
+    mock_patient.dni = "12345678"
+
+    mock_appt = MagicMock()
+    mock_appt.appointment_id = _APPT_ID
+
+    with (
+        patch("app.agent.nodes.booking.tenant_service") as mock_ts,
+        patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+        patch("app.agent.nodes.booking.patient_service") as mock_ps,
+        patch("app.services.availability_service.resolve_professional_id", return_value="prof-001"),
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant_native()
+        mock_ts.get_tenant_services.return_value = []
+        mock_ps.get_patient_by_phone.return_value = mock_patient
+        mock_ps.create_appointment.return_value = mock_appt
+
+        result = booking_node(
+            _base_state("el primero", available_slots=_FAKE_SLOTS, patient_name="Ana García", patient_id="patient-native-001")
+        )
+
+    # Must NOT call GCal create_event
+    mock_cs.create_event.assert_not_called()
+    # Must call create_appointment
+    mock_ps.create_appointment.assert_called_once()
+    call_kwargs = mock_ps.create_appointment.call_args[1]
+    assert call_kwargs.get("calendar_event_id") is None  # no GCal id
+    assert call_kwargs.get("tenant_id") == _TENANT_ID
+    assert result["booking_intent"] is True
+    assert result["booking_action"] == "confirm"
+    assert result["calendar_event_id"] is None
+
+
+def test_native_cancel_step1_uses_find_upcoming_appointment():
+    """Cancel step 1 con uses_native_calendar=True:
+    - llama a patient_service.find_upcoming_appointment
+    - NO llama a calendar_service.find_event_by_phone
+    """
+    from app.agent.nodes.booking import booking_node
+
+    with (
+        patch("app.agent.nodes.booking.tenant_service") as mock_ts,
+        patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+        patch("app.agent.nodes.booking.booking_draft_service") as mock_draft,
+        patch("app.agent.nodes.booking.patient_service") as mock_ps,
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant_native()
+        mock_ts.get_tenant_services.return_value = []
+        mock_draft.get_draft.return_value = None
+        mock_ps.find_upcoming_appointment.return_value = {"appointment_id": _APPT_ID}
+
+        result = booking_node(_base_state("quiero cancelar mi turno"))
+
+    # Must NOT call GCal find_event_by_phone
+    mock_cs.find_event_by_phone.assert_not_called()
+    # Must call find_upcoming_appointment
+    mock_ps.find_upcoming_appointment.assert_called_once_with(_TENANT_ID, _PHONE)
+    assert result["booking_intent"] is True
+    assert result["booking_action"] == "cancel_pending"
+    assert result["calendar_event_id"] == _APPT_ID
+    saved_draft = mock_draft.save_draft.call_args[0][2]
+    assert saved_draft["cancel_event_id"] == _APPT_ID
+
+
+def test_native_cancel_step2_uses_cancel_by_id():
+    """Cancel step 2 con uses_native_calendar=True (pending_cancellation confirmado):
+    - llama a patient_service.cancel_appointment_by_id
+    - NO llama a calendar_service.delete_event
+    """
+    from app.agent.nodes.booking import booking_node
+
+    with (
+        patch("app.agent.nodes.booking.tenant_service") as mock_ts,
+        patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+        patch("app.agent.nodes.booking.booking_draft_service") as mock_draft,
+        patch("app.agent.nodes.booking.patient_service") as mock_ps,
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant_native()
+        mock_ts.get_tenant_services.return_value = []
+        mock_draft.get_draft.return_value = {
+            "pending_cancellation": True,
+            "cancel_event_id": _APPT_ID,
+        }
+        mock_ps.cancel_appointment_by_id.return_value = True
+
+        result = booking_node(_base_state("si confirmo"))
+
+    # Must NOT call GCal delete_event
+    mock_cs.delete_event.assert_not_called()
+    # Must call cancel_appointment_by_id
+    mock_ps.cancel_appointment_by_id.assert_called_once_with(_APPT_ID)
+    # Must NOT call cancel_appointment_by_event_id
+    mock_ps.cancel_appointment_by_event_id.assert_not_called()
+    assert result["booking_intent"] is True
+    assert result["booking_action"] == "cancel"
+    assert result["calendar_event_id"] == _APPT_ID
+    mock_draft.delete_draft.assert_called_once()
+
+
+def test_legacy_confirm_still_uses_gcal():
+    """Con uses_native_calendar=False (legacy), el confirm sigue llamando a calendar_service.create_event."""
+    from app.agent.nodes.booking import booking_node
+
+    with (
+        patch("app.agent.nodes.booking.tenant_service") as mock_ts,
+        patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant()  # uses_native_calendar=False (default)
+        mock_cs.get_available_slots.return_value = _FAKE_SLOTS
+        mock_cs.create_event.return_value = _EVENT_ID
+
+        result = booking_node(_base_state("el primero", patient_name="Test Patient"))
+
+    mock_cs.create_event.assert_called_once()
+    assert result["booking_intent"] is True
+    assert result["booking_action"] == "confirm"
+    assert result["calendar_event_id"] == _EVENT_ID
