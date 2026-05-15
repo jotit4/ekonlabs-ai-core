@@ -12,7 +12,7 @@ Most AI assistant demos are single-tenant and hard to operationalize. This proje
 
 This repository is **active work in progress**. Core backend foundations are implemented and tested; some agent orchestration endpoints are intentionally scaffolded for upcoming milestones.
 
-Implemented today:
+Implemented:
 - FastAPI API base with standardized response envelopes and error handling.
 - Tenant management endpoints (`POST /api/v1/tenants`, `PATCH /api/v1/tenants/{tenant_id}/rules`).
 - Multi-tenant configuration models and tenant rules merge behavior.
@@ -21,11 +21,14 @@ Implemented today:
   - pgvector similarity search with strict `tenant_id` filtering.
 - SlowAPI limiter integration (global burst limit + tenant key strategy helper).
 - Dockerized local stack (`api`, `worker`, `redis`) and SQL migrations.
+- Full LangGraph orchestration flow: consent → triage → booking → scheduling → RAG retrieval → generation → handoff.
+- Meta/WhatsApp webhook ingestion pipeline (RQ async workers).
+- Native calendar availability service (`availability_service.py`) — replaces Google Calendar API for tenants with `uses_native_calendar = True`. Reads `professional_schedules`, `blocked_times`, `service_professionals`, and `appointments` from Supabase.
+- Per-professional appointment tracking: agent writes `professional_id` when creating appointments, enabling dashboard "Mi Agenda" per-professional filtering.
 
 Planned next milestones:
-- Meta/WhatsApp webhook signature validation and ingestion pipeline.
-- Full LangGraph orchestration flow (intent -> retrieval -> generation -> scheduling/handoff).
-- Calendar and notification workflow completion.
+- Preferred professional support: extended lookahead (2×) for returning patients, fallback with notification.
+- Auto-set `preferred_professional_id` on first confirmed appointment.
 
 ## Architecture
 
