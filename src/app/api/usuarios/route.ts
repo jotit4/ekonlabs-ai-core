@@ -45,7 +45,7 @@ export async function POST(request: Request) {
   }
 
   const claims = parseJwtPayload(session.access_token)
-  if ((claims?.app_role ?? claims?.role) !== 'admin') {
+  if (!claims || (claims.app_role ?? claims.role) !== 'admin') {
     return Response.json({ error: 'Solo admins pueden crear usuarios' }, { status: 403 })
   }
 
