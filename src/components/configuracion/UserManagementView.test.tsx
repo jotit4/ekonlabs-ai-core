@@ -2,12 +2,12 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { UserManagementView } from './UserManagementView'
-import type { DashboardUser } from '@/types/index'
+import type { DashboardUser, UserRole } from '@/types/index'
 
 // Mock use-current-tenant
 const mockUseCurrentTenant = vi.fn(() => ({
   tenantId: 'tenant-abc',
-  role: 'admin' as const,
+  role: 'admin' as UserRole,
   loading: false,
 }))
 

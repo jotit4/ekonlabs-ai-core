@@ -141,4 +141,24 @@ describe('useGCalChannelStatus', () => {
     expect(clearIntervalSpy).toHaveBeenCalled()
     clearIntervalSpy.mockRestore()
   })
+
+  describe('parámetro enabled', () => {
+    it('cuando enabled=false, NO llama a fetch al montar', async () => {
+      const { unmount } = renderHook(() => useGCalChannelStatus(false))
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(mockFetch).not.toHaveBeenCalled()
+      unmount()
+    })
+
+    it('cuando enabled=false, el status permanece "unknown"', async () => {
+      const { result, unmount } = renderHook(() => useGCalChannelStatus(false))
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(result.current.status).toBe('unknown')
+      unmount()
+    })
+  })
 })

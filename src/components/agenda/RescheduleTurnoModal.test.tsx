@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { RescheduleTurnoModal } from './RescheduleTurnoModal'
@@ -160,6 +160,47 @@ describe('RescheduleTurnoModal', () => {
 
       await user.click(screen.getByRole('button', { name: /cancelar/i }))
       expect(mockOnClose).toHaveBeenCalledOnce()
+    })
+  })
+
+  describe('reset del form al cambiar appointment', () => {
+    it('resetea el form cuando el appointment cambia (turno A → turno B)', async () => {
+      const APPOINTMENT_B: Appointment = {
+        ...SAMPLE_APPOINTMENT,
+        appointment_id: 'apt-2',
+        start_at: '2026-05-08T14:00:00',
+        end_at: '2026-05-08T15:00:00',
+        patients: { full_name: 'Carlos Gómez' },
+      }
+
+      const { rerender } = render(
+        <RescheduleTurnoModal
+          open={true}
+          onClose={mockOnClose}
+          appointment={SAMPLE_APPOINTMENT}
+          date="2026-05-07"
+        />
+      )
+
+      // Verificar que muestra la fecha del turno A
+      const dateInput = screen.getByLabelText('Nueva fecha') as HTMLInputElement
+      expect(dateInput.value).toBe('2026-05-07')
+
+      // Cambiar al turno B
+      rerender(
+        <RescheduleTurnoModal
+          open={true}
+          onClose={mockOnClose}
+          appointment={APPOINTMENT_B}
+          date="2026-05-08"
+        />
+      )
+
+      // El form debe resetear al turno B
+      await waitFor(() => {
+        const dateInputB = screen.getByLabelText('Nueva fecha') as HTMLInputElement
+        expect(dateInputB.value).toBe('2026-05-08')
+      })
     })
   })
 

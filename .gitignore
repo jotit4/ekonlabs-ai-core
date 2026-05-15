@@ -40,3 +40,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# bmad artifacts internos
+BUGFIX_PLAN.md
+QA_REPORT.md

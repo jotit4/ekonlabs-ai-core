@@ -10,6 +10,12 @@ export async function PATCH(
   // params es Promise en Next.js 16 — siempre await
   const { id } = await params
 
+  // 0. Validar formato UUID antes de cualquier query (B-11)
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!UUID_REGEX.test(id)) {
+    return Response.json({ error: 'ID de turno inválido' }, { status: 400 })
+  }
+
   // 1. Validar sesión
   const supabase = await createSupabaseServerClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -47,14 +53,17 @@ export async function PATCH(
 
   // 3. Actualizar turno
   // NO agregar .eq('tenant_id', tenantId) — RLS con cliente autenticado lo filtra (AR14)
-  const { error: updateError } = await supabase
+  const { error: updateError, count } = await supabase
     .from('appointments')
-    .update({
-      start_at,
-      end_at,
-      // status: NO cambiar a 'rescheduled' — el CHECK constraint de la DB solo acepta
-      // 'confirmed','cancelled','completed','no_show'. El tipo TS 'rescheduled' es solo para display.
-    })
+    .update(
+      {
+        start_at,
+        end_at,
+        // status: NO cambiar a 'rescheduled' — el CHECK constraint de la DB solo acepta
+        // 'confirmed','cancelled','completed','no_show'. El tipo TS 'rescheduled' es solo para display.
+      },
+      { count: 'exact' }
+    )
     .eq('appointment_id', id)
 
   if (updateError) {
@@ -64,6 +73,11 @@ export async function PATCH(
     }
     console.error('[appointments/PATCH] update error:', updateError)
     return Response.json({ error: 'Error al reprogramar el turno' }, { status: 500 })
+  }
+
+  // Verificar que se actualizó al menos una fila (fix C-15)
+  if (count === 0) {
+    return Response.json({ error: 'Turno no encontrado' }, { status: 404 })
   }
 
   // 4. Audit log

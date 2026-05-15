@@ -18,7 +18,7 @@ export function useCurrentTenant() {
     } = supabase.auth.onAuthStateChange((_event, session) => {
       const claims = parseJwtPayload(session?.access_token ?? '')
       setTenantId((claims?.tenant_id as string) ?? null)
-      setRole((claims?.role as UserRole) ?? null)
+      setRole(((claims?.app_role ?? claims?.role) as UserRole) ?? null)
       setLoading(false)
     })
 

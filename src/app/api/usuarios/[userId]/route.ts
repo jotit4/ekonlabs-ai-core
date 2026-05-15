@@ -19,7 +19,7 @@ export async function PATCH(
   }
 
   const claims = parseJwtPayload(session.access_token)
-  if (claims?.role !== 'admin') {
+  if ((claims?.app_role ?? claims?.role) !== 'admin') {
     return Response.json({ error: 'Solo admins pueden modificar usuarios' }, { status: 403 })
   }
 

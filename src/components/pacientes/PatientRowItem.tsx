@@ -94,7 +94,7 @@ export function PatientRowItem({ patient, onClick, threadState = null }: Patient
         cursor: 'pointer',
         transition: 'background-color 120ms ease',
       }}
-      className="hover:bg-[#f5f5f7]"
+      className="hover:bg-[var(--color-surface)]"
     >
       {/* Avatar + Nombre/Teléfono */}
       <td style={{ padding: '12px 16px' }}>

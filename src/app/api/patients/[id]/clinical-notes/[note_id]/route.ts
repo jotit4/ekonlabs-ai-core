@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { parseJwtPayload } from '@/lib/utils/jwt'
 
 interface RouteContext {
   params: Promise<{ id: string; note_id: string }>
@@ -11,6 +12,26 @@ export async function PATCH(request: Request, context: RouteContext) {
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) return Response.json({ error: 'No autorizado' }, { status: 401 })
+
+  // Check de rol: solo admin y doctor pueden editar notas clínicas (C-10 extendido)
+  const { data: sessionData } = await supabase.auth.getSession()
+  const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
+  const appRole = claims?.app_role as string | undefined
+  if (!['admin', 'doctor'].includes(appRole ?? '')) {
+    return Response.json({ error: 'Acceso denegado' }, { status: 403 })
+  }
+
+  // Check de autor: un doctor solo puede editar sus propias notas (admins pueden editar cualquier nota)
+  if (appRole === 'doctor') {
+    const { data: existingNote } = await supabase
+      .from('clinical_notes')
+      .select('author_id')
+      .eq('note_id', note_id)
+      .maybeSingle()
+    if (existingNote && existingNote.author_id !== user.id) {
+      return Response.json({ error: 'Sin permiso para editar esta nota' }, { status: 403 })
+    }
+  }
 
   let body: { content?: string }
   try {

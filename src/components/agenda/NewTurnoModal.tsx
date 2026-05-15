@@ -166,7 +166,7 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
     setSlotConflictError(null)
     setSubmitError(null)
 
-    const appointmentTimeISO = `${values.appointment_date}T${values.appointment_time_hhmm}:00`
+    const appointmentTimeISO = `${values.appointment_date}T${values.appointment_time_hhmm}:00-03:00`
 
     try {
       const response = await fetch('/api/appointments', {
@@ -208,7 +208,7 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
       hasError ? 'border-red-400' : 'border-[var(--color-border)]',
     ].join(' ')
 
-  const today = new Date().toISOString().slice(0, 10)
+  const today = new Date().toLocaleDateString('en-CA')
 
   return (
     <Dialog.Root open={open} onOpenChange={(isOpen) => { if (!isOpen) handleClose() }}>

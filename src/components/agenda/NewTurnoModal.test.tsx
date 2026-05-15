@@ -4,6 +4,10 @@ import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { NewTurnoModal } from './NewTurnoModal'
 import { patientSearchSchema } from '@/lib/schemas/appointment.schema'
 
+// Mock global fetch
+const mockFetch = vi.fn()
+global.fetch = mockFetch
+
 // Mock @base-ui/react/dialog
 vi.mock('@base-ui/react/dialog', () => ({
   Dialog: {
@@ -46,9 +50,10 @@ vi.mock('@tanstack/react-query', () => ({
 }))
 
 // Mock @refinedev/core
+// useList retorna { result: QueryObserverResult } — el componente usa result.data para los servicios
 vi.mock('@refinedev/core', () => ({
   useList: () => ({
-    data: {
+    result: {
       data: [
         {
           service_id: 'svc-1',
@@ -82,6 +87,7 @@ describe('NewTurnoModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockMaybeSingle.mockResolvedValue({ data: null, error: null })
+    mockFetch.mockResolvedValue({ ok: true, status: 201, json: async () => ({ success: true, appointment_id: 'apt-new' }) })
   })
 
   describe('renderizado', () => {
@@ -224,6 +230,46 @@ describe('NewTurnoModal', () => {
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /guardar turno/i })).toBeInTheDocument()
+      })
+    })
+
+    it('envía appointment_time con offset -03:00 (fix C-05)', async () => {
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
+
+      // Buscar paciente
+      await user.type(screen.getByLabelText('DNI del paciente'), '87654321')
+      await user.click(screen.getByRole('button', { name: /buscar/i }))
+      await waitFor(() => screen.getByLabelText('Servicio'))
+
+      // Seleccionar servicio y hora
+      await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+      await user.selectOptions(screen.getByLabelText('Horario'), '09:00')
+
+      // Submit
+      await user.click(screen.getByRole('button', { name: /guardar turno/i }))
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          '/api/appointments',
+          expect.objectContaining({
+            method: 'POST',
+            body: expect.stringContaining('-03:00'),
+          })
+        )
+      })
+    })
+
+    it('el input de fecha tiene atributo min (fix M-10)', async () => {
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
+
+      await user.type(screen.getByLabelText('DNI del paciente'), '87654321')
+      await user.click(screen.getByRole('button', { name: /buscar/i }))
+
+      await waitFor(() => {
+        const dateInput = screen.getByLabelText('Fecha') as HTMLInputElement
+        expect(dateInput.getAttribute('min')).toMatch(/^\d{4}-\d{2}-\d{2}$/)
       })
     })
   })

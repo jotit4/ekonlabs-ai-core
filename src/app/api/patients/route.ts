@@ -16,7 +16,7 @@ export async function POST(request: Request) {
   // 2. Obtener tenant_id y role del JWT
   const claims = parseJwtPayload(session.access_token)
   const tenantId = claims?.tenant_id as string | undefined
-  const role = claims?.role as string | undefined
+  const role = (claims?.app_role ?? claims?.role) as string | undefined
 
   if (!tenantId) {
     return Response.json({ error: 'tenant_id no disponible en el JWT' }, { status: 400 })

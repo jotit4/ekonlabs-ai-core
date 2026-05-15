@@ -22,8 +22,6 @@ import {
 } from '@/types/appointments'
 import { AgendaDayViewSkeleton } from './AgendaDayView'
 import { RescheduleConfirmModal } from './RescheduleConfirmModal'
-import { SyncStatusBanner } from './SyncStatusBanner'
-import { GCalDegradationBanner } from './GCalDegradationBanner'
 
 // Cast controlado para compatibilidad con tipos CJS de react-big-calendar en strict mode
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -81,7 +79,6 @@ interface CalendarViewProps {
   isError: boolean
   onRefetch: () => void
   onReschedule?: (appointment: Appointment) => void
-  gcalStatus: 'healthy' | 'degraded' | 'unknown'
 }
 
 function CustomEvent({
@@ -92,30 +89,41 @@ function CustomEvent({
   onReschedule?: (appointment: Appointment) => void
 }) {
   const isPendingSync = event.resource.calendar_event_id === null
+  const professionalName =
+    event.resource.professionals?.name ??
+    event.resource.services?.professional_name ??
+    null
 
   return (
     <div className="flex items-start justify-between gap-1 h-full px-1 py-0.5 text-xs">
-      <span className="truncate leading-tight">{event.title}</span>
-      {isPendingSync && (
-        <Clock
-          className="w-3 h-3 shrink-0 opacity-70"
-          aria-label="Pendiente de sincronización con Google Calendar"
-        />
-      )}
-      {onReschedule && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            onReschedule(event.resource)
-          }}
-          className="shrink-0 min-h-[20px] min-w-[20px] flex items-center justify-center rounded hover:bg-white/20 transition-colors"
-          aria-label={`Reprogramar turno de ${event.resource.patients?.full_name ?? 'paciente'}`}
-          title="Reprogramar"
-        >
-          <Pencil className="w-3 h-3" />
-        </button>
-      )}
+      <div className="flex flex-col gap-0 min-w-0 flex-1">
+        <span className="truncate leading-tight">{event.title}</span>
+        {professionalName && (
+          <span className="text-[10px] opacity-80 truncate">{professionalName}</span>
+        )}
+      </div>
+      <div className="flex items-center gap-0.5 shrink-0">
+        {isPendingSync && (
+          <Clock
+            className="w-3 h-3 shrink-0 opacity-70"
+            aria-label="Pendiente de sincronización con Google Calendar"
+          />
+        )}
+        {onReschedule && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onReschedule(event.resource)
+            }}
+            className="shrink-0 min-h-[20px] min-w-[20px] flex items-center justify-center rounded hover:bg-white/20 transition-colors"
+            aria-label={`Reprogramar turno de ${event.resource.patients?.full_name ?? 'paciente'}`}
+            title="Reprogramar"
+          >
+            <Pencil className="w-3 h-3" />
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -127,7 +135,6 @@ export function CalendarView({
   isError,
   onRefetch,
   onReschedule,
-  gcalStatus,
 }: CalendarViewProps) {
   const queryClient = useQueryClient()
 
@@ -177,6 +184,10 @@ export function CalendarView({
   }
 
   function handleEventDrop({ event, start, end }: EventInteractionArgs) {
+    // Fix A-14: No mover turnos cancelados o no-show
+    const status = event.resource.status
+    if (status === 'cancelled' || status === 'no_show') return
+
     const newStart = start instanceof Date ? start : new Date(start)
     const newEnd = end instanceof Date ? end : new Date(end)
 
@@ -256,8 +267,6 @@ export function CalendarView({
 
   return (
     <div className="rbc-wrapper">
-      <SyncStatusBanner appointments={appointments} date={date} />
-      <GCalDegradationBanner status={gcalStatus} />
       <DragAndDropCalendar
         localizer={localizer}
         events={localEvents}

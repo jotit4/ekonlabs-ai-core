@@ -1,5 +1,4 @@
 import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -24,14 +23,17 @@ function makeWrapper() {
 }
 
 const PATIENT_ID = 'patient-uuid-1'
+const PHONE = '+5491133334444'
+const PHONE_NO_PLUS = '5491133334444'
 
-function makeConversation(overrides = {}) {
+// Chatwoot messages — created_at en SEGUNDOS (Unix timestamp)
+function makeChatwootMessage(overrides = {}) {
   return {
-    id: 'conv-1',
-    role: 'user',
+    id: 1,
     content: 'Hola, quiero un turno',
-    created_at: '2026-05-10T10:00:00Z',
-    phone_number: '+5491133334444',
+    message_type: 0, // 0 = incoming (paciente)
+    created_at: 1715000000, // Unix timestamp en SEGUNDOS
+    sender: { name: 'Paciente', type: 'contact' },
     ...overrides,
   }
 }
@@ -43,7 +45,7 @@ describe('WhatsAppHistory', () => {
     vi.clearAllMocks()
   })
 
-  it('muestra mensaje de no teléfono y no hace fetch cuando phoneNumber es null', () => {
+  it('muestra mensaje de no teléfono y NO hace fetch cuando phoneNumber es null', () => {
     render(<WhatsAppHistory patientId={PATIENT_ID} phoneNumber={null} />, {
       wrapper: makeWrapper(),
     })
@@ -54,215 +56,95 @@ describe('WhatsAppHistory', () => {
     expect(mockFetch).not.toHaveBeenCalled()
   })
 
-  it('muestra lista de conversaciones cargadas con estado y fecha', async () => {
-    const conversations = [
-      makeConversation({ id: 'conv-1', content: 'Primera consulta', role: 'user' }),
-      makeConversation({ id: 'conv-2', content: 'Segunda consulta', role: 'assistant' }),
+  it('hace fetch SOLO a Chatwoot con phoneNumber sin + (sin query a patients/conversations)', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ messages: [] }),
+    })
+
+    render(
+      <WhatsAppHistory patientId={PATIENT_ID} phoneNumber={PHONE} />,
+      { wrapper: makeWrapper() }
+    )
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        `/api/chatwoot/conversations/${PHONE_NO_PLUS}/messages`
+      )
+    })
+
+    // NO debe llamar a /api/patients/.../conversations
+    expect(mockFetch).not.toHaveBeenCalledWith(
+      expect.stringContaining('/api/patients/')
+    )
+  })
+
+  it('muestra mensajes de Chatwoot con estado del agente visible', async () => {
+    const messages = [
+      makeChatwootMessage({ id: 1, content: 'Hola del paciente', message_type: 0 }),
+      makeChatwootMessage({ id: 2, content: 'Respuesta del agente', message_type: 1, sender: { name: 'Bot', type: 'agent_bot' } }),
     ]
 
     mockFetch.mockResolvedValue({
       ok: true,
-      json: async () => ({ conversations }),
+      json: async () => ({ messages }),
     })
 
     render(
       <WhatsAppHistory
         patientId={PATIENT_ID}
-        phoneNumber="+5491133334444"
+        phoneNumber={PHONE}
         threadState={{ status: 'active', paused_reason: null }}
       />,
       { wrapper: makeWrapper() }
     )
 
     await waitFor(() => {
-      expect(screen.getByText('Primera consulta')).toBeInTheDocument()
-      expect(screen.getByText('Segunda consulta')).toBeInTheDocument()
+      expect(screen.getByText('Hola del paciente')).toBeInTheDocument()
+      expect(screen.getByText('Respuesta del agente')).toBeInTheDocument()
     })
 
     // El estado del agente está presente
     expect(screen.getByText('IA activa')).toBeInTheDocument()
   })
 
-  it('expande el hilo de mensajes al hacer clic en una conversación', async () => {
-    const user = userEvent.setup()
-    const conversations = [makeConversation({ id: 'conv-1', content: 'Primer mensaje' })]
-    const chatwootMessages = [
-      {
-        id: 1,
-        content: 'Hola',
-        message_type: 0,
-        created_at: '2026-05-10T10:00:00Z',
-        role: 'user',
-        phone_number: '+5491133334444',
-      },
+  it('muestra label "Agente IA" para message_type=1 con sender type agent_bot', async () => {
+    const messages = [
+      makeChatwootMessage({ id: 1, content: 'Respuesta del bot', message_type: 1, sender: { name: 'Bot', type: 'agent_bot' } }),
     ]
 
-    // Primera llamada: conversaciones
-    // Segunda llamada: mensajes de chatwoot
-    let callCount = 0
-    mockFetch.mockImplementation(async () => {
-      callCount++
-      if (callCount === 1) {
-        return { ok: true, json: async () => ({ conversations }) }
-      }
-      return { ok: true, json: async () => ({ messages: chatwootMessages }) }
-    })
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ messages }) })
 
-    render(
-      <WhatsAppHistory patientId={PATIENT_ID} phoneNumber="+5491133334444" />,
-      { wrapper: makeWrapper() }
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText('Primer mensaje')).toBeInTheDocument()
-    })
-
-    // Clic para expandir
-    const convButton = screen.getByRole('button', { name: /primer mensaje/i })
-    await user.click(convButton)
-
-    await waitFor(() => {
-      expect(screen.getByText('Hola')).toBeInTheDocument()
-    })
-  })
-
-  it('muestra burbuja del lado derecho para mensajes role === "user"', async () => {
-    // Verificar que hay mensajes de "user" con el componente expandido
-    const conversations = [makeConversation({ id: 'conv-1', content: 'Mensaje del paciente', role: 'user' })]
-    const chatwootMessages = [
-      {
-        id: 1,
-        content: 'Mensaje del paciente',
-        role: 'user',
-        message_type: 0,
-        created_at: '2026-05-10T10:00:00Z',
-        phone_number: '+5491133334444',
-      },
-    ]
-
-    let callCount = 0
-    mockFetch.mockImplementation(async () => {
-      callCount++
-      if (callCount === 1) {
-        return { ok: true, json: async () => ({ conversations }) }
-      }
-      return { ok: true, json: async () => ({ messages: chatwootMessages }) }
-    })
-
-    const user = userEvent.setup()
-    render(
-      <WhatsAppHistory patientId={PATIENT_ID} phoneNumber="+5491133334444" />,
-      { wrapper: makeWrapper() }
-    )
-
-    await waitFor(() => {
-      expect(screen.getAllByText('Mensaje del paciente').length).toBeGreaterThanOrEqual(1)
-    })
-
-    // Expandir conversación
-    const convButton = screen.getByRole('button', { name: /mensaje del paciente/i })
-    await user.click(convButton)
-
-    await waitFor(() => {
-      // El mensaje role=user está en la conversación lista
-      // Verificamos el aria-expanded después del clic
-      expect(convButton).toHaveAttribute('aria-expanded', 'true')
-    })
-  })
-
-  it('muestra label "Agente IA" para mensajes role === "assistant"', async () => {
-    const conversations = [
-      makeConversation({ id: 'conv-1', content: 'Primer mensaje del paciente', role: 'user' }),
-    ]
-    const chatwootMessages = [
-      {
-        id: 2,
-        content: 'Respuesta del agente IA',
-        role: 'assistant',
-        message_type: 1,
-        created_at: '2026-05-10T10:01:00Z',
-        phone_number: '+5491133334444',
-      },
-    ]
-
-    let callCount = 0
-    mockFetch.mockImplementation(async () => {
-      callCount++
-      if (callCount === 1) {
-        return { ok: true, json: async () => ({ conversations }) }
-      }
-      return { ok: true, json: async () => ({ messages: chatwootMessages }) }
-    })
-
-    const user = userEvent.setup()
-    render(
-      <WhatsAppHistory patientId={PATIENT_ID} phoneNumber="+5491133334444" />,
-      { wrapper: makeWrapper() }
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText('Primer mensaje del paciente')).toBeInTheDocument()
-    })
-
-    const convButton = screen.getByRole('button', { name: /primer mensaje del paciente/i })
-    await user.click(convButton)
+    render(<WhatsAppHistory patientId={PATIENT_ID} phoneNumber={PHONE} />, { wrapper: makeWrapper() })
 
     await waitFor(() => {
       expect(screen.getByText('Agente IA')).toBeInTheDocument()
-      expect(screen.getByText('Respuesta del agente IA')).toBeInTheDocument()
+      expect(screen.getByText('Respuesta del bot')).toBeInTheDocument()
     })
   })
 
-  it('muestra separador centrado para mensajes role === "system"', async () => {
-    const conversations = [
-      makeConversation({ id: 'conv-1', content: 'Mensaje inicial', role: 'user' }),
-    ]
-    const chatwootMessages = [
-      {
-        id: 3,
-        content: 'Transferido a humano',
-        role: 'system',
-        message_type: 2,
-        created_at: '2026-05-10T10:02:00Z',
-        phone_number: '+5491133334444',
-      },
+  it('muestra separador centrado para message_type=2 (activity)', async () => {
+    const messages = [
+      makeChatwootMessage({ id: 1, content: 'Transferido a humano', message_type: 2 }),
     ]
 
-    let callCount = 0
-    mockFetch.mockImplementation(async () => {
-      callCount++
-      if (callCount === 1) {
-        return { ok: true, json: async () => ({ conversations }) }
-      }
-      return { ok: true, json: async () => ({ messages: chatwootMessages }) }
-    })
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ messages }) })
 
-    const user = userEvent.setup()
-    render(
-      <WhatsAppHistory patientId={PATIENT_ID} phoneNumber="+5491133334444" />,
-      { wrapper: makeWrapper() }
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText('Mensaje inicial')).toBeInTheDocument()
-    })
-
-    const convButton = screen.getByRole('button', { name: /mensaje inicial/i })
-    await user.click(convButton)
+    render(<WhatsAppHistory patientId={PATIENT_ID} phoneNumber={PHONE} />, { wrapper: makeWrapper() })
 
     await waitFor(() => {
       expect(screen.getByText('Transferido a humano')).toBeInTheDocument()
     })
   })
 
-  it('muestra "No hay conversaciones registradas" cuando la lista está vacía', async () => {
+  it('muestra "No hay conversaciones registradas" cuando Chatwoot retorna array vacío', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
-      json: async () => ({ conversations: [] }),
+      json: async () => ({ messages: [] }),
     })
 
     render(
-      <WhatsAppHistory patientId={PATIENT_ID} phoneNumber="+5491133334444" />,
+      <WhatsAppHistory patientId={PATIENT_ID} phoneNumber={PHONE} />,
       { wrapper: makeWrapper() }
     )
 
@@ -273,35 +155,56 @@ describe('WhatsAppHistory', () => {
     })
   })
 
-  it('muestra DegradationBanner cuando Chatwoot devuelve chatwoot_unavailable', async () => {
-    const conversations = [makeConversation({ id: 'conv-1', content: 'Mensaje' })]
-
-    let callCount = 0
-    mockFetch.mockImplementation(async () => {
-      callCount++
-      if (callCount === 1) {
-        return { ok: true, json: async () => ({ conversations }) }
-      }
-      return { ok: true, json: async () => ({ error: 'chatwoot_unavailable' }) }
+  it('muestra DegradationBanner cuando Chatwoot retorna chatwoot_unavailable', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ error: 'chatwoot_unavailable' }),
     })
 
-    const user = userEvent.setup()
     render(
-      <WhatsAppHistory patientId={PATIENT_ID} phoneNumber="+5491133334444" />,
+      <WhatsAppHistory patientId={PATIENT_ID} phoneNumber={PHONE} />,
       { wrapper: makeWrapper() }
     )
-
-    await waitFor(() => {
-      expect(screen.getByText('Mensaje')).toBeInTheDocument()
-    })
-
-    const convButton = screen.getByRole('button', { name: /Mensaje/i })
-    await user.click(convButton)
 
     await waitFor(() => {
       expect(
         screen.getByText(/chatwoot no disponible temporalmente/i)
       ).toBeInTheDocument()
+    })
+  })
+
+  it('NO muestra DegradationBanner cuando Chatwoot responde con mensajes', async () => {
+    const messages = [makeChatwootMessage({ id: 1, content: 'Mensaje real' })]
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ messages }) })
+
+    render(
+      <WhatsAppHistory patientId={PATIENT_ID} phoneNumber={PHONE} />,
+      { wrapper: makeWrapper() }
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Mensaje real')).toBeInTheDocument()
+    })
+
+    expect(screen.queryByText(/chatwoot no disponible/i)).not.toBeInTheDocument()
+  })
+
+  it('normaliza correctamente phoneNumber sin + (sin prefijo + ya)', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ messages: [] }),
+    })
+
+    render(
+      <WhatsAppHistory patientId={PATIENT_ID} phoneNumber={PHONE_NO_PLUS} />,
+      { wrapper: makeWrapper() }
+    )
+
+    await waitFor(() => {
+      // Con phoneNumber sin +, usa el mismo valor directamente
+      expect(mockFetch).toHaveBeenCalledWith(
+        `/api/chatwoot/conversations/${PHONE_NO_PLUS}/messages`
+      )
     })
   })
 })

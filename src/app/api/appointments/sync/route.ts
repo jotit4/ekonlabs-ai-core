@@ -1,6 +1,6 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { parseJwtPayload } from '@/lib/utils/jwt'
-import { FastAPIClient } from '@/lib/fastapi/client'
+import { FastAPIClient, FastAPIError } from '@/lib/fastapi/client'
 
 const fastapi = new FastAPIClient(
   process.env.FASTAPI_BASE_URL!,
@@ -37,18 +37,16 @@ export async function POST(request: Request) {
       '/api/v1/appointments/sync',
       {
         method: 'POST',
-        body: JSON.stringify({ tenant_id: tenantId, ...body }),
+        body: JSON.stringify({ ...body, tenant_id: tenantId }),
       }
     )
 
     const status = result.async ? 202 : 200
     return Response.json({ ...result, success: true }, { status })
   } catch (err) {
-    // FastAPIError ya tipado en src/lib/fastapi/client.ts
-    if (err instanceof Error && err.name === 'FastAPIError') {
-      const fastapiErr = (err as unknown) as { status: number; body: unknown }
-      if (fastapiErr.status >= 400 && fastapiErr.status < 500) {
-        return Response.json({ error: 'sync_failed', detail: fastapiErr.body }, { status: 502 })
+    if (err instanceof FastAPIError) {
+      if (err.status >= 400 && err.status < 500) {
+        return Response.json({ error: 'sync_failed', detail: err.body }, { status: 502 })
       }
     }
     // AbortError (timeout 5s) o error de red

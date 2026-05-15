@@ -30,6 +30,8 @@ function makePatient(overrides: Partial<Patient> = {}): Patient {
     address: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    deletion_requested_at: null,
+    deletion_effective_at: null,
     appointments: [],
     thread_states: [],
     ...overrides,

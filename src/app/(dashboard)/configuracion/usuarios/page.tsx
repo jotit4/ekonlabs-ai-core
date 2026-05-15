@@ -14,7 +14,7 @@ export default async function UsuariosPage() {
   const { data: { session } } = await supabase.auth.getSession()
   const claims = parseJwtPayload(session?.access_token ?? '')
 
-  if (claims?.role !== 'admin') {
+  if (claims?.app_role !== 'admin') {
     redirect('/agenda')
   }
 

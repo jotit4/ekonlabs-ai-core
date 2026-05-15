@@ -19,7 +19,7 @@ export async function POST(_request: Request, context: RouteContext) {
   // 2. Autorización — solo admin
   const { data: sessionData } = await supabase.auth.getSession()
   const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
-  if (claims?.role !== 'admin') {
+  if ((claims?.app_role ?? claims?.role) !== 'admin') {
     return Response.json(
       { error: 'Solo administradores pueden solicitar la eliminación de un paciente' },
       { status: 403 }

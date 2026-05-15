@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { parseJwtPayload } from '@/lib/utils/jwt'
 
 interface RouteContext {
   params: Promise<{ id: string }>
@@ -22,6 +23,16 @@ export async function GET(_request: Request, context: RouteContext) {
 
   if (!user) {
     return Response.json({ error: 'No autorizado' }, { status: 401 })
+  }
+
+  // Check de rol: solo admin y doctor pueden ver conversaciones del paciente (A-03)
+  const {
+    data: { session },
+  } = await supabase.auth.getSession()
+  const claims = parseJwtPayload(session?.access_token ?? '')
+  const appRole = claims?.app_role as string | undefined
+  if (!['admin', 'doctor'].includes(appRole ?? '')) {
+    return Response.json({ error: 'Acceso denegado' }, { status: 403 })
   }
 
   // 1. Obtener phone_number del paciente (RLS filtra por tenant automáticamente)

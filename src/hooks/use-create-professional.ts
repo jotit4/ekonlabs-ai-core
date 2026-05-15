@@ -1,0 +1,38 @@
+'use client'
+
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
+import type { CreateProfessionalPayload } from '@/types/profesionales'
+
+export function useCreateProfessional() {
+  const queryClient = useQueryClient()
+
+  const mutation = useMutation({
+    mutationFn: async (payload: CreateProfessionalPayload) => {
+      const res = await fetch('/api/profesionales', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(body.error ?? 'create_failed')
+      }
+      return res.json()
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['profesionales', 'list'] })
+      toast.success('Profesional creado correctamente')
+    },
+    onError: (_error, variables) => {
+      toast.error('Error al crear el profesional. Intentá de nuevo.', {
+        action: {
+          label: 'Reintentar',
+          onClick: () => mutation.mutate(variables),
+        },
+      })
+    },
+  })
+
+  return mutation
+}

@@ -15,10 +15,11 @@ export default function ConversationThreadPage() {
   const { messages, isConnected, isLoading } = useChatwootMessages(conversationId)
 
   // Suscribir reactivamente a la lista de conversaciones para detectar cambios de estado
-  const { data: conversations } = useQuery<ConversationSummary[]>({
+  const { data: conversations, isPending: isConversationsPending } = useQuery<ConversationSummary[]>({
     queryKey: ['conversations', 'list', { status: 'all' }],
     queryFn: async () => {
       const res = await fetch('/api/conversations')
+      if (!res.ok) throw new Error('Error al cargar conversaciones')
       const json = await res.json() as { conversations: ConversationSummary[] }
       return json.conversations
     },
@@ -30,6 +31,20 @@ export default function ConversationThreadPage() {
 
   // Estado vacío cuando id es inválido
   if (!conversationId) {
+    return (
+      <main
+        id="main-content"
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}
+      >
+        <p style={{ fontSize: 14, color: 'var(--color-text-secondary)' }}>
+          Conversación no encontrada.
+        </p>
+      </main>
+    )
+  }
+
+  // Conversación no encontrada en cache (después de que la query completó)
+  if (!isConversationsPending && conversations !== undefined && !conversation) {
     return (
       <main
         id="main-content"

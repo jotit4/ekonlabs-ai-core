@@ -132,7 +132,6 @@ describe('CalendarView', () => {
           isLoading={false}
           isError={false}
           onRefetch={mockOnRefetch}
-          gcalStatus="healthy"
         />
       )
       expect(screen.getByTestId('rbc-calendar')).toBeInTheDocument()
@@ -146,7 +145,6 @@ describe('CalendarView', () => {
           isLoading={true}
           isError={false}
           onRefetch={mockOnRefetch}
-          gcalStatus="healthy"
         />
       )
       expect(screen.getByLabelText('Cargando turnos')).toBeInTheDocument()
@@ -161,7 +159,6 @@ describe('CalendarView', () => {
           isLoading={false}
           isError={true}
           onRefetch={mockOnRefetch}
-          gcalStatus="healthy"
         />
       )
       expect(screen.getByRole('alert')).toBeInTheDocument()
@@ -177,7 +174,6 @@ describe('CalendarView', () => {
           isLoading={false}
           isError={true}
           onRefetch={mockOnRefetch}
-          gcalStatus="healthy"
         />
       )
       await user.click(screen.getByRole('button', { name: /reintentar/i }))
@@ -194,7 +190,6 @@ describe('CalendarView', () => {
           isLoading={false}
           isError={false}
           onRefetch={mockOnRefetch}
-          gcalStatus="healthy"
         />
       )
       await waitFor(() => {
@@ -210,7 +205,6 @@ describe('CalendarView', () => {
           isLoading={false}
           isError={false}
           onRefetch={mockOnRefetch}
-          gcalStatus="healthy"
         />
       )
       await waitFor(() => {
@@ -229,7 +223,6 @@ describe('CalendarView', () => {
           isLoading={false}
           isError={false}
           onRefetch={mockOnRefetch}
-          gcalStatus="healthy"
         />
       )
 
@@ -289,6 +282,88 @@ describe('CalendarView', () => {
     })
   })
 
+  describe('guard de status en drag-and-drop', () => {
+    it('NO abre el modal cuando se arrastra un turno cancelled', async () => {
+      const cancelledAppointment: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-cancelled',
+        status: 'cancelled',
+      }
+
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[cancelledAppointment]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+
+      await waitFor(() => expect(calendarMockRef.onEventDrop).toBeDefined())
+
+      const cancelledEvent = {
+        id: 'apt-cancelled',
+        title: 'Juan García · Kinesiología',
+        start: new Date('2026-05-07T09:00:00'),
+        end: new Date('2026-05-07T10:00:00'),
+        resource: cancelledAppointment,
+      }
+
+      await act(async () => {
+        calendarMockRef.onEventDrop?.({
+          event: cancelledEvent,
+          start: new Date('2026-05-07T15:00:00'),
+          end: new Date('2026-05-07T16:00:00'),
+        })
+      })
+
+      // El modal NO debe abrirse
+      expect(screen.queryByTestId('dialog-root')).not.toBeInTheDocument()
+      // La API NO debe llamarse
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+
+    it('NO abre el modal cuando se arrastra un turno no_show', async () => {
+      const noShowAppointment: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-noshow',
+        status: 'no_show',
+      }
+
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[noShowAppointment]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+
+      await waitFor(() => expect(calendarMockRef.onEventDrop).toBeDefined())
+
+      const noShowEvent = {
+        id: 'apt-noshow',
+        title: 'Juan García · Kinesiología',
+        start: new Date('2026-05-07T09:00:00'),
+        end: new Date('2026-05-07T10:00:00'),
+        resource: noShowAppointment,
+      }
+
+      await act(async () => {
+        calendarMockRef.onEventDrop?.({
+          event: noShowEvent,
+          start: new Date('2026-05-07T15:00:00'),
+          end: new Date('2026-05-07T16:00:00'),
+        })
+      })
+
+      expect(screen.queryByTestId('dialog-root')).not.toBeInTheDocument()
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+  })
+
   describe('callback onReschedule', () => {
     it('llama onReschedule cuando se hace click en el botón del evento', async () => {
       const mockOnReschedule = vi.fn()
@@ -302,7 +377,6 @@ describe('CalendarView', () => {
           isError={false}
           onRefetch={mockOnRefetch}
           onReschedule={mockOnReschedule}
-          gcalStatus="healthy"
         />
       )
 

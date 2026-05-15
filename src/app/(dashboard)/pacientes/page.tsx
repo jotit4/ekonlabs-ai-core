@@ -96,7 +96,7 @@ export default function PacientesPage() {
     sorters: [{ field: 'full_name', order: 'asc' }],
     pagination: { mode: 'off' },
     queryOptions: {
-      queryKey: ['patients', 'list'],
+      queryKey: ['patients', 'list', debouncedQuery],
       staleTime: 5 * 60 * 1000,
     },
   })
@@ -109,6 +109,7 @@ export default function PacientesPage() {
     queryKey: ['conversations', 'list', { status: 'all' }],
     queryFn: async () => {
       const res = await fetch('/api/conversations')
+      if (!res.ok) throw new Error('Error al cargar conversaciones')
       const json = await res.json() as { conversations: ConversationSummary[] }
       return json.conversations
     },

@@ -17,6 +17,14 @@ export async function GET(_request: Request, context: RouteContext) {
   } = await supabase.auth.getUser()
   if (!user) return Response.json({ error: 'No autorizado' }, { status: 401 })
 
+  // Check de rol: solo admin y doctor pueden leer notas clínicas (C-10)
+  const { data: sessionData } = await supabase.auth.getSession()
+  const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
+  const appRole = claims?.app_role as string | undefined
+  if (!['admin', 'doctor'].includes(appRole ?? '')) {
+    return Response.json({ error: 'Acceso denegado' }, { status: 403 })
+  }
+
   const { data: notes, error } = await supabase
     .from('clinical_notes')
     .select('note_id, content, created_at, updated_at, author_id')
@@ -36,6 +44,14 @@ export async function POST(request: Request, context: RouteContext) {
   } = await supabase.auth.getUser()
   if (!user || authError) return Response.json({ error: 'No autorizado' }, { status: 401 })
 
+  // Check de rol + obtener tenant_id del JWT (C-10)
+  const { data: sessionData } = await supabase.auth.getSession()
+  const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
+  const appRole = claims?.app_role as string | undefined
+  if (!['admin', 'doctor'].includes(appRole ?? '')) {
+    return Response.json({ error: 'Acceso denegado' }, { status: 403 })
+  }
+
   let body: { content?: string }
   try {
     body = (await request.json()) as { content?: string }
@@ -48,8 +64,6 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   // Obtener tenant_id del JWT (necesario para INSERT — es campo NOT NULL)
-  const { data: sessionData } = await supabase.auth.getSession()
-  const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
   const tenantId = claims?.tenant_id as string | undefined
   if (!tenantId) return Response.json({ error: 'Tenant no encontrado' }, { status: 401 })
 

@@ -121,4 +121,107 @@ describe('GET /api/chatwoot/conversations/[conversation_id]/messages', () => {
     expect(responseText).not.toContain('secret-token-123')
     expect(responseText).not.toContain('CHATWOOT_ACCESS_TOKEN')
   })
+
+  describe('resolución de phone_number → Chatwoot conversation ID', () => {
+    const PHONE_NO_PLUS = '5491133334444'
+
+    it('cuando conversation_id es un phone_number (solo dígitos ≥9), resuelve phone → contact → conversation ID', async () => {
+      const mockMessages = [
+        { id: 10, content: 'Hola', message_type: 0, created_at: 1715000000 },
+      ]
+
+      let callCount = 0
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation(async (url: string) => {
+          callCount++
+          if (typeof url === 'string' && url.includes('/contacts/search')) {
+            // Búsqueda de contacto
+            return {
+              ok: true,
+              json: async () => ({
+                payload: [{ id: 99, phone_number: '+5491133334444' }],
+              }),
+            }
+          }
+          if (typeof url === 'string' && url.includes('/contacts/99/conversations')) {
+            // Conversaciones del contacto
+            return {
+              ok: true,
+              json: async () => ({ payload: [{ id: 777 }] }),
+            }
+          }
+          // Fetch de mensajes con el ID resuelto (777)
+          expect(url).toContain('/conversations/777/messages')
+          return {
+            ok: true,
+            json: async () => ({ payload: mockMessages }),
+          }
+        })
+      )
+
+      const res = await GET(
+        new Request(`http://localhost/api/chatwoot/conversations/${PHONE_NO_PLUS}/messages`),
+        { params: Promise.resolve({ conversation_id: PHONE_NO_PLUS }) }
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.messages).toHaveLength(1)
+      expect(body.messages[0].content).toBe('Hola')
+      // Debe haber hecho 3 llamadas: search + conversations + messages
+      expect(callCount).toBe(3)
+    })
+
+    it('cuando conversation_id tiene formato +DDDDDDDDDDD (con +), también activa la resolución', async () => {
+      const PHONE_WITH_PLUS = '+5491133334444'
+      let searchCalled = false
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation(async (url: string) => {
+          if (typeof url === 'string' && url.includes('/contacts/search')) {
+            searchCalled = true
+            return {
+              ok: true,
+              json: async () => ({ payload: [] }), // sin resultados → fallback
+            }
+          }
+          // Fallback: usa el conversation_id original con +
+          return {
+            ok: true,
+            json: async () => ({ payload: [] }),
+          }
+        })
+      )
+
+      const res = await GET(
+        new Request(`http://localhost/api/chatwoot/conversations/${PHONE_WITH_PLUS}/messages`),
+        { params: Promise.resolve({ conversation_id: PHONE_WITH_PLUS }) }
+      )
+      expect(res.status).toBe(200)
+      // La búsqueda de contacto fue intentada
+      expect(searchCalled).toBe(true)
+    })
+
+    it('cuando la resolución de phone falla (sin contacto), usa el conversation_id original como fallback', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation(async (url: string) => {
+          if (typeof url === 'string' && url.includes('/contacts/search')) {
+            return { ok: true, json: async () => ({ payload: [] }) }
+          }
+          // Fallback: usa el phone number como conversation_id
+          return { ok: true, json: async () => ({ payload: [] }) }
+        })
+      )
+
+      const res = await GET(
+        new Request(`http://localhost/api/chatwoot/conversations/${PHONE_NO_PLUS}/messages`),
+        { params: Promise.resolve({ conversation_id: PHONE_NO_PLUS }) }
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.messages).toHaveLength(0)
+    })
+  })
 })

@@ -52,8 +52,8 @@ import ConversationThreadPage from './page'
 describe('ConversationThreadPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    // Por defecto, useQuery retorna sin datos
-    mockUseQuery.mockReturnValue({ data: undefined })
+    // Por defecto, useQuery retorna sin datos y query completada
+    mockUseQuery.mockReturnValue({ data: undefined, isPending: false })
   })
 
   it('renderiza ConversationThread con mensajes mockeados', () => {
@@ -190,5 +190,42 @@ describe('ConversationThreadPage', () => {
     expect(screen.getByTestId('takeover-bar')).toBeInTheDocument()
     // Columna 2: contexto
     expect(screen.getByTestId('patient-context-panel')).toBeInTheDocument()
+  })
+
+  it('muestra "Conversación no encontrada." cuando la query completó y no hay conversación', () => {
+    mockUseParams.mockReturnValue({ id: 'numero-inexistente' })
+    mockUseChatwootMessages.mockReturnValue({
+      messages: [],
+      isConnected: false,
+      isLoading: false,
+      isError: false,
+    })
+    // Query completó (isPending: false), lista retornada (data: []), pero no hay match
+    mockUseQuery.mockReturnValue({
+      data: [], // lista vacía — conversación no encontrada
+      isPending: false,
+    })
+
+    render(<ConversationThreadPage />)
+    expect(screen.getByText('Conversación no encontrada.')).toBeInTheDocument()
+  })
+
+  it('NO muestra "no encontrada" cuando la query aún está cargando', () => {
+    mockUseParams.mockReturnValue({ id: 'numero-inexistente' })
+    mockUseChatwootMessages.mockReturnValue({
+      messages: [],
+      isConnected: false,
+      isLoading: true,
+      isError: false,
+    })
+    // Query en progreso — isPending: true
+    mockUseQuery.mockReturnValue({
+      data: undefined,
+      isPending: true,
+    })
+
+    render(<ConversationThreadPage />)
+    // En estado pendiente, no debe mostrar "no encontrada"
+    expect(screen.queryByText('Conversación no encontrada.')).not.toBeInTheDocument()
   })
 })

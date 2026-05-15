@@ -9,6 +9,7 @@ export type AuditAction =
   | 'appointment_created'
   | 'appointment_rescheduled'
   | 'config_system_prompt_updated'
+  | 'config_shadow_mode_updated'
   | 'user_created'
   | 'user_deactivated'
   | 'user_activated'

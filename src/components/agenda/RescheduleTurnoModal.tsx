@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
 import { useQueryClient } from '@tanstack/react-query'
@@ -29,7 +29,7 @@ export function RescheduleTurnoModal({
 
   const durationMinutes = appointment?.services?.duration_minutes ?? 60
   const timeSlots = generateTimeSlots(durationMinutes)
-  const today = new Date().toISOString().slice(0, 10)
+  const today = new Date().toLocaleDateString('en-CA')
 
   // Calcular valores por defecto a partir del appointment actual
   const defaultDate = appointment?.start_at
@@ -47,6 +47,22 @@ export function RescheduleTurnoModal({
     },
   })
 
+  // Fix A-13: resetear form cuando el appointment cambia (turno A → turno B)
+  useEffect(() => {
+    if (!appointment) return
+    const newDefaultDate = appointment.start_at
+      ? format(parseISO(appointment.start_at), 'yyyy-MM-dd')
+      : date
+    const newDefaultTime = appointment.start_at
+      ? format(parseISO(appointment.start_at), 'HH:mm')
+      : ''
+    form.reset({
+      appointment_date: newDefaultDate,
+      appointment_time_hhmm: newDefaultTime,
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appointment?.appointment_id])
+
   const handleClose = () => {
     setSlotConflictError(null)
     setSubmitError(null)
@@ -59,7 +75,9 @@ export function RescheduleTurnoModal({
     setSlotConflictError(null)
     setSubmitError(null)
 
-    const startAt = new Date(`${values.appointment_date}T${values.appointment_time_hhmm}:00`)
+    // Fix C-05: construir string ISO con offset explícito (-03:00 = Argentina)
+    const startAtStr = `${values.appointment_date}T${values.appointment_time_hhmm}:00-03:00`
+    const startAt = new Date(startAtStr)
     const endAt = new Date(startAt.getTime() + durationMinutes * 60 * 1000)
 
     try {
@@ -67,7 +85,7 @@ export function RescheduleTurnoModal({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          start_at: startAt.toISOString(),
+          start_at: startAtStr,
           end_at: endAt.toISOString(),
         }),
       })

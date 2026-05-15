@@ -163,17 +163,16 @@ Retornar: REVIEW_RESULT: APPROVED | REJECTED + hallazgos clasificados
 
 - **Epic 1:** ✅ done
 - **Epic 2:** ✅ done — 7 stories, 162 tests
-- **Epic 3 (Gestión de Pacientes):** 🎯 EN CURSO
+- **Epic 3:** ✅ done — 7 stories (Gestión de Pacientes)
+- **Epic 4:** ✅ done — 7 stories (Bandeja IA / Chatwoot)
+- **Epic 5:** ✅ done — 4 stories (Audit Trail Admin)
+- **Epic 6:** ✅ done — 5 stories (Configuración del Agente)
+- **Epic 7:** ✅ done — 5 stories (KPIs y Analytics)
+- **Epic 8:** ✅ done — 10 stories (Bugfixes, Calidad y Seguridad)
+- **Epic 9:** ✅ done — 7 stories (Módulo Calendario Nativo)
+- **QA Sprint pre-ISADI (2026-05-15):** ✅ done — 9 bugs corregidos, 12 tests pre-existentes saneados — **1270 tests passing, 0 fallos**
 
-### Epic 3 — Stories en orden
-
-1. `3-1-busqueda-y-listado-de-pacientes`
-2. `3-2-creacion-y-edicion-de-datos-personales-con-dni-unico`
-3. `3-3-selector-de-obra-social-en-cascada`
-4. `3-4-ficha-del-paciente-con-historial-completo-de-turnos` ← usa `useSoftSync` de Story 2.7
-5. `3-5-historial-de-conversaciones-whatsapp-y-estado-del-agente`
-6. `3-6-notas-clinicas-con-autosave-para-medico-y-admin`
-7. `3-7-solicitud-de-eliminacion-de-paciente-con-periodo-de-gracia`
+**No hay epic activo.** Sistema listo para primer mes de prueba ISADI. Ver sprint-status para definir Epic 10.
 
 Sprint status: `../_bmad-output/implementation-artifacts/sprint-status.yaml`
 

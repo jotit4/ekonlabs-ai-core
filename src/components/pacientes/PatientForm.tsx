@@ -95,7 +95,7 @@ export function PatientForm({ mode, patient, onSuccess }: PatientFormProps) {
   const onSubmit = async (data: PatientFormValues) => {
     // Validar combinación inválida: entidad seleccionada pero sin plan (AC4)
     if (obraSocialSelection?.entidad && !obraSocialSelection?.plan) {
-      setError('phone_number', { message: 'Seleccioná un plan de cobertura' })
+      setError('obra_social', { message: 'Seleccioná un plan de cobertura' })
       return
     }
 
@@ -289,6 +289,11 @@ export function PatientForm({ mode, patient, onSuccess }: PatientFormProps) {
             onChange={setObraSocialSelection}
             disabled={isSubmitting}
           />
+          {errors.obra_social && (
+            <p id="obra-social-error" role="alert" className="mt-1 text-xs text-red-600">
+              {errors.obra_social.message}
+            </p>
+          )}
         </div>
 
         {/* obra_social_number */}

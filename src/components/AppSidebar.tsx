@@ -4,8 +4,8 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
-  Calendar, ChartBar, MessageSquare, PanelLeft,
-  PanelLeftClose, Settings, UserCog, Users,
+  Calendar, ChartBar, Layers, MessageSquare, PanelLeft,
+  PanelLeftClose, Settings, ShieldCheck, UserCheck, UserCog, Users,
 } from 'lucide-react'
 import type { UserRole } from '@/types/index'
 
@@ -18,20 +18,24 @@ type NavItem = {
 const NAV_ITEMS: Record<UserRole, NavItem[]> = {
   receptionist: [
     { href: '/conversaciones', label: 'Conversaciones', icon: MessageSquare },
-    { href: '/agenda',         label: 'Agenda',          icon: Calendar },
+    { href: '/agenda',         label: 'Calendario',      icon: Calendar },
     { href: '/pacientes',      label: 'Pacientes',        icon: Users },
   ],
   doctor: [
-    { href: '/agenda',    label: 'Agenda',    icon: Calendar },
-    { href: '/pacientes', label: 'Pacientes', icon: Users },
+    { href: '/agenda',           label: 'Calendario', icon: Calendar },
+    { href: '/agenda/mi-agenda', label: 'Mi Agenda',  icon: UserCheck },
+    { href: '/pacientes',        label: 'Pacientes',  icon: Users },
   ],
   admin: [
-    { href: '/conversaciones',          label: 'Conversaciones', icon: MessageSquare },
-    { href: '/agenda',                  label: 'Agenda',          icon: Calendar },
-    { href: '/pacientes',               label: 'Pacientes',        icon: Users },
-    { href: '/configuracion/agente',    label: 'Configuración',   icon: Settings },
-    { href: '/metricas',                label: 'Métricas',         icon: ChartBar },
-    { href: '/configuracion/usuarios',  label: 'Usuarios',         icon: UserCog },
+    { href: '/conversaciones',                label: 'Conversaciones', icon: MessageSquare },
+    { href: '/agenda',                        label: 'Calendario',      icon: Calendar },
+    { href: '/pacientes',                     label: 'Pacientes',        icon: Users },
+    { href: '/configuracion/agente',          label: 'Configuración',   icon: Settings },
+    { href: '/metricas',                      label: 'Métricas',         icon: ChartBar },
+    { href: '/configuracion/usuarios',        label: 'Usuarios',         icon: UserCog },
+    { href: '/configuracion/servicios',       label: 'Servicios',        icon: Layers },
+    { href: '/configuracion/profesionales',   label: 'Profesionales',    icon: UserCheck },
+    { href: '/configuracion/auditoria',       label: 'Auditoría',        icon: ShieldCheck },
   ],
 }
 

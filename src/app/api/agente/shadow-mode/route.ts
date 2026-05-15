@@ -1,0 +1,47 @@
+import 'server-only'
+import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { parseJwtPayload } from '@/lib/utils/jwt'
+import { logAudit } from '@/lib/audit'
+
+export async function PATCH(request: Request): Promise<Response> {
+  const supabase = await createSupabaseServerClient()
+
+  // 1. Autenticación
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (!user || authError) {
+    return Response.json({ error: 'No autorizado' }, { status: 401 })
+  }
+
+  // 2. Autorización — solo admin
+  const { data: sessionData } = await supabase.auth.getSession()
+  const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
+  if (claims?.app_role !== 'admin') {
+    return Response.json({ error: 'Solo administradores pueden cambiar shadow mode' }, { status: 403 })
+  }
+
+  // 3. Parsear y validar body
+  const body = await request.json().catch(() => null)
+  if (body === null || typeof body.shadow_mode_enabled !== 'boolean') {
+    return Response.json({ error: 'shadow_mode_enabled debe ser boolean' }, { status: 400 })
+  }
+
+  // 4. UPDATE con condición explícita de tenant_id (RLS también aplica USING)
+  const { error: updateError } = await supabase
+    .from('tenants')
+    .update({ shadow_mode_enabled: body.shadow_mode_enabled })
+    .eq('tenant_id', claims?.tenant_id as string)
+
+  if (updateError) {
+    return Response.json({ error: 'Error al actualizar shadow mode' }, { status: 500 })
+  }
+
+  // 5. Audit log — no-bloqueante
+  await logAudit({
+    action: 'config_shadow_mode_updated',
+    entity_type: 'config',
+    entity_id: claims?.tenant_id as string,
+    supabase,
+  })
+
+  return Response.json({ data: { shadow_mode_enabled: body.shadow_mode_enabled } })
+}

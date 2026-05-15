@@ -2,10 +2,11 @@ import { vi, describe, it, expect, beforeEach } from 'vitest'
 
 // ── vi.hoisted — variables referenciadas en factories de vi.mock ───────────────
 
-const { mockGetUser, mockGetSession, mockFrom } = vi.hoisted(() => ({
+const { mockGetUser, mockGetSession, mockFrom, mockParseJwt } = vi.hoisted(() => ({
   mockGetUser: vi.fn(),
   mockGetSession: vi.fn(),
   mockFrom: vi.fn(),
+  mockParseJwt: vi.fn().mockReturnValue({ app_role: 'admin', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' }),
 }))
 
 // Mock server-only
@@ -33,7 +34,7 @@ vi.mock('@/lib/supabase/server', () => ({
 }))
 
 vi.mock('@/lib/utils/jwt', () => ({
-  parseJwtPayload: vi.fn().mockReturnValue({ tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' }),
+  parseJwtPayload: mockParseJwt,
 }))
 
 vi.mock('@/lib/audit', () => ({
@@ -71,6 +72,11 @@ function makeRequest(body: unknown, method = 'POST') {
 describe('GET /api/patients/[id]/clinical-notes', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Default: sesión con rol admin para que tests existentes no sean afectados por el nuevo check de rol
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'mock-admin-token' } },
+    })
+    mockParseJwt.mockReturnValue({ app_role: 'admin', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' })
   })
 
   it('retorna 401 si no hay sesión', async () => {
@@ -78,6 +84,16 @@ describe('GET /api/patients/[id]/clinical-notes', () => {
 
     const res = await GET(new Request('http://localhost'), makeContext('p1'))
     expect(res.status).toBe(401)
+  })
+
+  it('retorna 403 si el rol no tiene acceso (receptionist)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-uuid-1' } }, error: null })
+    mockParseJwt.mockReturnValueOnce({ app_role: 'receptionist', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' })
+
+    const res = await GET(new Request('http://localhost'), makeContext('p1'))
+    expect(res.status).toBe(403)
+    const body = await res.json() as { error: string }
+    expect(body.error).toBe('Acceso denegado')
   })
 
   it('retorna 200 con array de notas si autenticado', async () => {
@@ -142,6 +158,7 @@ describe('GET /api/patients/[id]/clinical-notes', () => {
 describe('POST /api/patients/[id]/clinical-notes', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockParseJwt.mockReturnValue({ app_role: 'admin', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' })
   })
 
   it('retorna 401 si no hay sesión', async () => {
@@ -149,6 +166,19 @@ describe('POST /api/patients/[id]/clinical-notes', () => {
 
     const res = await POST(makeRequest({ content: 'texto' }), makeContext('p1'))
     expect(res.status).toBe(401)
+  })
+
+  it('retorna 403 si el rol no tiene acceso (receptionist)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-uuid-1' } }, error: null })
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'mock-token' } },
+    })
+    mockParseJwt.mockReturnValueOnce({ app_role: 'receptionist', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' })
+
+    const res = await POST(makeRequest({ content: 'Nota' }), makeContext('p1'))
+    expect(res.status).toBe(403)
+    const body = await res.json() as { error: string }
+    expect(body.error).toBe('Acceso denegado')
   })
 
   it('retorna 400 si content está vacío', async () => {

@@ -28,8 +28,7 @@ export default function RootLayout({
       <body className="min-h-full bg-[var(--color-bg)] text-[var(--color-text-primary)]">
         <ThemeProvider
           attribute="class"
-          defaultTheme="system"
-          enableSystem
+          forcedTheme="light"
           disableTransitionOnChange
         >
           {children}

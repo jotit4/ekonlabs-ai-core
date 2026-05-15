@@ -1,18 +1,21 @@
-function notImplemented() {
-  return Response.json(
-    {
-      error: {
-        message: "FastAPI proxy placeholder. Implementar contrato en stories futuras.",
-        code: "FASTAPI_PROXY_NOT_IMPLEMENTED",
-        status: 501,
-      },
-    },
-    { status: 501 },
-  )
+import { createSupabaseServerClient } from '@/lib/supabase/server'
+
+async function handleRequest() {
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return Response.json({ error: 'No autorizado' }, { status: 401 })
+  }
+
+  // El proxy FastAPI no está implementado para este path — no revelar 501
+  return Response.json({ error: 'Not found' }, { status: 404 })
 }
 
-export const GET = notImplemented
-export const POST = notImplemented
-export const PUT = notImplemented
-export const PATCH = notImplemented
-export const DELETE = notImplemented
+export const GET = handleRequest
+export const POST = handleRequest
+export const PUT = handleRequest
+export const PATCH = handleRequest
+export const DELETE = handleRequest

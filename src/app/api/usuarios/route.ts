@@ -4,6 +4,36 @@ import { parseJwtPayload } from '@/lib/utils/jwt'
 import { logAudit } from '@/lib/audit'
 import { createUserSchema } from '@/lib/schemas/users'
 
+export async function GET() {
+  const supabase = await createSupabaseServerClient()
+
+  // 1. Autenticación
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (!user || authError) {
+    return Response.json({ error: 'No autorizado' }, { status: 401 })
+  }
+
+  // 2. Autorización — solo admin
+  const { data: sessionData } = await supabase.auth.getSession()
+  const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
+  if (claims?.app_role !== 'admin') {
+    return Response.json({ error: 'Solo admins pueden listar usuarios' }, { status: 403 })
+  }
+
+  // 3. Listar usuarios del tenant — RLS filtra por tenant_id (AR14)
+  const { data: users, error: queryError } = await supabase
+    .from('dashboard_users')
+    .select('*')
+    .order('created_at', { ascending: true })
+
+  if (queryError) {
+    console.error('[usuarios/GET] query error:', queryError)
+    return Response.json({ error: 'Error al obtener usuarios' }, { status: 500 })
+  }
+
+  return Response.json({ users: users ?? [] })
+}
+
 export async function POST(request: Request) {
   // 1. Validar sesión y rol del llamante
   const supabase = await createSupabaseServerClient()
@@ -15,7 +45,7 @@ export async function POST(request: Request) {
   }
 
   const claims = parseJwtPayload(session.access_token)
-  if (claims?.role !== 'admin') {
+  if ((claims?.app_role ?? claims?.role) !== 'admin') {
     return Response.json({ error: 'Solo admins pueden crear usuarios' }, { status: 403 })
   }
 
@@ -41,7 +71,10 @@ export async function POST(request: Request) {
 
   // 3. Invitar usuario con service role (Admin API)
   const supabaseAdmin = createServiceRoleClient()
-  const { data: inviteData, error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(email)
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
+  const { data: inviteData, error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
+    redirectTo: `${appUrl}/`,
+  })
 
   if (inviteError) {
     const isDuplicate =

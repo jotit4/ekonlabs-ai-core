@@ -8,10 +8,12 @@ interface ChannelStatusResponse {
   status: GCalChannelStatus
 }
 
-export function useGCalChannelStatus(): { status: GCalChannelStatus } {
+export function useGCalChannelStatus(enabled = true): { status: GCalChannelStatus } {
   const [status, setStatus] = useState<GCalChannelStatus>('unknown')
 
   useEffect(() => {
+    if (!enabled) return // No hacer fetch ni setear interval si está deshabilitado
+
     let cancelled = false
 
     async function fetchStatus() {
@@ -37,7 +39,7 @@ export function useGCalChannelStatus(): { status: GCalChannelStatus } {
       cancelled = true
       clearInterval(interval)
     }
-  }, [])
+  }, [enabled])
 
   return { status }
 }

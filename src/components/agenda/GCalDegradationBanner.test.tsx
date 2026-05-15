@@ -4,10 +4,10 @@ import { GCalDegradationBanner } from './GCalDegradationBanner'
 
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
-  WifiOff: ({ 'aria-hidden': ariaHidden, className }: { 'aria-hidden'?: string; className?: string }) => (
+  WifiOff: ({ 'aria-hidden': ariaHidden, className }: { 'aria-hidden'?: boolean; className?: string }) => (
     <svg data-testid="icon-wifi-off" aria-hidden={ariaHidden} className={className} />
   ),
-  AlertCircle: ({ 'aria-hidden': ariaHidden, className }: { 'aria-hidden'?: string; className?: string }) => (
+  AlertCircle: ({ 'aria-hidden': ariaHidden, className }: { 'aria-hidden'?: boolean; className?: string }) => (
     <svg data-testid="icon-alert-circle" aria-hidden={ariaHidden} className={className} />
   ),
 }))

@@ -54,6 +54,8 @@ function makePatient(overrides: Partial<Patient> = {}): Patient {
     address: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    deletion_requested_at: null,
+    deletion_effective_at: null,
     ...overrides,
   }
 }
@@ -355,7 +357,7 @@ describe('PatientForm — modo edit', () => {
     })
 
     const call = mockFetch.mock.calls[0]
-    const body = JSON.parse(call[1].body as string)
+    const body = JSON.parse((call[1] as RequestInit).body as string)
     expect(body.obra_social).toBe('Galeno — Plan Oro')
   })
 })

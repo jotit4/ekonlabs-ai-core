@@ -19,7 +19,7 @@ export function DashboardProviders({ children }: { children: React.ReactNode }) 
         fastapi: fastapiDataProvider,
       }}
       accessControlProvider={accessControlProvider}
-      options={{ syncWithLocation: true, warnWhenUnsavedChanges: false }}
+      options={{ syncWithLocation: true, warnWhenUnsavedChanges: false, disableTelemetry: true }}
     >
       {children}
     </Refine>
