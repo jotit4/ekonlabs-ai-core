@@ -1194,6 +1194,38 @@ def generation_node(state: ConversationState) -> dict:
             logger.error("generation_node.error", tenant_id=tenant_id, error=str(exc))
             raise
 
+    # Fix D: Saludo inicial — evitar que RAG forzado liste servicios en primer "hola"
+    _all_messages = state.get("messages") or []
+    _human_msg_count = sum(1 for m in _all_messages if getattr(m, "type", None) == "human")
+    if _human_msg_count == 1:
+        _last_human = next(
+            (m for m in reversed(_all_messages) if getattr(m, "type", None) == "human"), None
+        )
+        _last_text = (_last_human.content if _last_human else "").strip()
+        _last_lower = _last_text.lower()
+        _GREETING_STARTERS = ("hola", "buenas", "hi", "hey", "buen dia", "buendia")
+        if len(_last_text.split()) <= 3 and any(_last_lower.startswith(g) for g in _GREETING_STARTERS):
+            _greet_system = _build_system_prompt(state)
+            _greet_content = (
+                f"{_greet_system}\n\n"
+                "ACCIÓN REQUERIDA — SALUDO INICIAL\n"
+                "El paciente acaba de escribir un saludo. Respondé con un saludo cálido y breve. "
+                "Presentate como recepcionista virtual de la clínica y preguntá en qué podés ayudar. "
+                "Máximo 2 oraciones. Usá voseo argentino. No listes servicios ni hagas preguntas adicionales."
+            )
+            _greet_messages = _build_messages_for_llm(_greet_content, state)
+            try:
+                response = _get_llm().invoke(_greet_messages)
+                logger.info(
+                    "generation_node.done",
+                    tenant_id=tenant_id,
+                    response_type="greeting",
+                )
+                return {"messages": [response]}
+            except Exception as exc:
+                logger.error("generation_node.error", tenant_id=tenant_id, error=str(exc))
+                raise
+
     system_prompt: str = _build_system_prompt(state)
     empathy_mode: str = state.get("empathy_mode", "normal")
 

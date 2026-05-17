@@ -169,6 +169,27 @@ def booking_node(state: ConversationState) -> dict:
         is_cancel = any(f" {kw} " in padded_query for kw in BOOKING_CANCEL_KEYWORDS)
         is_confirm = any(f" {kw} " in padded_query for kw in BOOKING_CONFIRM_KEYWORDS)
 
+        # Fix: si el paciente está respondiendo a la pregunta de prerequisito gated
+        # ("si ya lo tengo"), "si" matchea BOOKING_CONFIRM_KEYWORDS pero NO es una
+        # confirmación de turno. Detectarlo antes de la lógica de booking.
+        if is_confirm and not is_cancel:
+            gated_draft = booking_draft_service.get_draft(tenant_id, phone_number)
+            if gated_draft and gated_draft.get("gated_service_active"):
+                logger.info(
+                    "booking_node.gated_prerequisite_pass_through",
+                    tenant_id=tenant_id,
+                    query_preview=query[:80],
+                )
+                # Restaurar estado del servicio gated y dejar que scheduling_node maneje
+                return {
+                    "booking_intent": False,
+                    "gated_service_active": True,
+                    "gated_service_name": gated_draft.get("gated_service_name"),
+                    "gated_prerequisite_note": gated_draft.get("gated_prerequisite_note"),
+                    "selected_service_id": gated_draft.get("selected_service_id"),
+                    "selected_service_name": gated_draft.get("selected_service_name"),
+                }
+
         if not is_cancel and not is_confirm:
             # INFRA-06: LangGraph has no checkpointer — state resets every turn.
             # If a registration is in progress (name or DNI collection), re-hydrate

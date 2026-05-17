@@ -13,7 +13,7 @@ from app.agent.state import ConversationState
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.tenant import Service
-from app.services import calendar_service, tenant_service
+from app.services import booking_draft_service, calendar_service, tenant_service
 from app.services.vault_client import resolve_calendar_credentials
 
 logger = get_logger(__name__)
@@ -126,6 +126,19 @@ GATED_PREREQUISITE_MET_KEYWORDS: frozenset[str] = frozenset({
     "ya lo vi",
     "me dijeron que haga",
     "me dijeron hacer",
+    # Confirmaciones coloquiales de "ya tengo el pedido/orden médica"
+    "ya lo tengo",
+    "si lo tengo",
+    "lo tengo",
+    "tengo el pedido",
+    "tengo la orden",
+    "tengo la indicacion",
+    "ya tengo el pedido",
+    "ya tengo la orden",
+    "ya tengo la indicacion",
+    "si tengo",
+    "tengo todo",
+    "ya tengo todo",
 })
 
 
@@ -405,7 +418,17 @@ def scheduling_node(state: ConversationState) -> dict:
 
         # Detectar intención: determinista primero (sin costo), LLM como fallback con contexto
         messages = state.get("messages") or []
-        has_intent = has_scheduling_intent(query) or _llm_has_scheduling_intent(messages)
+        # Shortcut: si el turn anterior dejó un gated service pendiente en state,
+        # el paciente está respondiendo a la pregunta de prerequisito — no hace falta
+        # re-evaluar intención de agendamiento.
+        gated_pending_in_state = bool(
+            state.get("gated_service_active") and state.get("selected_service_id")
+        )
+        has_intent = (
+            gated_pending_in_state
+            or has_scheduling_intent(query)
+            or _llm_has_scheduling_intent(messages)
+        )
 
         if not has_intent:
             logger.info(
@@ -503,6 +526,16 @@ def scheduling_node(state: ConversationState) -> dict:
                         tenant_id=tenant_id,
                         service=svc.name,
                     )
+                    # Persistir en Redis para que booking_node no intercepte la respuesta
+                    # del paciente ("si ya lo tengo") como confirmación de turno.
+                    phone_number = state["phone_number"]
+                    booking_draft_service.save_draft(tenant_id, phone_number, {
+                        "gated_service_active": True,
+                        "gated_service_name": svc.name,
+                        "gated_prerequisite_note": prerequisite_note,
+                        "selected_service_id": selected_service_id,
+                        "selected_service_name": selected_service_name,
+                    })
                     result = {
                         "scheduling_intent": False,
                         "gated_service_active": True,

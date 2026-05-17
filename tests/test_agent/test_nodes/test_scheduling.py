@@ -740,3 +740,100 @@ def test_legacy_calendar_uses_calendar_service():
     assert result["scheduling_intent"] is True
     assert result["available_slots"] == _FAKE_SLOTS
     mock_cs.get_available_slots.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Tests — Fix A/B: GATED keywords nuevos + save_draft en Redis
+# ---------------------------------------------------------------------------
+
+def test_gated_prerequisite_met_keyword_ya_lo_tengo():
+    """Fix A: 'ya lo tengo' detecta prerequisito gated cumplido."""
+    from app.agent.nodes.scheduling import GATED_PREREQUISITE_MET_KEYWORDS
+    import unicodedata
+    import re
+
+    def _norm(text):
+        ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+        return re.sub(r"\s+", " ", ascii_text.lower()).strip()
+
+    assert any(kw in _norm("ya lo tengo") for kw in GATED_PREREQUISITE_MET_KEYWORDS)
+
+
+def test_gated_prerequisite_met_keyword_si_tengo():
+    """Fix A: 'si tengo' detecta prerequisito gated cumplido."""
+    from app.agent.nodes.scheduling import GATED_PREREQUISITE_MET_KEYWORDS
+    import unicodedata
+    import re
+
+    def _norm(text):
+        ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+        return re.sub(r"\s+", " ", ascii_text.lower()).strip()
+
+    assert any(kw in _norm("si tengo el pedido") for kw in GATED_PREREQUISITE_MET_KEYWORDS)
+
+
+def test_gated_service_saves_draft_to_redis():
+    """Fix B: scheduling_node llama a booking_draft_service.save_draft cuando retorna gated_service_active."""
+    from app.agent.nodes.scheduling import scheduling_node
+
+    state = _base_state(messages=[HumanMessage(content="quiero turno para kinesiologia")])
+
+    with (
+        patch("app.agent.nodes.scheduling.tenant_service") as mock_ts,
+        patch("app.agent.nodes.scheduling.calendar_service"),
+        patch("app.agent.nodes.scheduling.settings") as mock_settings,
+        patch("app.agent.nodes.scheduling.booking_draft_service") as mock_draft,
+    ):
+        mock_ts.get_tenant_config.return_value = _tenant_config_with_calendar()
+        mock_ts.get_tenant_services.return_value = [
+            _make_service_mock(
+                booking_mode="gated",
+                name="Kinesiología",
+                prerequisite_note="Necesitás pedido médico.",
+            )
+        ]
+        mock_settings.DEFAULT_SLOT_DURATION_MINUTES = 60
+        mock_settings.SCHEDULING_LOOKAHEAD_HOURS = 168
+
+        result = scheduling_node(state)
+
+    assert result["gated_service_active"] is True
+    mock_draft.save_draft.assert_called_once()
+    saved = mock_draft.save_draft.call_args[0][2]
+    assert saved["gated_service_active"] is True
+    assert saved["gated_service_name"] == "Kinesiología"
+
+
+def test_gated_pending_in_state_bypasses_intent_check():
+    """Fix B: si gated_service_active=True ya está en state, scheduling_node lo procesa sin
+    requerir keywords de intento de agendamiento."""
+    from app.agent.nodes.scheduling import scheduling_node
+
+    # Mensaje genérico sin keywords de turno — solo confirma el prerequisito
+    state = _base_state(
+        messages=[
+            HumanMessage(content="si ya lo tengo"),
+        ],
+        gated_service_active=True,
+        selected_service_id="svc-uuid-1234",
+        selected_service_name="Kinesiología",
+    )
+
+    with (
+        patch("app.agent.nodes.scheduling.tenant_service") as mock_ts,
+        patch("app.agent.nodes.scheduling.calendar_service") as mock_cs,
+        patch("app.agent.nodes.scheduling.settings") as mock_settings,
+        patch("app.agent.nodes.scheduling.booking_draft_service"),
+    ):
+        mock_ts.get_tenant_config.return_value = _tenant_config_with_calendar()
+        mock_ts.get_tenant_services.return_value = [
+            _make_service_mock(booking_mode="gated", name="Kinesiología")
+        ]
+        mock_cs.get_available_slots.return_value = _FAKE_SLOTS
+        mock_settings.DEFAULT_SLOT_DURATION_MINUTES = 60
+        mock_settings.SCHEDULING_LOOKAHEAD_HOURS = 168
+
+        result = scheduling_node(state)
+
+    # Con el shortcut, debe detectar intent y llamar al calendario
+    assert result["scheduling_intent"] is True

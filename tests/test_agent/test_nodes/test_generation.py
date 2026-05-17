@@ -11,7 +11,7 @@ def _base_state(**kwargs):
     state = {
         "tenant_id": _TENANT_ID,
         "phone_number": _PHONE,
-        "messages": [HumanMessage(content="Hola")],
+        "messages": [HumanMessage(content="quiero informacion sobre los servicios")],
         "confidence_score": 1.0,
         "is_paused": False,
     }
@@ -530,7 +530,7 @@ def test_no_rag_context_key_calls_llm():
     state = {
         "tenant_id": _TENANT_ID,
         "phone_number": _PHONE,
-        "messages": [HumanMessage(content="Hola")],
+        "messages": [HumanMessage(content="necesito informacion")],
     }
     mock_llm = _make_mock_llm()
     with patch("app.agent.nodes.generation._llm", mock_llm):
@@ -606,7 +606,7 @@ def test_empty_rag_context_no_xml_tags():
     mock_llm = _make_mock_llm("resp")
     state = {
         "tenant_id": "test", "phone_number": "+54911",
-        "messages": [HumanMessage(content="hola")],
+        "messages": [HumanMessage(content="cuales son los servicios")],
     }
     with patch("app.agent.nodes.generation._llm", mock_llm):
         generation_node(state)
@@ -1338,3 +1338,72 @@ def test_finalize_registration_legacy_uses_gcal():
     mock_cs.create_event.assert_called_once()
     # El event_id en el resultado debe ser el devuelto por GCal
     assert result.get("calendar_event_id") == "gcal_evt_legacy_001"
+
+
+# ---------------------------------------------------------------------------
+# Tests — Fix D: Saludo inicial no fuerza RAG
+# ---------------------------------------------------------------------------
+
+def test_generation_node_greeting_bypasses_rag():
+    """Fix D: primer mensaje 'hola' NO llama a bind_tools (no fuerza RAG) y retorna AIMessage."""
+    from app.agent.nodes.generation import generation_node
+
+    mock_llm = _make_mock_llm("¡Hola! Soy la recepcionista virtual de la clínica. ¿En qué puedo ayudarte?")
+    state = _base_state(messages=[HumanMessage(content="hola")])
+
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        result = generation_node(state)
+
+    # El greeting path llama a _llm.invoke() directamente, NO a bind_tools
+    mock_llm.bind_tools.assert_not_called()
+    mock_llm.invoke.assert_called_once()
+    assert "messages" in result
+    assert isinstance(result["messages"][0], AIMessage)
+
+
+def test_generation_node_greeting_buenas_bypasses_rag():
+    """Fix D: 'buenas tardes' (≤3 palabras, inicia con 'buenas') también evita RAG."""
+    from app.agent.nodes.generation import generation_node
+
+    mock_llm = _make_mock_llm("¡Buenas tardes!")
+    state = _base_state(messages=[HumanMessage(content="buenas tardes")])
+
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        result = generation_node(state)
+
+    mock_llm.bind_tools.assert_not_called()
+    mock_llm.invoke.assert_called_once()
+
+
+def test_generation_node_greeting_only_first_message():
+    """Fix D: si hay más de 1 mensaje humano, el path de saludo NO se activa aunque diga 'hola'."""
+    from app.agent.nodes.generation import generation_node
+
+    mock_llm = _make_mock_llm("¿En qué más puedo ayudarte?")
+    state = _base_state(messages=[
+        HumanMessage(content="hola"),
+        AIMessage(content="¡Hola! ¿En qué puedo ayudarte?"),
+        HumanMessage(content="hola de nuevo"),
+    ])
+
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        generation_node(state)
+
+    # Con 2 mensajes humanos, el path normal (bind_tools) debe ejecutarse
+    mock_llm.bind_tools.assert_called_once()
+
+
+def test_generation_node_long_first_message_not_greeting():
+    """Fix D (no regresión): primer mensaje largo no activa el path de saludo aunque empiece con 'hola'."""
+    from app.agent.nodes.generation import generation_node
+
+    mock_llm = _make_mock_llm("Tenemos disponibles los siguientes servicios...")
+    state = _base_state(
+        messages=[HumanMessage(content="hola quiero saber sobre los servicios de kinesiologia")]
+    )
+
+    with patch("app.agent.nodes.generation._llm", mock_llm):
+        generation_node(state)
+
+    # Más de 3 palabras → path normal con bind_tools
+    mock_llm.bind_tools.assert_called_once()

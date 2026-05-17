@@ -780,3 +780,61 @@ def test_legacy_confirm_still_uses_gcal():
     assert result["booking_intent"] is True
     assert result["booking_action"] == "confirm"
     assert result["calendar_event_id"] == _EVENT_ID
+
+
+# ---------------------------------------------------------------------------
+# Tests — Fix C: booking_node no intercepta "si" cuando hay draft gated activo
+# ---------------------------------------------------------------------------
+
+def test_booking_node_gated_draft_skips_booking_confirm():
+    """Fix C: cuando el usuario dice 'si' pero hay un draft con gated_service_active=True,
+    booking_node NO activa booking_intent sino que retorna el estado gated para que
+    scheduling_node lo procese."""
+    from app.agent.nodes.booking import booking_node
+
+    with (
+        patch("app.agent.nodes.booking.tenant_service") as mock_ts,
+        patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+        patch("app.agent.nodes.booking.booking_draft_service") as mock_draft,
+        patch("app.agent.nodes.booking.patient_service") as mock_ps,
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant()
+        mock_ts.get_tenant_services.return_value = []
+        mock_draft.get_draft.return_value = {
+            "gated_service_active": True,
+            "gated_service_name": "Kinesiología",
+            "gated_prerequisite_note": "Necesitás pedido médico.",
+            "selected_service_id": "svc-kine-001",
+            "selected_service_name": "Kinesiología",
+        }
+        mock_ps.find_patient_by_phone.return_value = None
+
+        # "si ya lo tengo" contiene "si" que está en BOOKING_CONFIRM_KEYWORDS
+        result = booking_node(_base_state("si ya lo tengo"))
+
+    # booking_node debe pasar el control al scheduling_node sin crear evento
+    assert result["booking_intent"] is False
+    assert result["gated_service_active"] is True
+    assert result["gated_service_name"] == "Kinesiología"
+    assert result["selected_service_id"] == "svc-kine-001"
+    mock_cs.create_event.assert_not_called()
+
+
+def test_booking_node_confirm_without_gated_draft_still_books():
+    """Fix C (no regresión): sin draft gated, 'si' sigue activando booking_intent normalmente."""
+    from app.agent.nodes.booking import booking_node
+
+    with (
+        patch("app.agent.nodes.booking.tenant_service") as mock_ts,
+        patch("app.agent.nodes.booking.calendar_service") as mock_cs,
+        patch("app.agent.nodes.booking.booking_draft_service") as mock_draft,
+    ):
+        mock_ts.get_tenant_config.return_value = _mock_tenant()
+        mock_cs.get_available_slots.return_value = _FAKE_SLOTS
+        mock_cs.create_event.return_value = _EVENT_ID
+        mock_draft.get_draft.return_value = None  # sin draft gated
+
+        result = booking_node(_base_state("el primero", patient_name="Paciente Test"))
+
+    assert result["booking_intent"] is True
+    assert result["booking_action"] == "confirm"
