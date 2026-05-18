@@ -139,6 +139,27 @@ GATED_PREREQUISITE_MET_KEYWORDS: frozenset[str] = frozenset({
     "si tengo",
     "tengo todo",
     "ya tengo todo",
+    # Afirmativos genéricos — el paciente responde "si" a "¿tenés el pedido médico?"
+    # booking_node ya intercepta estos en el path gated_pass_through; añadirlos aquí
+    # como defensa en profundidad para cuando scheduling_node re-evalúa.
+    "si",
+    "ok",
+    "dale",
+    "listo",
+    "va",
+    "perfecto",
+    "okay",
+    "okey",
+    "sep",
+    "claro",
+    "exacto",
+    "correcto",
+    "afirmativo",
+    "de acuerdo",
+    "esta bien",
+    "esta todo bien",
+    "adelante",
+    "confirmado",
 })
 
 
@@ -518,7 +539,16 @@ def scheduling_node(state: ConversationState) -> dict:
 
             elif booking_mode == "gated":
                 normalized_q = _normalize_text(query)
-                prerequisite_met = any(kw in normalized_q for kw in GATED_PREREQUISITE_MET_KEYWORDS)
+                # Si booking_node ya identificó este turno como gated_pass_through
+                # (leyó el draft de Redis y devolvió gated_service_active=True con
+                # booking_intent=False), confiar en esa señal sin re-evaluar keywords.
+                # Esto resuelve el caso donde el paciente dice "si" (bare affirmative)
+                # en respuesta a la pregunta del prerequisito gated y scheduling_node
+                # lo re-evaluaba como pending porque "si" no estaba en los keywords.
+                prerequisite_met = (
+                    gated_pending_in_state
+                    or any(kw in normalized_q for kw in GATED_PREREQUISITE_MET_KEYWORDS)
+                )
                 if not prerequisite_met:
                     prerequisite_note: str = getattr(svc, "prerequisite_note", None) or ""
                     logger.info(
