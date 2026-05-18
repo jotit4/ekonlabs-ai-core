@@ -197,16 +197,16 @@ class TestGetAvailableSlots:
         assert result == []
 
     def test_max_three_slots_returned(self):
-        """Múltiples slots disponibles → retorna máximo 3."""
-        # Schedule con varios slots disponibles: 09:00–18:00 cada hora
+        """Múltiples slots disponibles → retorna máximo 3 (1 por día)."""
+        # Schedule con 3 días distintos (Lun/Mar/Mié) para obtener 1 slot por día = 3 total.
+        # Con la política de 1 slot por día, un solo día con 9 franjas solo daría 1 resultado.
         client = _build_supabase_mock(
             professionals=[{"professional_id": _PROF_ID_1}],
-            schedules=[{
-                "professional_id": _PROF_ID_1,
-                "day_of_week": 0,  # Lunes
-                "start_time": "09:00:00",
-                "end_time": "18:00:00",
-            }],
+            schedules=[
+                {"professional_id": _PROF_ID_1, "day_of_week": 0, "start_time": "09:00:00", "end_time": "18:00:00"},
+                {"professional_id": _PROF_ID_1, "day_of_week": 1, "start_time": "09:00:00", "end_time": "18:00:00"},
+                {"professional_id": _PROF_ID_1, "day_of_week": 2, "start_time": "09:00:00", "end_time": "18:00:00"},
+            ],
             booked=[],
             blocks=[],
             service_data={"capacity_per_slot": None},
@@ -216,7 +216,7 @@ class TestGetAvailableSlots:
             result = get_available_slots(_TENANT_ID, _SERVICE_ID, 60, 72, start_date=_FUTURE_DATE)
 
         assert len(result) <= 3
-        assert len(result) == 3  # hay 9 slots posibles (09:00–18:00), retorna solo 3
+        assert len(result) == 3  # 1 slot por día × 3 días (Lun/Mar/Mié) = 3 total
 
     def test_db_exception_returns_empty_failsafe(self):
         """Excepción en DB → retorna [] (fail-safe)."""

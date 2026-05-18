@@ -32,7 +32,7 @@ from app.agent.state import ConversationState
 
 
 def _route_after_intake(state: ConversationState) -> str:
-    """intake_complete=True → proceed to triage. False → intake AIMessage already added → END."""
+    """intake_complete=True → proceed to triage. False → END (solo si intake_node falló)."""
     if state.get("intake_complete", False):
         return "triage"
     return END

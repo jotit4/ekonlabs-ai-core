@@ -38,7 +38,8 @@ class ConversationState(TypedDict):
     dni_attempts: NotRequired[int]                  # Veces que el agente pidió el DNI; ausente = 0
     patient_id: NotRequired[str | None]             # UUID del registro en tabla patients
     # Intake — bienvenida inicial (entry-point, reemplaza consent F0.3)
-    intake_complete: NotRequired[bool]     # True después del primer mensaje de bienvenida
+    intake_complete: NotRequired[bool]     # True después del primer turno (persiste en draft)
+    is_first_contact: NotRequired[bool]    # True solo en el Turn 1; nunca persiste a Turn 2+
     # F0.3 — Consent (Ley 25.326)
     consent_given: NotRequired[bool]         # True once patient has given or already had active consent
     # Booking rules por servicio (migration 006)

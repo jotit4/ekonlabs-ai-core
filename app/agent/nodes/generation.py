@@ -297,8 +297,14 @@ def _build_system_prompt(state: ConversationState) -> str:
         f"Fecha y hora actual (Argentina): {_DAYS_ES_GEN[now.weekday()]} "
         f"{now.day:02d}/{now.month:02d}/{now.year} a las {now.strftime('%H:%M')} hs\n\n"
     )
+    first_contact_hint = (
+        "PRIMER CONTACTO — El paciente se comunica por primera vez. "
+        "Empezá tu respuesta con un saludo cálido brevísimo (ej: '¡Hola! ' o '¡Hola! 😊 ') "
+        "antes de responder su consulta. Máximo 3 palabras de saludo.\n\n"
+        if state.get("is_first_contact", False) else ""
+    )
     tenant_context = state.get("system_prompt") or ""
-    base = date_line + DEFAULT_SYSTEM_PROMPT
+    base = date_line + first_contact_hint + DEFAULT_SYSTEM_PROMPT
     if tenant_context:
         return base + "\n\n<contexto_clinica>\n" + tenant_context + "\n</contexto_clinica>"
     return base
