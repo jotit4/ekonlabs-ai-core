@@ -23,10 +23,12 @@ _DAYS_ES = {
 
 
 def _format_display(dt: datetime) -> str:
-    """Formatea un datetime en zona Argentina como 'Lunes 19 de Mayo, 10:00 hs'."""
+    """Formatea un datetime en zona Argentina como 'Lunes 19/05/2026 a las 10:00 hs'.
+
+    Usa formato DD/MM/YYYY para evitar que el LLM omita el mes al reformatear.
+    """
     day_name = _DAYS_ES[dt.weekday()]
-    month_name = _MONTHS_ES[dt.month]
-    return f"{day_name} {dt.day} de {month_name}, {dt.strftime('%H:%M')} hs"
+    return f"{day_name} {dt.day:02d}/{dt.month:02d}/{dt.year} a las {dt.strftime('%H:%M')} hs"
 
 
 def _is_blocked(professional_id: str, check_date: date, blocks: list[dict]) -> bool:

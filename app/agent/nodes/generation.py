@@ -929,7 +929,8 @@ def _build_scheduling_context(state: ConversationState, system_prompt_base: str)
             "Encontré estos turnos disponibles para vos:\n\n"
             f"{slots_text}\n\n"
             "¿Cuál te viene mejor? Podés elegir el número o decirme si preferís otro horario.\n\n"
-            "Incluí el texto de los turnos exactamente como aparece arriba. No lo reformatees."
+            "CRÍTICO: Copiá cada turno EXACTAMENTE como aparece arriba (ej: 'Miércoles 10/06/2026 a las 14:00 hs'). "
+            "NO abrevies la fecha, NO omitas el mes ni el año, NO cambies el formato DD/MM/YYYY."
         )
     else:
         return (
