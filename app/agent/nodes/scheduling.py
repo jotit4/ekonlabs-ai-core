@@ -193,6 +193,8 @@ _MONTHS_ES_LOWER: dict[str, int] = {
     "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
 }
 _SLOT_DATE_PATTERN = re.compile(r'\b(\d{1,2})\s+de\s+([a-záéíóú]+)\b', re.IGNORECASE)
+# DD/MM/YYYY format used by availability_service (native calendar)
+_SLOT_DATE_PATTERN_NUMERIC = re.compile(r'\b(\d{2})/(\d{2})/(\d{4})\b')
 
 
 def _wants_different_day(query: str) -> bool:
@@ -204,7 +206,9 @@ def _wants_different_day(query: str) -> bool:
 def _extract_last_shown_date(messages: list[BaseMessage]) -> datetime | None:
     """Busca en mensajes AI la fecha más tardía de slots ya presentados al paciente.
 
-    Parsea el formato '10 de Abril', '13 de Abril', etc. que usa _format_display().
+    Soporta dos formatos:
+    - "10 de Abril" (calendar_service / Google Calendar)
+    - "10/06/2026" DD/MM/YYYY (availability_service / calendario nativo)
     Retorna la fecha más tardía encontrada, o None si no hay.
     """
     now = datetime.now(_TZ_ARGENTINA)
@@ -213,6 +217,7 @@ def _extract_last_shown_date(messages: list[BaseMessage]) -> datetime | None:
     for msg in messages:
         if getattr(msg, "type", None) != "ai":
             continue
+        # Formato "N de Mes" (Google Calendar)
         for match in _SLOT_DATE_PATTERN.finditer(msg.content):
             day = int(match.group(1))
             month_name = match.group(2).lower()
@@ -222,6 +227,18 @@ def _extract_last_shown_date(messages: list[BaseMessage]) -> datetime | None:
             year = now.year
             if month_num < now.month - 1:
                 year += 1
+            try:
+                candidate = datetime(year, month_num, day, tzinfo=_TZ_ARGENTINA)
+                if candidate.date() >= now.date():
+                    if last_date is None or candidate > last_date:
+                        last_date = candidate
+            except ValueError:
+                pass
+        # Formato DD/MM/YYYY (calendario nativo — availability_service)
+        for match in _SLOT_DATE_PATTERN_NUMERIC.finditer(msg.content):
+            day = int(match.group(1))
+            month_num = int(match.group(2))
+            year = int(match.group(3))
             try:
                 candidate = datetime(year, month_num, day, tzinfo=_TZ_ARGENTINA)
                 if candidate.date() >= now.date():
@@ -545,9 +562,10 @@ def scheduling_node(state: ConversationState) -> dict:
                 # Esto resuelve el caso donde el paciente dice "si" (bare affirmative)
                 # en respuesta a la pregunta del prerequisito gated y scheduling_node
                 # lo re-evaluaba como pending porque "si" no estaba en los keywords.
+                padded_q = f" {normalized_q} "
                 prerequisite_met = (
                     gated_pending_in_state
-                    or any(kw in normalized_q for kw in GATED_PREREQUISITE_MET_KEYWORDS)
+                    or any(f" {kw} " in padded_q for kw in GATED_PREREQUISITE_MET_KEYWORDS)
                 )
                 if not prerequisite_met:
                     prerequisite_note: str = getattr(svc, "prerequisite_note", None) or ""

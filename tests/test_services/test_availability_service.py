@@ -106,9 +106,9 @@ class TestGetAvailableSlots:
         assert "start" in first
         assert "end" in first
         assert "display" in first
-        # Formato display: "Lunes 3 de Junio, 09:00 hs"
+        # Formato display: "Lunes 03/06/2030 a las 09:00 hs" (DD/MM/YYYY)
         assert "Lunes" in first["display"]
-        assert "Junio" in first["display"]
+        assert "06/2030" in first["display"]
         assert "09:00" in first["display"]
         assert "hs" in first["display"]
 

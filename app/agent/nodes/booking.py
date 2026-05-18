@@ -390,12 +390,23 @@ def booking_node(state: ConversationState) -> dict:
             # INFRA-05: Read cached slots from state first to eliminate the race window.
             # scheduling_node stores available_slots in state when presenting options.
             # Only re-fetch if state slots are absent or empty (e.g., conversation resumed).
-            slots = cached_slots or calendar_service.get_available_slots(
-                calendar_id=calendar_id,
-                credentials_dict=credentials_dict,
-                duration_minutes=settings.DEFAULT_SLOT_DURATION_MINUTES,
-                lookahead_hours=settings.SCHEDULING_LOOKAHEAD_HOURS,
-            )
+            if cached_slots:
+                slots = cached_slots
+            elif uses_native:
+                from app.services import availability_service as _avail_svc
+                slots = _avail_svc.get_available_slots(
+                    tenant_id=tenant_id,
+                    service_id=selected_service_id or "",
+                    duration_minutes=settings.DEFAULT_SLOT_DURATION_MINUTES,
+                    lookahead_hours=settings.SCHEDULING_LOOKAHEAD_HOURS,
+                )
+            else:
+                slots = calendar_service.get_available_slots(
+                    calendar_id=calendar_id,
+                    credentials_dict=credentials_dict,
+                    duration_minutes=settings.DEFAULT_SLOT_DURATION_MINUTES,
+                    lookahead_hours=settings.SCHEDULING_LOOKAHEAD_HOURS,
+                )
 
             if not slots:
                 logger.info(
