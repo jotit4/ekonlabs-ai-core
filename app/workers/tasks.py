@@ -19,8 +19,8 @@ from app.services.whatsapp_service import send_message as send_whatsapp_message
 
 logger = get_logger(__name__)
 
-_HUMAN_DELAY_MIN = 15
-_HUMAN_DELAY_MAX = 20
+_HUMAN_DELAY_MIN = 4
+_HUMAN_DELAY_MAX = 6
 
 # ---------------------------------------------------------------------------
 # Slash commands — Story 4.2
