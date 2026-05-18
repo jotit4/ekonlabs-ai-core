@@ -1,10 +1,13 @@
 """Servicio de historial de conversación — carga y persistencia en tabla `conversations`."""
+from datetime import datetime, timezone, timedelta
+
 from app.core.database import get_supabase_client
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
 MAX_HISTORY_MESSAGES = 20  # Últimos N mensajes para contexto del LLM
+SESSION_TIMEOUT_HOURS = 4  # Inactividad >= 4h → nueva sesión (historial ignorado)
 
 
 def get_conversation_history(
@@ -50,7 +53,26 @@ def get_conversation_history(
         return []
 
     data = getattr(result, "data", None) or []
-    # Supabase retorna DESC (más reciente primero) → invertir para orden cronológico
+    if not data:
+        return []
+
+    # Supabase retorna DESC — data[0] es el mensaje más reciente
+    last_ts_raw = data[0].get("created_at", "")
+    try:
+        last_ts = datetime.fromisoformat(last_ts_raw.replace("Z", "+00:00"))
+        inactive_for = datetime.now(timezone.utc) - last_ts
+        if inactive_for > timedelta(hours=SESSION_TIMEOUT_HOURS):
+            logger.info(
+                "conversation_service.new_session — historial ignorado por inactividad",
+                tenant_id=tenant_id,
+                phone=phone_number,
+                inactive_hours=round(inactive_for.total_seconds() / 3600, 1),
+            )
+            return []
+    except (ValueError, AttributeError):
+        pass  # timestamp inválido — cargar historial igualmente
+
+    # Invertir para orden cronológico ascendente (más antiguo primero)
     return list(reversed(data))
 
 
