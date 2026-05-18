@@ -48,9 +48,31 @@ def main():
             logger.error("worker.langsmith_connection_failed", error=str(ls_exc))
 
     connection = Redis.from_url(settings.REDIS_URL)
+
+    # Al iniciar, eliminar todos los jobs en rq:scheduled:default que sean anteriores
+    # a hace 30 minutos. Esto evita que jobs viejos de sesiones previas se reencolen
+    # y envíen respuestas stale a pacientes en futuros reinicios del contenedor.
+    _purge_stale_scheduled_jobs(connection, logger)
+
     queues = [Queue("default", connection=connection)]
     worker = Worker(queues, connection=connection)
     worker.work()
+
+
+def _purge_stale_scheduled_jobs(connection: Redis, logger) -> None:
+    """Elimina jobs scheduled con timestamp de creación anterior a 30 minutos."""
+    import time
+    cutoff = time.time() - 1800  # 30 minutos atrás
+    try:
+        scheduled = connection.zrangebyscore("rq:scheduled:default", "-inf", cutoff)
+        if not scheduled:
+            return
+        for jid in scheduled:
+            connection.zrem("rq:scheduled:default", jid)
+            connection.delete(f"rq:job:{jid.decode()}")
+        logger.info("worker.purge_stale_scheduled_jobs", purged=len(scheduled))
+    except Exception as exc:
+        logger.warning("worker.purge_stale_scheduled_jobs.error", error=str(exc))
 
 
 if __name__ == "__main__":
