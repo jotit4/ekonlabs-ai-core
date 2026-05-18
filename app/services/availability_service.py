@@ -78,7 +78,14 @@ def get_available_slots(
         schedules: list[dict] = schedules_resp.data or []
 
         # 3. Calcular rango temporal
-        from_dt = start_date.astimezone(_TZ_ARG) if start_date else datetime.now(_TZ_ARG)
+        # now_arg se computa primero para clampear from_dt: si start_date es pasado,
+        # arrancar desde ahora — nunca desde una fecha que ya ocurrió.
+        now_arg = datetime.now(_TZ_ARG)
+        if start_date:
+            candidate_from = start_date.astimezone(_TZ_ARG)
+            from_dt = max(candidate_from, now_arg)
+        else:
+            from_dt = now_arg
         to_dt = from_dt + timedelta(hours=lookahead_hours)
 
         # 4. Turnos ya reservados en el rango
@@ -118,7 +125,6 @@ def get_available_slots(
             capacity_per_slot = service_resp.data.get("capacity_per_slot")
 
         # 7. Generar candidatos día a día
-        now_arg = datetime.now(_TZ_ARG)
         duration = timedelta(minutes=duration_minutes)
 
         # Agrupar schedules por professional_id y day_of_week para búsqueda rápida
