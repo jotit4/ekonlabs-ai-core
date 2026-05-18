@@ -152,9 +152,10 @@ def get_available_slots(
 
         while current_date <= end_date and len(slots_found) < 3:
             dow = current_date.weekday()  # 0=Lunes … 6=Domingo (coincide con DB)
+            date_found = False  # máximo 1 slot por día para diversificar la oferta
 
             for pid in professional_ids:
-                if len(slots_found) >= 3:
+                if len(slots_found) >= 3 or date_found:
                     break
 
                 # Verificar que el profesional no esté bloqueado hoy
@@ -164,7 +165,7 @@ def get_available_slots(
                 # Obtener franjas horarias del profesional para este día
                 day_slots = sched_map.get(pid, {}).get(dow, [])
                 for (start_t, end_t) in day_slots:
-                    if len(slots_found) >= 3:
+                    if len(slots_found) >= 3 or date_found:
                         break
 
                     # Generar candidatos de slots en la franja
@@ -226,8 +227,8 @@ def get_available_slots(
                                 "end": slot_end_iso,
                                 "display": _format_display(slot_time),
                             })
-                            if len(slots_found) >= 3:
-                                break
+                            date_found = True  # un slot por día es suficiente
+                            break
 
                         slot_time += duration
 
