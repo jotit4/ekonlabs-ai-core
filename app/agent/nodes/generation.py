@@ -4,6 +4,9 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
+
+_TZ_ARG = ZoneInfo("America/Argentina/Buenos_Aires")
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from app.agent.tools.search_tool import make_search_tool
@@ -279,6 +282,9 @@ def _build_messages_for_llm(system_content: str, state: ConversationState) -> li
     return [SystemMessage(content=system_content)] + sanitized
 
 
+_DAYS_ES_GEN = {0: "Lunes", 1: "Martes", 2: "Miércoles", 3: "Jueves", 4: "Viernes", 5: "Sábado", 6: "Domingo"}
+
+
 def _build_system_prompt(state: ConversationState) -> str:
     """Ensambla el system prompt final: DEFAULT + contexto del tenant (aditivo, no reemplazo).
 
@@ -286,15 +292,16 @@ def _build_system_prompt(state: ConversationState) -> str:
     Si existe, se añade al DEFAULT como <contexto_clinica> — nunca lo reemplaza.
     Esto garantiza que las reglas genéricas del agente siempre estén presentes.
     """
+    now = datetime.now(_TZ_ARG)
+    date_line = (
+        f"Fecha y hora actual (Argentina): {_DAYS_ES_GEN[now.weekday()]} "
+        f"{now.day:02d}/{now.month:02d}/{now.year} a las {now.strftime('%H:%M')} hs\n\n"
+    )
     tenant_context = state.get("system_prompt") or ""
+    base = date_line + DEFAULT_SYSTEM_PROMPT
     if tenant_context:
-        return (
-            DEFAULT_SYSTEM_PROMPT
-            + "\n\n<contexto_clinica>\n"
-            + tenant_context
-            + "\n</contexto_clinica>"
-        )
-    return DEFAULT_SYSTEM_PROMPT
+        return base + "\n\n<contexto_clinica>\n" + tenant_context + "\n</contexto_clinica>"
+    return base
 
 
 def _extract_patient_name(text: str) -> str | None:
