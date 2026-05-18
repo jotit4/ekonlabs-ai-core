@@ -66,7 +66,7 @@ describe('DELETE /api/profesionales/[id]/horarios/[scheduleId]', () => {
     expect(body.error).toBe('No autorizado')
   })
 
-  it('retorna 403 si no es admin', async () => {
+  it('retorna 403 si el rol no tiene acceso (doctor)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'doc-1' } }, error: null })
     mockGetSession.mockResolvedValue({ data: { session: { access_token: 'token' } } })
     mockParseJwt.mockReturnValue({ app_role: 'doctor', tenant_id: 'tenant-1' })
@@ -74,7 +74,17 @@ describe('DELETE /api/profesionales/[id]/horarios/[scheduleId]', () => {
     const res = await DELETE(new Request('http://localhost'), makeParams('prof-1', 'sched-1'))
     expect(res.status).toBe(403)
     const body = await res.json() as { error: string }
-    expect(body.error).toContain('administradores')
+    expect(body.error).toBe('Acceso denegado')
+  })
+
+  it('retorna 204 para receptionist al eliminar exitosamente', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'rec-uuid' } }, error: null })
+    mockGetSession.mockResolvedValue({ data: { session: { access_token: 'header.payload.sig' } } })
+    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' })
+    mockFrom.mockReturnValue(makeDeleteChain({ error: null, count: 1 }))
+
+    const res = await DELETE(new Request('http://localhost'), makeParams('prof-1', 'sched-uuid-1'))
+    expect(res.status).toBe(204)
   })
 
   it('retorna 204 al eliminar exitosamente', async () => {

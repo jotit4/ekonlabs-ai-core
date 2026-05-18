@@ -15,6 +15,7 @@ import {
 import type { Professional } from '@/types/profesionales'
 import { ProfessionalScheduleView } from '@/components/profesionales/ProfessionalScheduleView'
 import { BlockedTimesView } from '@/components/profesionales/BlockedTimesView'
+import { CreateUserModal } from '@/components/profesionales/CreateUserModal'
 
 // ── Skeleton ─────────────────────────────────────────────────────────────────
 
@@ -349,6 +350,7 @@ interface ProfessionalRowProps {
   onRequestDeactivate: () => void
   onCancelDeactivate: () => void
   onToggleSchedules: (id: string) => void
+  onCreateUser: () => void
 }
 
 function ProfessionalRow({
@@ -362,6 +364,7 @@ function ProfessionalRow({
   onRequestDeactivate,
   onCancelDeactivate,
   onToggleSchedules,
+  onCreateUser,
 }: ProfessionalRowProps) {
   const isSchedulesOpen = openSchedulesFor === professional.professional_id
 
@@ -390,6 +393,23 @@ function ProfessionalRow({
                 </span>
               ))}
             </div>
+          )}
+          {professional.linked_user_email ? (
+            <p
+              className="mt-1 text-xs text-[var(--color-status-ok)]"
+              data-testid={`linked-user-email-${professional.professional_id}`}
+            >
+              Cuenta: {professional.linked_user_email}
+            </p>
+          ) : (
+            <button
+              type="button"
+              onClick={onCreateUser}
+              className="mt-1 text-xs text-[var(--color-interactive)] hover:underline font-medium"
+              data-testid={`create-user-btn-${professional.professional_id}`}
+            >
+              + Crear cuenta de usuario
+            </button>
           )}
         </div>
         <div className="flex items-center gap-3 shrink-0">
@@ -490,6 +510,7 @@ export function ProfesionalesView() {
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [openSchedulesFor, setOpenSchedulesFor] = useState<string | null>(null)
+  const [creatingUserFor, setCreatingUserFor] = useState<string | null>(null)
 
   const handleToggleSchedules = (id: string) => {
     setOpenSchedulesFor((prev) => (prev === id ? null : id))
@@ -545,6 +566,7 @@ export function ProfesionalesView() {
               onRequestDeactivate={() => setConfirmingId(professional.professional_id)}
               onCancelDeactivate={() => setConfirmingId(null)}
               onToggleSchedules={handleToggleSchedules}
+              onCreateUser={() => setCreatingUserFor(professional.professional_id)}
             />
           ))}
         </ul>
@@ -565,6 +587,18 @@ export function ProfesionalesView() {
           Nuevo profesional
         </button>
       )}
+
+      {creatingUserFor && (() => {
+        const prof = professionals.find(p => p.professional_id === creatingUserFor)
+        if (!prof) return null
+        return (
+          <CreateUserModal
+            professionalId={creatingUserFor}
+            professionalName={prof.name}
+            onClose={() => setCreatingUserFor(null)}
+          />
+        )
+      })()}
     </section>
   )
 }

@@ -4,10 +4,11 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
-  Calendar, ChartBar, Layers, MessageSquare, PanelLeft,
+  Calendar, CalendarClock, ChartBar, Layers, MessageSquare, PanelLeft,
   PanelLeftClose, Settings, ShieldCheck, UserCheck, UserCog, Users,
 } from 'lucide-react'
 import type { UserRole } from '@/types/index'
+import { UserProfileButton } from './UserProfileButton'
 
 type NavItem = {
   href: string
@@ -20,11 +21,13 @@ const NAV_ITEMS: Record<UserRole, NavItem[]> = {
     { href: '/conversaciones', label: 'Conversaciones', icon: MessageSquare },
     { href: '/agenda',         label: 'Calendario',      icon: Calendar },
     { href: '/pacientes',      label: 'Pacientes',        icon: Users },
+    { href: '/configuracion/profesionales', label: 'Profesionales', icon: UserCheck },
   ],
   doctor: [
-    { href: '/agenda',           label: 'Calendario', icon: Calendar },
-    { href: '/agenda/mi-agenda', label: 'Mi Agenda',  icon: UserCheck },
-    { href: '/pacientes',        label: 'Pacientes',  icon: Users },
+    { href: '/agenda',               label: 'Calendario',        icon: Calendar },
+    { href: '/agenda/mi-agenda',     label: 'Mi Agenda',         icon: UserCheck },
+    { href: '/mi-disponibilidad',    label: 'Mi Disponibilidad', icon: CalendarClock },
+    { href: '/pacientes',            label: 'Pacientes',         icon: Users },
   ],
   admin: [
     { href: '/conversaciones',                label: 'Conversaciones', icon: MessageSquare },
@@ -94,6 +97,11 @@ export function AppSidebar({ role }: { role: UserRole }) {
             )
           })}
         </ul>
+
+        {/* Footer del sidebar — perfil y logout */}
+        <div className="p-2 border-t border-[var(--color-border)]">
+          <UserProfileButton collapsed={collapsed} />
+        </div>
       </nav>
 
       {/* Mobile bottom nav — visible below lg (1024px) */}
@@ -102,7 +110,7 @@ export function AppSidebar({ role }: { role: UserRole }) {
         className="lg:hidden fixed bottom-0 inset-x-0 flex items-center justify-around
           h-14 border-t border-[var(--color-border)] bg-[var(--color-bg)] z-40"
       >
-        {items.slice(0, 4).map(({ href, label, icon: Icon }) => {
+        {items.slice(0, 3).map(({ href, label, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(href + '/')
           return (
             <Link
@@ -123,6 +131,7 @@ export function AppSidebar({ role }: { role: UserRole }) {
             </Link>
           )
         })}
+        <UserProfileButton collapsed={true} />
       </nav>
     </>
   )

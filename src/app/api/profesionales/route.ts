@@ -12,12 +12,13 @@ export async function GET(): Promise<Response> {
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }
 
-  // 2. Autorización — solo admin
+  // 2. Autorización — admin o receptionist
   const { data: sessionData } = await supabase.auth.getSession()
   const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
-  if (claims?.app_role !== 'admin') {
+  const role = claims?.app_role
+  if (role !== 'admin' && role !== 'receptionist') {
     return Response.json(
-      { error: 'Solo administradores pueden gestionar profesionales' },
+      { error: 'Acceso denegado' },
       { status: 403 }
     )
   }
@@ -43,7 +44,21 @@ export async function GET(): Promise<Response> {
     return Response.json({ error: 'Error al obtener profesionales' }, { status: 500 })
   }
 
-  // Aplanar servicios para la respuesta
+  // 4. Query separada para obtener usuarios vinculados por professional_id
+  // Usamos service role (admin) para bypassar RLS de dashboard_users y garantizar
+  // que admin y receptionist obtengan los datos correctamente (Story 10-6)
+  const { createServiceRoleClient } = await import('@/lib/supabase/admin')
+  const supabaseAdmin = createServiceRoleClient()
+  const { data: linkedUsers } = await supabaseAdmin
+    .from('dashboard_users')
+    .select('professional_id, email')
+    .not('professional_id', 'is', null)
+
+  const linkedMap = new Map(
+    (linkedUsers ?? []).map((u: { professional_id: string; email: string }) => [u.professional_id, u.email])
+  )
+
+  // Aplanar servicios y agregar linked_user_email para la respuesta
   const professionals = (data ?? []).map((p) => ({
     professional_id: p.professional_id,
     tenant_id: p.tenant_id,
@@ -55,6 +70,7 @@ export async function GET(): Promise<Response> {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .map((sp: any) => sp.services)
       .filter(Boolean) as { service_id: string; name: string }[],
+    linked_user_email: linkedMap.get(p.professional_id) ?? null,
   }))
 
   return Response.json({ data: professionals })
@@ -69,12 +85,13 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }
 
-  // 2. Autorización — solo admin
+  // 2. Autorización — admin o receptionist
   const { data: sessionData } = await supabase.auth.getSession()
   const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
-  if (claims?.app_role !== 'admin') {
+  const role = claims?.app_role
+  if (role !== 'admin' && role !== 'receptionist') {
     return Response.json(
-      { error: 'Solo administradores pueden gestionar profesionales' },
+      { error: 'Acceso denegado' },
       { status: 403 }
     )
   }

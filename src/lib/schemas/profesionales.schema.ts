@@ -17,3 +17,14 @@ export const UpdateProfessionalSchema = z.object({
 })
 
 export type UpdateProfessionalFormValues = z.infer<typeof UpdateProfessionalSchema>
+
+// ── Story 10.6: Crear usuario para profesional ────────────────────────────────
+
+export const CreateProfessionalUserSchema = z.object({
+  email: z
+    .string()
+    .min(1, { error: 'Ingresá un email' })
+    .email({ error: 'Ingresá un email válido' }),
+})
+
+export type CreateProfessionalUserFormValues = z.infer<typeof CreateProfessionalUserSchema>

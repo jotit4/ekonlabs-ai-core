@@ -1,11 +1,11 @@
 import { redirect } from 'next/navigation'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { parseJwtPayload } from '@/lib/utils/jwt'
-import { ProfesionalesView } from '@/components/configuracion/ProfesionalesView'
+import { MiDisponibilidadView } from '@/components/mi-disponibilidad/MiDisponibilidadView'
 
 export const dynamic = 'force-dynamic'
 
-export default async function ProfesionalesPage() {
+export default async function MiDisponibilidadPage() {
   const supabase = await createSupabaseServerClient()
 
   const { data: { user } } = await supabase.auth.getUser()
@@ -14,18 +14,17 @@ export default async function ProfesionalesPage() {
   const { data: { session } } = await supabase.auth.getSession()
   const claims = parseJwtPayload(session?.access_token ?? '')
 
-  const role = claims?.app_role
-  if (role !== 'admin' && role !== 'receptionist') {
+  if (claims?.app_role !== 'doctor') {
     redirect('/agenda')
   }
 
   return (
     <section className="mx-auto w-full max-w-4xl px-6 py-8">
       <header className="mb-6">
-        <p className="text-sm text-[var(--color-text-secondary)]">Configuración</p>
-        <h1 className="mt-1 text-[28px] font-semibold leading-tight">Profesionales</h1>
+        <p className="text-sm text-[var(--color-text-secondary)]">Mi cuenta</p>
+        <h1 className="mt-1 text-[28px] font-semibold leading-tight">Mi Disponibilidad</h1>
       </header>
-      <ProfesionalesView />
+      <MiDisponibilidadView />
     </section>
   )
 }

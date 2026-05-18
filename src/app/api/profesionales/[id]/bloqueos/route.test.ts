@@ -41,6 +41,17 @@ function setupAdminAuth() {
   })
 }
 
+function setupReceptionistAuth() {
+  mockGetUser.mockResolvedValue({ data: { user: { id: 'rec-uuid' } }, error: null })
+  mockGetSession.mockResolvedValue({
+    data: { session: { access_token: 'header.payload.sig' } },
+  })
+  mockParseJwt.mockReturnValue({
+    app_role: 'receptionist',
+    tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4',
+  })
+}
+
 function makeParams(id: string) {
   return { params: Promise.resolve({ id }) }
 }
@@ -90,7 +101,7 @@ describe('GET /api/profesionales/[id]/bloqueos', () => {
     expect(body.error).toBe('No autorizado')
   })
 
-  it('retorna 403 si el rol no es admin', async () => {
+  it('retorna 403 si el rol no tiene acceso (doctor)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'doc-1' } }, error: null })
     mockGetSession.mockResolvedValue({ data: { session: { access_token: 'token' } } })
     mockParseJwt.mockReturnValue({ app_role: 'doctor', tenant_id: 'tenant-1' })
@@ -98,7 +109,17 @@ describe('GET /api/profesionales/[id]/bloqueos', () => {
     const res = await GET(new Request('http://localhost'), makeParams('prof-1'))
     expect(res.status).toBe(403)
     const body = await res.json() as { error: string }
-    expect(body.error).toContain('administradores')
+    expect(body.error).toBe('Acceso denegado')
+  })
+
+  it('retorna 200 para receptionist', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'rec-uuid' } }, error: null })
+    mockGetSession.mockResolvedValue({ data: { session: { access_token: 'header.payload.sig' } } })
+    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' })
+    mockFrom.mockReturnValue(makeSelectChain({ data: [SAMPLE_BLOCKED], error: null }))
+
+    const res = await GET(new Request('http://localhost'), makeParams('prof-1'))
+    expect(res.status).toBe(200)
   })
 
   it('retorna 200 con { data: BlockedTime[] }', async () => {
@@ -141,5 +162,16 @@ describe('POST /api/profesionales/[id]/bloqueos', () => {
     expect(res.status).toBe(201)
     const body = await res.json() as { data: typeof SAMPLE_BLOCKED }
     expect(body.data.block_id).toBe('block-uuid-1')
+  })
+
+  it('retorna 201 para receptionist con datos válidos', async () => {
+    setupReceptionistAuth()
+    mockFrom.mockReturnValue(makeInsertSelectSingleChain({ data: SAMPLE_BLOCKED, error: null }))
+
+    const res = await POST(
+      makePostRequest({ date_from: '2026-07-01', date_to: '2026-07-14', reason: 'Vacaciones' }),
+      makeParams('prof-1')
+    )
+    expect(res.status).toBe(201)
   })
 })

@@ -10,12 +10,14 @@ const {
   mockUseUpdateProfessional,
   mockUseUpdateProfessionalServices,
   mockUseServices,
+  mockUseCreateProfessionalUser,
 } = vi.hoisted(() => ({
   mockUseProfessionals: vi.fn(),
   mockUseCreateProfessional: vi.fn(),
   mockUseUpdateProfessional: vi.fn(),
   mockUseUpdateProfessionalServices: vi.fn(),
   mockUseServices: vi.fn(),
+  mockUseCreateProfessionalUser: vi.fn(),
 }))
 
 vi.mock('@/hooks/use-professionals', () => ({
@@ -48,6 +50,20 @@ vi.mock('@/components/profesionales/BlockedTimesView', () => ({
     React.createElement('div', { 'data-testid': `blocked-view-${professionalId}` }),
 }))
 
+vi.mock('@/hooks/use-create-professional-user', () => ({
+  useCreateProfessionalUser: mockUseCreateProfessionalUser,
+}))
+
+vi.mock('@/components/profesionales/CreateUserModal', () => ({
+  CreateUserModal: ({ professionalName, onClose }: { professionalName: string; onClose: () => void }) =>
+    React.createElement(
+      'div',
+      { 'data-testid': 'create-user-modal' },
+      `Modal para ${professionalName}`,
+      React.createElement('button', { onClick: onClose }, 'Cerrar')
+    ),
+}))
+
 import { ProfesionalesView } from './ProfesionalesView'
 
 // ── Datos de ejemplo ──────────────────────────────────────────────────────────
@@ -60,6 +76,7 @@ const ACTIVE_PROFESSIONAL = {
   active: true,
   created_at: '2026-05-01T00:00:00Z',
   services: [{ service_id: 'svc-1', name: 'Kinesiología' }],
+  linked_user_email: null,
 }
 
 const INACTIVE_PROFESSIONAL = {
@@ -70,6 +87,13 @@ const INACTIVE_PROFESSIONAL = {
   active: false,
   created_at: '2026-05-02T00:00:00Z',
   services: [],
+  linked_user_email: null,
+}
+
+const PROFESSIONAL_WITH_USER = {
+  ...ACTIVE_PROFESSIONAL,
+  professional_id: 'prof-3',
+  linked_user_email: 'garcia@login.com',
 }
 
 const AVAILABLE_SERVICES = [
@@ -112,6 +136,11 @@ function setupDefaultMocks(professionals = [ACTIVE_PROFESSIONAL]) {
     isPending: false,
   })
 
+  mockUseCreateProfessionalUser.mockReturnValue({
+    mutate: vi.fn(),
+    isPending: false,
+  })
+
   return { createMutateFn, updateMutateFn, updateServicesMutateFn }
 }
 
@@ -128,6 +157,7 @@ describe('ProfesionalesView', () => {
     mockUseUpdateProfessional.mockReturnValue({ mutate: vi.fn(), isPending: false })
     mockUseUpdateProfessionalServices.mockReturnValue({ mutate: vi.fn(), isPending: false })
     mockUseServices.mockReturnValue({ services: [], isPending: false })
+    mockUseCreateProfessionalUser.mockReturnValue({ mutate: vi.fn(), isPending: false })
 
     render(<ProfesionalesView />)
 
@@ -142,6 +172,7 @@ describe('ProfesionalesView', () => {
     mockUseUpdateProfessional.mockReturnValue({ mutate: vi.fn(), isPending: false })
     mockUseUpdateProfessionalServices.mockReturnValue({ mutate: vi.fn(), isPending: false })
     mockUseServices.mockReturnValue({ services: [], isPending: false })
+    mockUseCreateProfessionalUser.mockReturnValue({ mutate: vi.fn(), isPending: false })
 
     render(<ProfesionalesView />)
 
@@ -242,5 +273,58 @@ describe('ProfesionalesView', () => {
 
     expect(screen.getByText('Activo')).toBeInTheDocument()
     expect(screen.getByText('Inactivo')).toBeInTheDocument()
+  })
+
+  it('muestra botón "Crear cuenta de usuario" cuando el profesional no tiene usuario vinculado', () => {
+    setupDefaultMocks([ACTIVE_PROFESSIONAL])  // linked_user_email: null
+
+    render(<ProfesionalesView />)
+
+    expect(
+      screen.getByTestId(`create-user-btn-${ACTIVE_PROFESSIONAL.professional_id}`)
+    ).toBeInTheDocument()
+  })
+
+  it('muestra el email vinculado en lugar del botón cuando el profesional ya tiene usuario', () => {
+    setupDefaultMocks([PROFESSIONAL_WITH_USER])  // linked_user_email: 'garcia@login.com'
+
+    render(<ProfesionalesView />)
+
+    expect(
+      screen.queryByTestId(`create-user-btn-${PROFESSIONAL_WITH_USER.professional_id}`)
+    ).toBeNull()
+    expect(
+      screen.getByTestId(`linked-user-email-${PROFESSIONAL_WITH_USER.professional_id}`)
+    ).toHaveTextContent('garcia@login.com')
+  })
+
+  it('abre el modal al hacer click en "Crear cuenta de usuario"', async () => {
+    setupDefaultMocks([ACTIVE_PROFESSIONAL])
+
+    render(<ProfesionalesView />)
+
+    fireEvent.click(screen.getByTestId(`create-user-btn-${ACTIVE_PROFESSIONAL.professional_id}`))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('create-user-modal')).toBeInTheDocument()
+    })
+  })
+
+  it('cierra el modal al llamar onClose', async () => {
+    setupDefaultMocks([ACTIVE_PROFESSIONAL])
+
+    render(<ProfesionalesView />)
+
+    fireEvent.click(screen.getByTestId(`create-user-btn-${ACTIVE_PROFESSIONAL.professional_id}`))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('create-user-modal')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByText('Cerrar'))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('create-user-modal')).toBeNull()
+    })
   })
 })

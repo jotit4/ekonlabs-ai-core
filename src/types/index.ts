@@ -15,6 +15,7 @@ export interface DashboardUser {
   is_active: boolean
   full_name: string
   email: string
+  professional_id: string | null  // Solo para role='doctor', null para admin/receptionist
   created_at: string
   updated_at: string
 }

@@ -54,7 +54,7 @@ describe('ProfesionalesPage', () => {
     await expect(ProfesionalesPage()).rejects.toThrow('REDIRECT:/login')
   })
 
-  it('redirige a /agenda si el rol es receptionist', async () => {
+  it('renderiza ProfesionalesView cuando el rol es receptionist', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
     mockGetSession.mockResolvedValue({
       data: {
@@ -64,7 +64,11 @@ describe('ProfesionalesPage', () => {
       },
     })
 
-    await expect(ProfesionalesPage()).rejects.toThrow('REDIRECT:/agenda')
+    const element = await ProfesionalesPage()
+    render(element)
+
+    expect(screen.getByTestId('profesionales-view')).toBeInTheDocument()
+    expect(screen.getByText('Profesionales')).toBeInTheDocument()
   })
 
   it('redirige a /agenda si el rol es doctor', async () => {

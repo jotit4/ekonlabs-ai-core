@@ -14,12 +14,13 @@ export async function DELETE(
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }
 
-  // 2. Autorización — solo admin
+  // 2. Autorización — admin o receptionist
   const { data: sessionData } = await supabase.auth.getSession()
   const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
-  if (claims?.app_role !== 'admin') {
+  const role = claims?.app_role
+  if (role !== 'admin' && role !== 'receptionist') {
     return Response.json(
-      { error: 'Solo administradores pueden gestionar bloqueos de profesionales' },
+      { error: 'Acceso denegado' },
       { status: 403 }
     )
   }

@@ -41,6 +41,17 @@ function setupAdminAuth() {
   })
 }
 
+function setupReceptionistAuth() {
+  mockGetUser.mockResolvedValue({ data: { user: { id: 'rec-uuid' } }, error: null })
+  mockGetSession.mockResolvedValue({
+    data: { session: { access_token: 'header.payload.sig' } },
+  })
+  mockParseJwt.mockReturnValue({
+    app_role: 'receptionist',
+    tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4',
+  })
+}
+
 function makeParams(id: string) {
   return { params: Promise.resolve({ id }) }
 }
@@ -93,7 +104,7 @@ describe('GET /api/profesionales/[id]/horarios', () => {
     expect(body.error).toBe('No autorizado')
   })
 
-  it('retorna 403 si el rol no es admin', async () => {
+  it('retorna 403 si el rol no tiene acceso (doctor)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'doc-1' } }, error: null })
     mockGetSession.mockResolvedValue({ data: { session: { access_token: 'token' } } })
     mockParseJwt.mockReturnValue({ app_role: 'doctor', tenant_id: 'tenant-1' })
@@ -101,7 +112,7 @@ describe('GET /api/profesionales/[id]/horarios', () => {
     const res = await GET(new Request('http://localhost'), makeParams('prof-1'))
     expect(res.status).toBe(403)
     const body = await res.json() as { error: string }
-    expect(body.error).toContain('administradores')
+    expect(body.error).toBe('Acceso denegado')
   })
 
   it('retorna 200 con { data: ProfessionalSchedule[] } para admin válido', async () => {
@@ -113,6 +124,16 @@ describe('GET /api/profesionales/[id]/horarios', () => {
     const body = await res.json() as { data: typeof SAMPLE_SCHEDULE[] }
     expect(body.data).toHaveLength(1)
     expect(body.data[0].schedule_id).toBe('sched-uuid-1')
+  })
+
+  it('retorna 200 con horarios para receptionist', async () => {
+    setupReceptionistAuth()
+    mockFrom.mockReturnValue(makeSelectChain({ data: [SAMPLE_SCHEDULE], error: null }))
+
+    const res = await GET(new Request('http://localhost'), makeParams('prof-1'))
+    expect(res.status).toBe(200)
+    const body = await res.json() as { data: typeof SAMPLE_SCHEDULE[] }
+    expect(body.data).toHaveLength(1)
   })
 
   it('retorna 500 si Supabase falla', async () => {
@@ -137,10 +158,10 @@ describe('POST /api/profesionales/[id]/horarios', () => {
     expect(res.status).toBe(401)
   })
 
-  it('retorna 403 si no es admin', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: 'rec-1' } }, error: null })
+  it('retorna 403 si el rol no tiene acceso (doctor)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'doc-1' } }, error: null })
     mockGetSession.mockResolvedValue({ data: { session: { access_token: 'token' } } })
-    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
+    mockParseJwt.mockReturnValue({ app_role: 'doctor', tenant_id: 'tenant-1' })
 
     const res = await POST(makePostRequest({ day_of_week: 0, start_time: '09:00', end_time: '18:00' }), makeParams('prof-1'))
     expect(res.status).toBe(403)
@@ -235,5 +256,25 @@ describe('POST /api/profesionales/[id]/horarios', () => {
         end_time: '17:45:00',
       })
     )
+  })
+
+  it('retorna 201 para receptionist con datos válidos', async () => {
+    setupReceptionistAuth()
+
+    // Primera llamada: select de horarios existentes (vacío)
+    mockFrom.mockReturnValueOnce({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+      }),
+    })
+    // Segunda llamada: insert
+    mockFrom.mockReturnValueOnce(makeInsertSelectSingleChain({ data: SAMPLE_SCHEDULE, error: null }))
+
+    const res = await POST(
+      makePostRequest({ day_of_week: 0, start_time: '09:00', end_time: '18:00' }),
+      makeParams('prof-1')
+    )
+    expect(res.status).toBe(201)
   })
 })

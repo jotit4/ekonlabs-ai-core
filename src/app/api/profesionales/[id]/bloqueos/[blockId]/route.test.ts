@@ -58,8 +58,29 @@ function makeDeleteChain(result: { error: unknown; count: number }) {
 describe('DELETE /api/profesionales/[id]/bloqueos/[blockId]', () => {
   beforeEach(() => { vi.clearAllMocks() })
 
+  it('retorna 403 si el rol no tiene acceso (doctor)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'doc-1' } }, error: null })
+    mockGetSession.mockResolvedValue({ data: { session: { access_token: 'token' } } })
+    mockParseJwt.mockReturnValue({ app_role: 'doctor', tenant_id: 'tenant-1' })
+
+    const res = await DELETE(new Request('http://localhost'), makeParams('prof-1', 'block-uuid-1'))
+    expect(res.status).toBe(403)
+    const body = await res.json() as { error: string }
+    expect(body.error).toBe('Acceso denegado')
+  })
+
   it('retorna 204 al eliminar exitosamente', async () => {
     setupAdminAuth()
+    mockFrom.mockReturnValue(makeDeleteChain({ error: null, count: 1 }))
+
+    const res = await DELETE(new Request('http://localhost'), makeParams('prof-1', 'block-uuid-1'))
+    expect(res.status).toBe(204)
+  })
+
+  it('retorna 204 para receptionist al eliminar exitosamente', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'rec-uuid' } }, error: null })
+    mockGetSession.mockResolvedValue({ data: { session: { access_token: 'header.payload.sig' } } })
+    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' })
     mockFrom.mockReturnValue(makeDeleteChain({ error: null, count: 1 }))
 
     const res = await DELETE(new Request('http://localhost'), makeParams('prof-1', 'block-uuid-1'))
