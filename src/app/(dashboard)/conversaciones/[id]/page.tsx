@@ -3,6 +3,7 @@
 import { useParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { useChatwootMessages } from '@/hooks/use-chatwoot-messages'
+import { useConversationThreadRealtime } from '@/hooks/use-conversation-thread-realtime'
 import { ConversationThread } from '@/components/conversaciones/ConversationThread'
 import { PatientContextPanel } from '@/components/conversaciones/PatientContextPanel'
 import { TakeoverBar } from '@/components/conversaciones/TakeoverBar'
@@ -13,6 +14,7 @@ export default function ConversationThreadPage() {
   const conversationId = params?.id ?? ''
 
   const { messages, isConnected, isLoading } = useChatwootMessages(conversationId)
+  useConversationThreadRealtime(conversationId)
 
   // Suscribir reactivamente a la lista de conversaciones para detectar cambios de estado
   const { data: conversations, isPending: isConversationsPending } = useQuery<ConversationSummary[]>({

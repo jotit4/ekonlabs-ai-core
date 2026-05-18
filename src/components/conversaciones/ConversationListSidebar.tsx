@@ -50,6 +50,7 @@ export function ConversationListSidebar() {
     queryKey: ['conversations', 'list', { status: 'all' }],
     queryFn: fetchConversations,
     staleTime: 0,
+    refetchInterval: 30_000, // fallback: si Realtime cae, la lista se actualiza igual cada 30s
   })
 
   const handleSelect = useCallback(
