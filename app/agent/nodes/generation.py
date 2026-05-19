@@ -1067,8 +1067,9 @@ def generation_node(state: ConversationState) -> dict:
     # Walk-in service — sin turno previo, solo por orden de llegada
     if state.get("walk_in_service", False):
         service_name = state.get("selected_service_name") or "este servicio"
+        greeting = "¡Hola! 😊 " if state.get("is_first_contact", False) else ""
         msg = (
-            f"{service_name} atiende sin turno previo, por orden de llegada. "
+            f"{greeting}{service_name} atiende sin turno previo, por orden de llegada. "
             "Podés acercarte directamente a la clínica en el horario de atención. "
             "¿Necesitás saber los horarios o tenés alguna otra consulta?"
         )
