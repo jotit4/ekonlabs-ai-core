@@ -173,3 +173,8 @@ app.include_router(health_router, prefix="/api/v1")
 app.include_router(tenants_router, prefix="/api/v1")
 app.include_router(webhooks_router, prefix="/api/v1")
 app.include_router(appointments_router, prefix="/api/v1")
+
+
+@app.get("/health", include_in_schema=False)
+async def health_root() -> JSONResponse:
+    return JSONResponse(status_code=200, content={"status": "ok"})
