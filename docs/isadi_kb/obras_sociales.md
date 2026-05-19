@@ -1,47 +1,30 @@
 # Obras Sociales y Coberturas — ISADI
 
-ISADI acepta las siguientes obras sociales y prepagas. Para coberturas no listadas, el paciente debe consultar directamente en la cartilla de su obra social.
+ISADI acepta las siguientes obras sociales y prepagas: Particular, OSEP (Obra Social de Empleados Públicos), OSPE, Sancor Salud (Plan F800 y Plan A2), Swiss Medical y Prevención Salud. Hay también muchas otras obras sociales con convenio vigente — consultá tu cartilla o llamá a recepción.
 
-## Obras sociales con convenio activo
+## Detalle de coberturas por obra social
 
-### Particular
-Pago directo, sin obra social. No requiere número de afiliado.
+**Particular**: Pago directo, sin obra social. No requiere número de afiliado.
 
-### OSEP (Obra Social de Empleados Públicos)
-- Cubre: Fisioterapia y Hidroterapia
-- Fisioterapia: coseguro de $22.000 por sesión
-- Hidroterapia: coseguro de $27.000 por sesión
-- No cubre: Traumatología
+**OSEP** (Obra Social de Empleados Públicos): Cubre Fisioterapia y Hidroterapia. Coseguro Fisioterapia $22.000/sesión, Hidroterapia $27.000/sesión. No cubre Traumatología.
 
-### OSPE
-- Cubre: Fisioterapia y Traumatología
-- Coseguro: hay coseguro (consultar monto actualizado)
-- No cubre: Hidroterapia
+**OSPE**: Cubre Fisioterapia y Traumatología. Hay coseguro (consultá monto actualizado). No cubre Hidroterapia.
 
-### Sancor Salud (incluye Sancor F800 y Sancor Plan A2)
-- Cubre: Fisioterapia y Traumatología
-- Sin coseguro actualmente
-- No cubre: Hidroterapia
+## Sancor Salud, Swiss Medical y Prevención Salud
 
-### Swiss Medical
-- Cubre: Fisioterapia y Traumatología
-- Sin coseguro actualmente
-- No cubre: Hidroterapia
+**Sancor Salud** (incluye Plan F800 y Plan A2): Cubre Fisioterapia y Traumatología. Sin coseguro actualmente. No cubre Hidroterapia.
 
-### Prevención Salud
-- Cubre: Fisioterapia y Traumatología
-- Sin coseguro actualmente
-- No cubre: Hidroterapia
+**Swiss Medical**: Cubre Fisioterapia y Traumatología. Sin coseguro actualmente. No cubre Hidroterapia.
+
+**Prevención Salud**: Cubre Fisioterapia y Traumatología. Sin coseguro actualmente. No cubre Hidroterapia.
 
 ## Obras sociales no listadas
 
-Hay muchas más obras sociales con convenio vigente. Si tu obra social no aparece en esta lista, te recomendamos consultarla directamente en la cartilla de tu OS o comunicarte con la recepción de ISADI para verificar la cobertura.
+Hay muchas más obras sociales con convenio vigente. Si tu obra social no aparece en esta lista, consultá directamente en tu cartilla o comunicáte con la recepción de ISADI para verificar la cobertura.
 
 ## Requisito de pedido médico
 
-Para Fisioterapia, Rehabilitación e Hidroterapia se requiere un pedido médico SIEMPRE, independientemente de si el paciente paga particular o con obra social.
-
-Para Kinesiología también se requiere pedido médico.
+Para Fisioterapia, Rehabilitación, Hidroterapia y Kinesiología se requiere un pedido médico SIEMPRE, independientemente de si el paciente paga particular o con obra social.
 
 ## Número de afiliado
 

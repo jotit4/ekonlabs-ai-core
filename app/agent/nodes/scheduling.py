@@ -322,12 +322,16 @@ _SERVICE_ALIASES: dict[str, str] = {
 def _apply_service_aliases(normalized_query: str) -> str:
     """Replace alias terms with canonical terms in the normalized query.
 
-    Applies longest aliases first to avoid partial substitutions
-    (e.g. "rehabilitacion traumatologica" before "rehabilitacion").
+    Uses word-boundary regex to prevent partial matches (e.g. "traumato" inside
+    "traumatologica") and avoid cascading substitutions when a replacement
+    value contains the same substring as a shorter alias.
     """
     for alias in sorted(_SERVICE_ALIASES, key=len, reverse=True):
-        if alias in normalized_query:
-            normalized_query = normalized_query.replace(alias, _SERVICE_ALIASES[alias])
+        normalized_query = re.sub(
+            r"\b" + re.escape(alias) + r"\b",
+            _SERVICE_ALIASES[alias],
+            normalized_query,
+        )
     return normalized_query
 
 

@@ -38,7 +38,7 @@ def make_search_tool(tenant_id: str):
         Returns:
             Concatenated text of the most relevant knowledge chunks.
         """
-        results = search_knowledge(tenant_id=tenant_id, query=query, k=3)
+        results = search_knowledge(tenant_id=tenant_id, query=query, k=5)
         if not results:
             return ""
         return "\n\n---\n\n".join(r["content"] for r in results)
