@@ -603,6 +603,10 @@ def scheduling_node(state: ConversationState) -> dict:
                     tenant_id=tenant_id,
                     service=svc.name,
                 )
+                # Limpiar el draft de Redis para que booking_node no vea gated_service_active=True en el próximo turno
+                booking_draft_service.update_draft(tenant_id, state["phone_number"], {
+                    "gated_service_active": False,
+                })
 
             elif booking_mode == "cycle":
                 # Servicios por ciclo (Pilates, Aquagym): inscripción semanal fija.
@@ -703,7 +707,11 @@ def scheduling_node(state: ConversationState) -> dict:
         selected_service=selected_service_name,
         query_preview=query[:80],
     )
-    result: dict = {"scheduling_intent": True, "available_slots": slots}
+    result: dict = {
+        "scheduling_intent": True,
+        "available_slots": slots,
+        "gated_service_active": False,  # limpiar por si venía de un flujo gated con prerequisito cumplido
+    }
     if selected_service_id is not None:
         result["selected_service_id"] = selected_service_id
     if selected_service_name is not None:
