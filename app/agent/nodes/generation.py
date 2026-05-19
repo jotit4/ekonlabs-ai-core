@@ -725,13 +725,18 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
             extracted_dni = _extract_dni(last_human_text)
 
             if extracted_dni:
-                # DNI encontrado → Fase D (datos extendidos)
-                return _transition_to_phase_d(extracted_dni)
+                # DNI encontrado → Fase C directamente (sin Phase D para evitar alucinaciones del LLM)
+                booking_draft_service.update_draft(tenant_id, state["phone_number"], {
+                    "patient_dni": extracted_dni,
+                    "dni_collection_active": False,
+                })
+                merged_state = {**state, "patient_dni": extracted_dni}
+                return _finalize_registration(merged_state, tenant_id, patient_name, extracted_dni)
 
-            # Sin DNI tras 2 intentos → Fase D sin DNI (no bloquea el turno)
+            # Sin DNI tras 2 intentos → Fase C sin DNI (no bloquea el turno)
             if dni_attempts >= 2:
                 logger.info("generation_node.registration_dni_skipped", tenant_id=tenant_id)
-                return _transition_to_phase_d(captured_dni=None)
+                return _finalize_registration(state, tenant_id, patient_name, None)
 
         # Pedir DNI (Turn 1, o re-preguntar)
         # INFRA-06: update draft with incremented dni_attempts so next turn knows to extract

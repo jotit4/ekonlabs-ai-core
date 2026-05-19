@@ -307,7 +307,7 @@ class TestExtractDni:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestGenerationNodeTurn4PhaseB:
-    """generation_node en Turn 4: Fase B (DNI) → transición a Fase D (datos extendidos) → Fase C (finalización)."""
+    """generation_node en Turn 4: Fase B (DNI) → _finalize_registration directamente → Fase C (finalización)."""
 
     def _make_turn4_state(self, message: str = _DNI, **kwargs) -> dict:
         """State típico de Turn 4 re-hidratado desde Redis."""
@@ -349,26 +349,36 @@ class TestGenerationNodeTurn4PhaseB:
         state.update(kwargs)
         return state
 
-    # ── Fase B: DNI capturado → transición a Fase D ───────────────────────────
+    # ── Fase B: DNI capturado → _finalize_registration directo ──────────────────
 
-    def test_phase_b_transitions_to_phase_d(self):
-        """dni_collection_active=True, dni_attempts=1, DNI válido → activa Fase D (no finaliza aún)."""
+    def test_phase_b_finalizes_directly_after_dni(self):
+        """dni_collection_active=True, dni_attempts=1, DNI válido → llama _finalize_registration directamente (sin Phase D)."""
         from app.agent.nodes.generation import generation_node
 
-        mock_llm = _make_mock_llm("¿Tenés obra social?")
+        mock_llm = _make_mock_llm()
+        mock_patient = _mock_patient()
 
         with (
             patch("app.agent.nodes.generation._llm", mock_llm),
+            patch("app.agent.nodes.generation.patient_service") as mock_ps,
             patch("app.agent.nodes.generation.calendar_service") as mock_cs,
+            patch("app.agent.nodes.generation.tenant_service") as mock_ts,
             patch("app.agent.nodes.generation.booking_draft_service") as mock_draft,
         ):
+            mock_ps.get_or_create_patient.return_value = mock_patient
+            mock_cs.create_event.return_value = _EVENT_ID
+            mock_ts.get_tenant_config.return_value = _mock_tenant()
+            mock_ts.get_tenant_services.return_value = []
             mock_draft.get_draft.return_value = {}
             result = generation_node(self._make_turn4_state(_DNI))
 
-        # Phase D activated — calendar NOT touched yet
-        mock_cs.create_event.assert_not_called()
-        assert result.get("extended_collection_active") is True
+        # Phase C called directly — calendar event created, Phase D NOT activated
+        mock_cs.create_event.assert_called_once()
+        mock_ps.get_or_create_patient.assert_called_once()
+        assert not result.get("extended_collection_active")
         assert result.get("patient_dni") == _DNI
+        assert result.get("name_collection_active") is False
+        assert result.get("dni_collection_active") is False
 
     def test_phase_b_does_not_use_bind_tools(self):
         """Registration path usa _get_llm().invoke() (NO bind_tools)."""
@@ -718,11 +728,12 @@ class TestGenerationNodeTurn4PhaseB:
 
     # ── Path: DNI no dado tras 2 intentos → Fase D activa ─────────────────────
 
-    def test_dni_skipped_after_2_attempts_activates_phase_d(self):
-        """dni_attempts >= 2 sin DNI extraído → activa Fase D (sin DNI), no finaliza directamente."""
+    def test_dni_skipped_after_2_attempts_finalizes_without_dni(self):
+        """dni_attempts >= 2 sin DNI extraído → llama _finalize_registration sin DNI (no bloquea el turno)."""
         from app.agent.nodes.generation import generation_node
 
-        mock_llm = _make_mock_llm("¿Tenés obra social?")
+        mock_llm = _make_mock_llm()
+        mock_patient = _mock_patient()
 
         state = self._make_turn4_state(
             "no recuerdo el número",  # mensaje sin DNI válido
@@ -731,15 +742,22 @@ class TestGenerationNodeTurn4PhaseB:
 
         with (
             patch("app.agent.nodes.generation._llm", mock_llm),
+            patch("app.agent.nodes.generation.patient_service") as mock_ps,
             patch("app.agent.nodes.generation.calendar_service") as mock_cs,
+            patch("app.agent.nodes.generation.tenant_service") as mock_ts,
             patch("app.agent.nodes.generation.booking_draft_service") as mock_draft,
         ):
+            mock_ps.get_or_create_patient.return_value = mock_patient
+            mock_cs.create_event.return_value = _EVENT_ID
+            mock_ts.get_tenant_config.return_value = _mock_tenant()
+            mock_ts.get_tenant_services.return_value = []
             mock_draft.get_draft.return_value = {}
             result = generation_node(state)
 
-        mock_cs.create_event.assert_not_called()
-        assert result.get("extended_collection_active") is True
-        assert result.get("patient_dni") is None
+        # Finalize called directly — calendar created, no Phase D
+        mock_cs.create_event.assert_called_once()
+        assert not result.get("extended_collection_active")
+        assert result.get("calendar_event_id") == _EVENT_ID
 
     def test_dni_skipped_event_still_created(self):
         """Cuando se salta el DNI, el evento se crea igualmente (vía Fase D → C)."""
