@@ -56,7 +56,7 @@ def main():
 
     queues = [Queue("default", connection=connection)]
     worker = Worker(queues, connection=connection)
-    worker.work()
+    worker.work(with_scheduler=True)
 
 
 def _purge_stale_scheduled_jobs(connection: Redis, logger) -> None:
