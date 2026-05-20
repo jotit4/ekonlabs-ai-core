@@ -102,3 +102,12 @@
     animation-duration: 0.01ms !important;
   }
 }
+
+/* react-big-calendar overrides */
+.rbc-today {
+  background-color: color-mix(in srgb, var(--color-interactive, #007aff) 5%, transparent) !important;
+}
+
+.rbc-current-time-indicator {
+  background-color: var(--color-interactive, #007aff);
+}

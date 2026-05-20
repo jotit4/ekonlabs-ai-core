@@ -42,6 +42,7 @@ function getEventColor(status: AppointmentStatus): string {
   }
 }
 
+// Mes: muestra hora porque la vista mes no agrega header de hora
 function RangeEvent({ event }: { event: CalendarEvent }) {
   const professionalName =
     event.resource.professionals?.name ??
@@ -57,6 +58,28 @@ function RangeEvent({ event }: { event: CalendarEvent }) {
       {professionalName && (
         <span className="text-[10px] opacity-85 truncate leading-tight mt-px">
           {professionalName}
+        </span>
+      )}
+    </div>
+  )
+}
+
+// Semana/Día: sin hora — react-big-calendar ya la muestra en el header del chip
+function WeekDayEvent({ event }: { event: CalendarEvent }) {
+  const professionalName =
+    event.resource.professionals?.name ??
+    event.resource.services?.professional_name ??
+    null
+  const serviceName = event.resource.services?.name ?? null
+
+  return (
+    <div className="flex flex-col h-full px-1 py-0 cursor-pointer overflow-hidden">
+      <span className="text-[11px] font-semibold leading-tight truncate">
+        {event.resource.patients?.full_name ?? 'Paciente'}
+      </span>
+      {(serviceName ?? professionalName) && (
+        <span className="text-[10px] opacity-85 truncate leading-tight">
+          {[serviceName, professionalName].filter(Boolean).join(' · ')}
         </span>
       )}
     </div>
@@ -332,6 +355,9 @@ export function CalendarViewRangeReadOnly({
           })}
           components={{
             event: (props: { event: CalendarEvent }) => <RangeEvent event={props.event} />,
+            week: {
+              event: (props: { event: CalendarEvent }) => <WeekDayEvent event={props.event} />,
+            },
           }}
         />
       </div>
