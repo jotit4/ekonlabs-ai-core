@@ -716,4 +716,14 @@ def scheduling_node(state: ConversationState) -> dict:
         result["selected_service_id"] = selected_service_id
     if selected_service_name is not None:
         result["selected_service_name"] = selected_service_name
+
+    # INFRA-06: state resets each turn — persist service_id to Redis draft so
+    # booking_node can read it when the user confirms (e.g. "el 2"). Without this,
+    # non-gated services (no prerequisite) never write to the draft and arrive empty.
+    if selected_service_id and slots:
+        booking_draft_service.save_draft(tenant_id, state["phone_number"], {
+            "selected_service_id": selected_service_id,
+            "selected_service_name": selected_service_name,
+        })
+
     return result
