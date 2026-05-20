@@ -11,7 +11,7 @@ import type { ConversationSummary, ConversationStatus, ConfidenceLevel } from '@
 
 export default function ConversationThreadPage() {
   const params = useParams<{ id: string }>()
-  const conversationId = params?.id ?? ''
+  const conversationId = decodeURIComponent(params?.id ?? '')
 
   const { messages, isConnected, isLoading } = useChatwootMessages(conversationId)
   useConversationThreadRealtime(conversationId)

@@ -41,8 +41,9 @@ export function ConversationListSidebar() {
   const pathname = usePathname()
   const listRef = useRef<HTMLUListElement>(null)
 
-  // Extrae el phone_number del path: /conversaciones/{phone}
-  const selectedPhone = pathname?.match(/\/conversaciones\/([^/]+)/)?.[1] ?? null
+  // Extrae el phone_number del path: /conversaciones/{phone} — decodificar %2B → +
+  const rawSegment = pathname?.match(/\/conversaciones\/([^/]+)/)?.[1] ?? null
+  const selectedPhone = rawSegment ? decodeURIComponent(rawSegment) : null
 
   const { isConnected } = useConversationsRealtime()
 
@@ -55,7 +56,7 @@ export function ConversationListSidebar() {
 
   const handleSelect = useCallback(
     (phone: string) => {
-      router.push(`/conversaciones/${phone}`)
+      router.push(`/conversaciones/${encodeURIComponent(phone)}`)
     },
     [router]
   )
