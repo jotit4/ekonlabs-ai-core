@@ -39,7 +39,8 @@ def test_create_appointment_without_professional_id_does_not_include_key():
     """create_appointment sin professional_id → insert_data no incluye la clave 'professional_id'."""
     row = _fake_appointment_row()
     mock_client = MagicMock()
-    mock_client.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[row])
+    # supabase-py v2: insert().select().execute() — la cadena incluye .select()
+    mock_client.table.return_value.insert.return_value.select.return_value.execute.return_value = MagicMock(data=[row])
 
     captured_insert_data = {}
 
@@ -67,7 +68,8 @@ def test_create_appointment_with_professional_id_includes_key():
     """create_appointment con professional_id → insert_data incluye 'professional_id'."""
     row = _fake_appointment_row()
     mock_client = MagicMock()
-    mock_client.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[row])
+    # supabase-py v2: insert().select().execute() — la cadena incluye .select()
+    mock_client.table.return_value.insert.return_value.select.return_value.execute.return_value = MagicMock(data=[row])
 
     captured_insert_data = {}
 

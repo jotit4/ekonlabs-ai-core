@@ -93,6 +93,7 @@ def get_or_create_patient(
     response = (
         client.table("patients")
         .upsert(upsert_data, on_conflict="tenant_id,phone_number")
+        .select()
         .execute()
     )
 
@@ -144,7 +145,7 @@ def create_appointment(
     if professional_id is not None:
         insert_data["professional_id"] = professional_id
 
-    response = client.table("appointments").insert(insert_data).execute()
+    response = client.table("appointments").insert(insert_data).select().execute()
 
     if not response.data:
         raise RuntimeError(
