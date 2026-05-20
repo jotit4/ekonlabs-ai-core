@@ -42,21 +42,27 @@ function getEventColor(status: AppointmentStatus): string {
   }
 }
 
-// Usado para mes y semana — la semana oculta rbc-event-label vía CSS (.rbc-wrapper--week)
+// Chips adaptivos via container queries (rbc-re-*):
+// - chip ancho   (> 130px): hora + paciente + profesional
+// - chip medio   (70-130px): hora + paciente
+// - chip angosto (< 70px):  solo hora — evita texto ilegible en solapados
 function RangeEvent({ event }: { event: CalendarEvent }) {
   const professionalName =
     event.resource.professionals?.name ??
     event.resource.services?.professional_name ??
     null
   const hour = format(event.start, 'HH:mm')
+  const patientName = event.resource.patients?.full_name ?? 'Paciente'
 
   return (
-    <div className="flex flex-col h-full px-1.5 py-0.5 cursor-pointer overflow-hidden">
-      <span className="text-[11px] font-semibold leading-tight truncate">
-        {hour} · {event.resource.patients?.full_name ?? 'Paciente'}
+    <div className="flex flex-col h-full px-1 py-0.5 cursor-pointer overflow-hidden">
+      <span className="rbc-re-header text-[11px] font-semibold leading-tight overflow-hidden whitespace-nowrap text-ellipsis">
+        <span className="rbc-re-hour">{hour}</span>
+        <span className="rbc-re-sep"> · </span>
+        <span className="rbc-re-name">{patientName}</span>
       </span>
       {professionalName && (
-        <span className="text-[10px] opacity-85 truncate leading-tight mt-px">
+        <span className="rbc-re-prof text-[10px] opacity-85 truncate leading-tight mt-px">
           {professionalName}
         </span>
       )}

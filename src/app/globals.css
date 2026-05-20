@@ -105,18 +105,36 @@
 
 /* react-big-calendar overrides */
 
-/* Suavizar el highlight de "hoy" — el default #eaf6ff es demasiado fuerte */
-.rbc-today {
-  background-color: color-mix(in srgb, var(--color-interactive, #007aff) 5%, transparent) !important;
-}
-
 /* Línea de hora actual */
 .rbc-current-time-indicator {
   background-color: var(--color-interactive, #007aff);
 }
 
-/* Vista semana: ocultar el label de hora de RBC (ej. "08:30 – 09:00") que duplica
-   el horario ya mostrado en el componente RangeEvent ("HH:mm · Paciente") */
+/* Vista semana: ocultar el label de hora de RBC que duplica el horario del chip */
 .rbc-wrapper--week .rbc-event-label {
   display: none;
+}
+
+/* Vista semana: container queries para chips adaptativos.
+   Cada .rbc-event conoce su propio ancho y ajusta el contenido visible.
+   - ancho < 70px  → solo hora (chips solapados muy angostos)
+   - 70-130px      → hora + paciente
+   - > 130px       → hora + paciente + profesional                        */
+.rbc-wrapper--week .rbc-event {
+  container-type: inline-size;
+  container-name: rbc-week-event;
+}
+
+@container rbc-week-event (max-width: 70px) {
+  .rbc-re-sep,
+  .rbc-re-name,
+  .rbc-re-prof {
+    display: none;
+  }
+}
+
+@container rbc-week-event (min-width: 71px) and (max-width: 130px) {
+  .rbc-re-prof {
+    display: none;
+  }
 }
