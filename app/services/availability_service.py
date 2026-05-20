@@ -83,6 +83,7 @@ def get_available_slots(
         # now_arg se computa primero para clampear from_dt: si start_date es pasado,
         # arrancar desde ahora — nunca desde una fecha que ya ocurrió.
         now_arg = datetime.now(_TZ_ARG)
+        min_start = now_arg + timedelta(hours=2)  # mínimo 2h de anticipación
         if start_date:
             candidate_from = start_date.astimezone(_TZ_ARG)
             from_dt = max(candidate_from, now_arg)
@@ -175,13 +176,8 @@ def get_available_slots(
                     while slot_time + duration <= franja_end:
                         slot_end_dt = slot_time + duration
 
-                        # Skip si está en el pasado
-                        if slot_time < now_arg:
-                            slot_time += duration
-                            continue
-
-                        # Skip si está antes del from_dt
-                        if slot_time < from_dt:
+                        # Skip si no alcanza el mínimo de anticipación (2h) o está antes del from_dt
+                        if slot_time < min_start or slot_time < from_dt:
                             slot_time += duration
                             continue
 

@@ -476,6 +476,9 @@ def _finalize_registration(
             logger.error(
                 "generation_node.native_appointment_error",
                 tenant_id=tenant_id,
+                patient_id=patient.patient_id,
+                service_id=selected_service_id,
+                slot_start=booked_slot.get("start"),
                 error=str(appt_exc),
             )
         event_id = None
@@ -489,6 +492,13 @@ def _finalize_registration(
             phone_number=phone_number,
             title=event_title,
         )
+        if not event_id:
+            logger.error(
+                "generation_node.gcal_event_creation_failed",
+                tenant_id=tenant_id,
+                patient_id=patient.patient_id,
+                slot_start=booked_slot.get("start"),
+            )
         try:
             patient_service.create_appointment(
                 tenant_id=tenant_id,
@@ -502,6 +512,10 @@ def _finalize_registration(
             logger.error(
                 "generation_node.registration_appointment_error",
                 tenant_id=tenant_id,
+                patient_id=patient.patient_id,
+                service_id=selected_service_id,
+                calendar_event_id=event_id,
+                slot_start=booked_slot.get("start"),
                 error=str(appt_exc),
             )
 
@@ -780,7 +794,25 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
         extracted_name = _extract_patient_name(last_human_text)
 
         if extracted_name:
-            # Nombre encontrado → activar Fase B, pedir DNI.
+            extracted_dni_early = _extract_dni(last_human_text)
+
+            if extracted_dni_early:
+                # Nombre Y DNI provistos en el mismo turno → Fase C directa
+                booking_draft_service.update_draft(tenant_id, state["phone_number"], {
+                    "patient_name": extracted_name,
+                    "patient_dni": extracted_dni_early,
+                    "name_collection_active": False,
+                    "dni_collection_active": False,
+                })
+                merged_state = {**state, "patient_name": extracted_name, "patient_dni": extracted_dni_early}
+                logger.info(
+                    "generation_node.done",
+                    tenant_id=tenant_id,
+                    response_type="registration_name_dni_captured",
+                )
+                return _finalize_registration(merged_state, tenant_id, extracted_name, extracted_dni_early)
+
+            # Solo nombre → activar Fase B, pedir DNI.
             # dni_attempts=1: el LLM pide el DNI en ESTA respuesta, así que el
             # próximo turno ya cuenta como intento 1 y extrae directamente.
             # (Si fuera 0, _handle_registration vería "no pregunté aún" y pediría DNI de nuevo.)
@@ -836,7 +868,7 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
                 "name_collection_active": False,
             }
 
-    # Pedir nombre (Turn 1, o re-preguntar)
+    # Pedir nombre y DNI juntos (Turn 1)
     # INFRA-06: update draft with incremented name_attempts so next turn knows to extract
     booking_draft_service.update_draft(tenant_id, state["phone_number"], {
         "name_attempts": name_attempts + 1,
@@ -844,18 +876,19 @@ def _handle_registration(state: ConversationState, tenant_id: str) -> dict:
     slot_display = booked_slot.get("display", "")
     system_content = (
         f"{system_prompt_base}\n\n"
-        "ACCIÓN REQUERIDA — SOLICITAR NOMBRE DEL PACIENTE\n"
+        "ACCIÓN REQUERIDA — SOLICITAR NOMBRE Y DNI DEL PACIENTE\n"
         "El paciente seleccionó el siguiente turno:\n\n"
         f"{slot_display}\n\n"
-        "Antes de confirmar, necesitás su nombre completo (nombre y apellido) para registrar "
-        "el turno en el sistema. Pedíselo de forma amable y natural en voseo argentino."
+        "Para registrar el turno necesitás su nombre completo (nombre y apellido) y número de DNI. "
+        "Pedíle ambos datos en un solo mensaje, de forma amable y natural en voseo argentino. "
+        "Aclará que el DNI es opcional si no lo tiene a mano."
     )
     messages_for_llm = _build_messages_for_llm(system_content, state)
     response = _get_llm().invoke(messages_for_llm)
     logger.info(
         "generation_node.done",
         tenant_id=tenant_id,
-        response_type="registration_name_ask",
+        response_type="registration_name_dni_ask",
         name_attempts=name_attempts,
     )
     return {
