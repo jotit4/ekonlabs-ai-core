@@ -104,10 +104,19 @@
 }
 
 /* react-big-calendar overrides */
+
+/* Suavizar el highlight de "hoy" — el default #eaf6ff es demasiado fuerte */
 .rbc-today {
   background-color: color-mix(in srgb, var(--color-interactive, #007aff) 5%, transparent) !important;
 }
 
+/* Línea de hora actual */
 .rbc-current-time-indicator {
   background-color: var(--color-interactive, #007aff);
+}
+
+/* Vista semana: ocultar el label de hora de RBC (ej. "08:30 – 09:00") que duplica
+   el horario ya mostrado en el componente RangeEvent ("HH:mm · Paciente") */
+.rbc-wrapper--week .rbc-event-label {
+  display: none;
 }
