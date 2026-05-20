@@ -4,6 +4,66 @@ Registro de trabajo por Epic/Story — decisiones técnicas, hallazgos de code r
 
 ---
 
+## Sesión de debugging y performance — 2026-05-20
+
+**Tipo:** Diagnóstico + bugfixes + optimización de performance | **Commits:** `9ec0984`, `6ffa18f` | **Tests:** 1356 passing (10 fallos pre-existentes del Epic 10, no relacionados)
+
+### Contexto
+
+Primer uso real del dashboard por parte de ISADI. Se detectaron errores sistémicos en múltiples módulos: "Error al cargar la ficha del paciente. Recargá la página." (Pacientes), "Conversación no encontrada." (Conversaciones), y tiempos de carga de ~5 segundos en el módulo Calendario/Agenda.
+
+### Causa raíz — JWT sin `tenant_id`
+
+La causa de los errores de carga en todos los módulos era un **token JWT emitido sin el claim `tenant_id`**. Al tener `tenant_id` ausente, todas las RLS policies que evalúan `tenant_id::text = coalesce(auth.jwt() ->> 'tenant_id', '')` devolvían 0 filas en lugar de retornar un error explícito. El layout previo solo validaba `app_role`, permitiendo que usuarios con JWTs incompletos entrasen al dashboard.
+
+Los logs del servidor mostraban `AuthApiError: Invalid Refresh Token: Refresh Token Not Found` — el refresh_token de sesiones antiguas ya no existía en Supabase, confirmando que los tokens eran de sesiones anteriores al hook fix del 2026-05-15.
+
+### Fix 1 — Guard de `tenant_id` en el layout (`src/app/(dashboard)/layout.tsx`)
+
+Se agregó `tenant_id` al guard del layout. Si el JWT no contiene el claim, el layout hace sign out y redirige al login. Al re-loguearse, el hook `custom_access_token_hook` inyecta el `tenant_id` en el nuevo token.
+
+```typescript
+// Antes
+if (!role || !VALID_ROLES.includes(role)) { signOut(); redirect('/login') }
+
+// Después
+if (!role || !VALID_ROLES.includes(role) || !tenantId) { signOut(); redirect('/login') }
+```
+
+### Fix 2 — Performance: reemplazar `getUser()` por `getSession()` en el middleware (`src/proxy.ts`)
+
+El middleware se ejecuta en **cada request** (incluyendo todos los requests de API routes del cliente). `supabase.auth.getUser()` hace una llamada HTTP al servidor de Supabase Auth (~300–500ms de latencia). Se reemplazó por `getSession()` que lee el token directamente de la cookie sin llamada de red (~0ms).
+
+**Resultado:** reducción de ~400ms por request en el middleware. El tiempo de carga del Calendario pasó de ~5 segundos a carga casi inmediata.
+
+**Trade-off aceptado:** el middleware ya no valida el token contra el servidor en cada request. La seguridad real se mantiene porque el layout usa `getUser()` (que sí valida) y las RLS de Supabase garantizan aislamiento de datos por `tenant_id`.
+
+```typescript
+// Antes: llamada HTTP al servidor de Supabase Auth en cada request
+const { data: { user } } = await supabase.auth.getUser()
+
+// Después: lectura local de cookie, sin HTTP
+const { data: { session } } = await supabase.auth.getSession()
+const user = session?.user
+```
+
+### Fix 3 — staleTime en página de detalle de conversaciones (`src/app/(dashboard)/conversaciones/[id]/page.tsx`)
+
+La página de detalle tenía `staleTime: 0`, lo que causaba un refetch inmediato al montarse. Si ese refetch devolvía `{ conversations: [] }` (por RLS sin tenant_id), React Query actualizaba el cache y borraba los datos que el sidebar ya tenía. Se alineó a `staleTime: 30_000` para coincidir con el `refetchInterval` del sidebar.
+
+### Fix 4 — URL encoding del `+` en números de teléfono (`src/components/conversaciones/ConversationListSidebar.tsx`, `src/app/(dashboard)/conversaciones/[id]/page.tsx`)
+
+El número de teléfono se usa como segmento de URL: `/conversaciones/+5492612416059`. El carácter `+` en path segments puede ser transmitido como literal o codificado como `%2B` según el browser o el servidor. La comparación `c.phone_number === conversationId` fallaba porque `params.id` llegaba codificado mientras que `c.phone_number` venía de la DB sin codificar.
+
+**Solución:** `encodeURIComponent(phone)` al construir el link en el sidebar, `decodeURIComponent(params?.id)` al leerlo en la página de detalle, y `decodeURIComponent(rawSegment)` al extraer el `selectedPhone` del pathname para el resaltado de la fila activa.
+
+### Logs colaterales durante diagnóstico
+
+- `FastAPIError: status 503` — el servicio del AI Core (FastAPI en EasyPanel) estaba caído durante el diagnóstico. Problema separado del dashboard, no relacionado con estos fixes.
+- 10 tests fallando pre-existentes del Epic 10 en `src/app/(dashboard)/conversaciones/[id]/page.test.tsx` — el hook `useConversationThreadRealtime` llama `useQueryClient()` sin `QueryClientProvider` en el setup del test. No relacionado con los cambios de esta sesión.
+
+---
+
 ## Sesión de alineación backend ↔ dashboard — 2026-05-15
 
 **Tipo:** Verificación de alineación + implementación en backend | **Tests dashboard:** 1270 passing (sin cambios en dashboard)
