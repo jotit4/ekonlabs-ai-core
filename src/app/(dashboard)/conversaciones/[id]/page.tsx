@@ -25,7 +25,7 @@ export default function ConversationThreadPage() {
       const json = await res.json() as { conversations: ConversationSummary[] }
       return json.conversations
     },
-    staleTime: 0,
+    staleTime: 30_000,
   })
   const conversation = conversations?.find((c) => c.phone_number === conversationId)
   const conversationStatus: ConversationStatus = conversation?.status ?? 'ai_active'

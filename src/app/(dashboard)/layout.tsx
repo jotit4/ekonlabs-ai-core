@@ -22,9 +22,10 @@ export default async function DashboardLayout({
   const { data: { session } } = await supabase.auth.getSession()
   const claims = parseJwtPayload(session?.access_token ?? '')
   const role = (claims?.app_role ?? claims?.role) as UserRole | undefined
+  const tenantId = claims?.tenant_id as string | undefined
 
-  // If role is missing or unknown — force re-login
-  if (!role || !VALID_ROLES.includes(role)) {
+  // If role or tenant_id missing — JWT is stale/incomplete, force re-login
+  if (!role || !VALID_ROLES.includes(role) || !tenantId) {
     await supabase.auth.signOut()
     redirect('/login')
   }

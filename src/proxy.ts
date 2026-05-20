@@ -48,10 +48,12 @@ export async function proxy(request: NextRequest) {
     },
   })
 
-  // getUser() validates against the Auth server — more secure than getSession()
+  // getSession() reads from cookies (no HTTP round-trip) — fast for every request.
+  // Security: API routes and the dashboard layout still call getUser() for server-side validation.
   const {
-    data: { user },
-  } = await supabase.auth.getUser()
+    data: { session },
+  } = await supabase.auth.getSession()
+  const user = session?.user
 
   const { pathname } = request.nextUrl
 
@@ -59,15 +61,10 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  if (user && isProtectedPath(pathname)) {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
-    if (session?.access_token) {
-      const claims = parseJwtPayload(session.access_token)
-      if (claims?.tenant_id) {
-        supabaseResponse.headers.set('x-tenant-id', claims.tenant_id as string)
-      }
+  if (user && session?.access_token && isProtectedPath(pathname)) {
+    const claims = parseJwtPayload(session.access_token)
+    if (claims?.tenant_id) {
+      supabaseResponse.headers.set('x-tenant-id', claims.tenant_id as string)
     }
   }
 
