@@ -195,7 +195,11 @@ def booking_node(state: ConversationState) -> dict:
             # If a registration is in progress (name or DNI collection), re-hydrate
             # from Redis draft so generation_node can continue the flow.
             draft = booking_draft_service.get_draft(tenant_id, phone_number)
-            if draft and (draft.get("name_collection_active") or draft.get("dni_collection_active")):
+            if draft and (
+                draft.get("name_collection_active")
+                or draft.get("dni_collection_active")
+                or draft.get("extended_collection_active")
+            ):
                 # Si el DNI ya fue capturado en intake (state), no activar dni_collection_active
                 draft_fields = {k: v for k, v in draft.items() if v is not None}
                 if state.get("patient_dni"):
@@ -249,6 +253,13 @@ def booking_node(state: ConversationState) -> dict:
             credentials_dict = {}
         service_name = state.get("selected_service_name")
         selected_service_id = state.get("selected_service_id")
+
+        # INFRA-06: LangGraph state resets each turn — restore service info from Redis draft
+        if not selected_service_id:
+            _svc_draft = booking_draft_service.get_draft(tenant_id, phone_number)
+            if _svc_draft:
+                selected_service_id = _svc_draft.get("selected_service_id") or selected_service_id
+                service_name = service_name or _svc_draft.get("selected_service_name")
 
         # v1.3: usar calendar_id del servicio si está disponible
         if selected_service_id:
@@ -432,17 +443,20 @@ def booking_node(state: ConversationState) -> dict:
         existing_patient_id: str | None = state.get("patient_id")
         extra_state: dict = {}
 
-        if not patient_name_state:
-            existing = patient_service.get_patient_by_phone(tenant_id, phone_number)
-            if existing:
-                # Paciente conocido — pre-popular datos y saltar recolección
+        existing = patient_service.get_patient_by_phone(tenant_id, phone_number)
+        if existing:
+            # Paciente conocido — pre-popular datos y saltar recolección.
+            # Se consulta siempre (no solo cuando falta el nombre) para garantizar
+            # que patient_id esté disponible aunque el state se haya reseteado (INFRA-06).
+            if not patient_name_state:
                 patient_name_state = existing.full_name
+            if not existing_patient_id:
                 existing_patient_id = existing.patient_id
-                extra_state = {
-                    "patient_name": existing.full_name,
-                    "patient_dni": existing.dni,
-                    "patient_id": existing.patient_id,
-                }
+            extra_state = {
+                "patient_name": existing.full_name,
+                "patient_dni": existing.dni,
+                "patient_id": existing.patient_id,
+            }
 
         # Diferir si aún no tenemos nombre (primer contacto)
         if not patient_name_state:
@@ -502,7 +516,14 @@ def booking_node(state: ConversationState) -> dict:
                         professional_id=prof_id,
                     )
                 except Exception as appt_exc:
-                    logger.error("booking_node.native_appointment_error", tenant_id=tenant_id, error=str(appt_exc))
+                    logger.error(
+                        "booking_node.native_appointment_error",
+                        tenant_id=tenant_id,
+                        patient_id=pid,
+                        service_id=selected_service_id,
+                        slot_start=chosen_slot.get("start"),
+                        error=str(appt_exc),
+                    )
         else:
             # Legacy: crear evento en GCal y luego el appointment
             event_id = calendar_service.create_event(
@@ -513,6 +534,13 @@ def booking_node(state: ConversationState) -> dict:
                 phone_number=phone_number,
                 title=event_title,
             )
+            if not event_id:
+                logger.error(
+                    "booking_node.gcal_event_creation_failed",
+                    tenant_id=tenant_id,
+                    patient_name=event_title,
+                    slot_start=chosen_slot.get("start"),
+                )
             if pid and event_id:
                 try:
                     patient_service.create_appointment(
@@ -527,8 +555,19 @@ def booking_node(state: ConversationState) -> dict:
                     logger.error(
                         "booking_node.appointment_error",
                         tenant_id=tenant_id,
+                        patient_id=pid,
+                        service_id=selected_service_id,
+                        calendar_event_id=event_id,
+                        slot_start=chosen_slot.get("start"),
                         error=str(appt_exc),
                     )
+            elif not pid:
+                logger.error(
+                    "booking_node.appointment_skipped_no_patient_id",
+                    tenant_id=tenant_id,
+                    event_id=event_id,
+                    slot_start=chosen_slot.get("start"),
+                )
 
     except Exception as exc:
         logger.error("booking_node.error", tenant_id=tenant_id, error=str(exc))
