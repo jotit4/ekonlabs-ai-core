@@ -4,6 +4,75 @@ Registro de trabajo por Epic/Story — decisiones técnicas, hallazgos de code r
 
 ---
 
+## Sesión UX/UI Calendario — 2026-05-21
+
+**Tipo:** Mejora visual + rediseño de vistas | **Commits:** `2c0f55b`, `1cb6781` | **Tests:** 13 nuevos passing (CalendarView), suite completa estable
+
+### Contexto
+
+Las vistas Semana y Día del módulo Calendario eran ilegibles en condiciones reales de uso (clínica con múltiples profesionales). El time-grid de react-big-calendar coloca eventos solapados en columnas paralelas angostas: con 10–16 turnos simultáneos de distintos profesionales, los chips se volvían demasiado estrechos para mostrar cualquier información útil. El fondo `.rbc-today` pintaba toda la columna del día actual en azul intenso.
+
+### Causa raíz
+
+El problema no era de CSS ni de datos — era estructural: react-big-calendar fue diseñado para agendas personales (1–2 eventos solapados). En una clínica con 4+ profesionales con horarios superpuestos, el layout de columnas paralelas colapsa inevitablemente. Ningún override de CSS resuelve la causa raíz.
+
+### Fix 1 — Vista Semana: reemplazar time-grid por `WeekColumnsView` custom
+
+**Archivo:** `src/components/agenda/CalendarViewRangeReadOnly.tsx`
+
+Se eliminó el uso de `<Calendar view={Views.WEEK}>` de react-big-calendar para la vista Semana. Se implementó `WeekColumnsView`: un componente custom que usa CSS Grid (`grid-template-columns: repeat(7, 1fr)`) con 7 columnas, una por día.
+
+**Diseño del componente:**
+- Cada columna tiene header (día abreviado + número circular, hoy en azul) y contador de turnos
+- Los eventos se renderizan como botones apilados verticalmente, ordenados por `start.getTime()`
+- Cada chip: borde izquierdo coloreado por estado + fondo semi-transparente (`${color}18`) + hora en bold + paciente + profesional
+- La columna tiene `overflow-y: auto` para scroll independiente cuando hay muchos turnos
+- La vista Mes sigue usando `<Calendar view={Views.MONTH}>` de react-big-calendar sin cambios
+
+**Resultado:** Los 16 turnos del jueves (todos los profesionales) ahora son completamente legibles — apilados uno debajo del otro, cada uno con toda la información visible.
+
+**Decisión de diseño:** Se eligió lista vertical sobre time-grid con recursos (columna por profesional) porque la vista de recursos requeriría scroll horizontal y un ancho impracticable con 4+ profesionales.
+
+### Fix 2 — Vista Día: reemplazar DnD time-grid por `DayListView` custom
+
+**Archivo:** `src/components/agenda/CalendarView.tsx`
+
+Se eliminó `DragAndDropCalendar` (react-big-calendar DnD addon) y toda la lógica asociada: `withDragAndDrop`, `handleEventDrop`, `pendingDrop`, `RescheduleConfirmModal`, `useQueryClient`, `toast`. El componente pasó de 322 líneas a 159 líneas.
+
+Se implementó `DayListView`: lista vertical full-width con un card por turno.
+
+**Diseño del card:**
+- Borde izquierdo coloreado por estado (4px)
+- Sección izquierda: hora inicio (bold, en color) + hora fin (gris)
+- Sección central: nombre del paciente (bold) + servicio · profesional (gris)
+- Sección derecha: ícono reloj si `calendar_event_id === null` (sync pendiente) + botón lápiz si `onReschedule` está definido
+- Hover con `rgba(0,0,0,0.06)` en el botón de reprogramar
+
+**DnD vs. botón de reprogramar:** La funcionalidad de reprogramar se mantiene íntegra a través del botón de lápiz (`onReschedule` prop), que delega al modal de reprogramación manual del parent. El DnD era fundamentalmente inutilizable con 16 eventos solapados y su eliminación simplifica significativamente el componente.
+
+### Colores de estado — migración a hex
+
+Ambos componentes usan `getEventColor()` actualizado para retornar hex en lugar de CSS vars:
+
+| Estado | Hex |
+|---|---|
+| `confirmed` | `#0071e3` |
+| `rescheduled` | `#f97316` |
+| `cancelled` | `#8e8e93` |
+| `no_show` | `#ef4444` |
+| `pending` / `pending_calendar` | `#8b5cf6` |
+
+**Razón:** Los valores hex permiten componer `${color}18` y `${color}30` como colores RGBA en JavaScript (8 dígitos hex), necesarios para los fondos semi-transparentes de los chips. CSS vars no admiten este patrón en JS.
+
+### Tests actualizados
+
+`CalendarView.test.tsx` fue completamente reescrito para reflejar la nueva implementación:
+- Se eliminaron mocks de react-big-calendar, DnD addon, `@tanstack/react-query`, `sonner`, y `global.fetch`
+- Se agregaron tests para: estado vacío, skeleton, error/reintentar, renderizado de campos, orden cronológico, filtro de appointments inválidos, callback onReschedule, visibilidad del botón reprogramar, ícono de sync pendiente
+- **13 tests passing, 0 fallos**
+
+---
+
 ## Sesión de debugging y performance — 2026-05-20
 
 **Tipo:** Diagnóstico + bugfixes + optimización de performance | **Commits:** `9ec0984`, `6ffa18f` | **Tests:** 1356 passing (10 fallos pre-existentes del Epic 10, no relacionados)
