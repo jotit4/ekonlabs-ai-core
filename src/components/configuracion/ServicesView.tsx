@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { useForm } from 'react-hook-form'
 import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
 import { useServices } from '@/hooks/use-services'
@@ -398,6 +399,16 @@ function ServiceRow({
         >
           Editar
         </button>
+        <Link
+          href={`/configuracion/servicios/${service.service_id}/horarios`}
+          className={[
+            'text-xs px-3 py-1.5 rounded-[6px] border min-h-[32px]',
+            'border-[var(--color-border)] text-[var(--color-text-secondary)]',
+            'hover:bg-[var(--color-surface)] transition-colors inline-flex items-center',
+          ].join(' ')}
+        >
+          Horarios
+        </Link>
         {isConfirmingDeactivate ? (
           <>
             <button

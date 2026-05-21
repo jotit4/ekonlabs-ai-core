@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   Calendar, CalendarClock, ChartBar, Layers, MessageSquare, PanelLeft,
-  PanelLeftClose, Settings, ShieldCheck, UserCheck, UserCog, Users,
+  PanelLeftClose, Settings, ShieldCheck, UserCheck, UserCog, UserX, Users,
 } from 'lucide-react'
 import type { UserRole } from '@/types/index'
 import { UserProfileButton } from './UserProfileButton'
@@ -39,6 +39,7 @@ const NAV_ITEMS: Record<UserRole, NavItem[]> = {
     { href: '/configuracion/servicios',       label: 'Servicios',        icon: Layers },
     { href: '/configuracion/profesionales',   label: 'Profesionales',    icon: UserCheck },
     { href: '/configuracion/auditoria',       label: 'Auditoría',        icon: ShieldCheck },
+    { href: '/configuracion/supresion',       label: 'Supresiones',      icon: UserX },
   ],
 }
 
