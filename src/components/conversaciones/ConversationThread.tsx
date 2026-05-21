@@ -73,7 +73,35 @@ function MessageBubble({ message }: { message: ChatwootMessage }) {
           fontSize: 15,
         }}
       >
-        {message.content}
+        {/* Texto del mensaje — si empieza con [audio_transcription]: mostrar prefijo visual */}
+        {message.content && message.content.startsWith('[audio_transcription]:') ? (
+          <span>
+            <span style={{ fontSize: 12, opacity: 0.75, display: 'block', marginBottom: 4 }}>
+              🎤 Audio transcripto:
+            </span>
+            {message.content.replace('[audio_transcription]:', '').trim()}
+          </span>
+        ) : message.content ? (
+          message.content
+        ) : null}
+
+        {/* Audio attachment — renderizar si hay adjunto de tipo audio */}
+        {message.attachments?.some((a) => a.file_type === 'audio') && (
+          <div style={{ marginTop: message.content ? 8 : 0 }}>
+            {message.attachments
+              .filter((a) => a.file_type === 'audio')
+              .map((a) => (
+                <audio
+                  key={a.id}
+                  controls
+                  src={a.data_url ?? a.file_url}
+                  style={{ display: 'block', maxWidth: '100%', minWidth: 200 }}
+                >
+                  Tu navegador no soporta reproducción de audio.
+                </audio>
+              ))}
+          </div>
+        )}
       </div>
       <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 2 }}>
         {timestamp}

@@ -44,11 +44,11 @@ export async function GET(
     if (err instanceof FastAPIError || err instanceof Error) {
       console.error('[context/GET] FastAPI error:', err)
     }
-    // Fallback: leer datos básicos del paciente desde Supabase
+    // Fallback: leer datos del paciente + último turno activo desde Supabase
     try {
       const { data: patient } = await supabase
         .from('patients')
-        .select('full_name, phone_number')
+        .select('patient_id, full_name, phone_number')
         .eq('phone_number', phone)
         .maybeSingle()
       if (patient?.full_name) {
@@ -56,6 +56,28 @@ export async function GET(
           patient_name: patient.full_name,
           phone_number: patient.phone_number,
         }
+
+        // Enriquecer con el último turno activo (confirmed o pending_calendar)
+        try {
+          const { data: appointment } = await supabase
+            .from('appointments')
+            .select('start_at, status, services(name)')
+            .eq('patient_id', patient.patient_id)
+            .in('status', ['confirmed', 'pending_calendar'])
+            .order('start_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          if (appointment) {
+            // Supabase infiere services como array; castear a través de unknown para extraer el objeto
+            const svc = (appointment.services as unknown) as { name: string } | null
+            fallbackContext.service_requested = svc?.name ?? null
+            fallbackContext.slot_requested = appointment.start_at
+            fallbackContext.detected_intent = 'Turno confirmado'
+          }
+        } catch {
+          // ignorar — enriquecimiento fallido, devolver contexto básico
+        }
+
         return Response.json({ context: fallbackContext })
       }
     } catch {

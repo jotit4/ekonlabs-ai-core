@@ -36,6 +36,14 @@ export interface ChatwootMessage {
       name: string
     }
   }
+  attachments?: Array<{
+    id: number
+    file_type: 'audio' | 'image' | 'file' | 'video' | string
+    file_url: string
+    data_url?: string
+    thumb_url?: string
+    extension?: string
+  }>
 }
 
 export interface AgentContext {

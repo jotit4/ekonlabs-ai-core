@@ -1,10 +1,11 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 // vi.hoisted — factories de mock
-const { mockGetUser, mockGetSession, mockFastAPIRequest } = vi.hoisted(() => ({
+const { mockGetUser, mockGetSession, mockFastAPIRequest, mockSupabaseFrom } = vi.hoisted(() => ({
   mockGetUser: vi.fn(),
   mockGetSession: vi.fn(),
   mockFastAPIRequest: vi.fn(),
+  mockSupabaseFrom: vi.fn(),
 }))
 
 // Mock server-only
@@ -26,6 +27,7 @@ vi.mock('@/lib/supabase/server', () => ({
         getUser: mockGetUser,
         getSession: mockGetSession,
       },
+      from: mockSupabaseFrom,
     })
   ),
 }))
@@ -134,7 +136,7 @@ describe('GET /api/conversaciones/[phone]/context', () => {
     expect(body.context).toEqual(mockContext)
   })
 
-  it('retorna { context: null } con status 200 cuando FastAPI falla (FastAPIError)', async () => {
+  it('retorna { context: null } con status 200 cuando FastAPI falla y no hay paciente en Supabase', async () => {
     const token = makeJwt({ tenant_id: 'tenant-uuid-1234' })
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
     mockGetSession.mockResolvedValue({ data: { session: { access_token: token } } })
@@ -142,11 +144,97 @@ describe('GET /api/conversaciones/[phone]/context', () => {
     // Simular un error de FastAPI (404, timeout, etc.)
     mockFastAPIRequest.mockRejectedValue(new Error('FastAPI request failed'))
 
+    // Supabase patients → sin resultado
+    const mockMaybeSingle = vi.fn().mockResolvedValue({ data: null })
+    const mockEq = vi.fn().mockReturnValue({ maybeSingle: mockMaybeSingle })
+    const mockSelect = vi.fn().mockReturnValue({ eq: mockEq })
+    mockSupabaseFrom.mockReturnValue({ select: mockSelect })
+
     const res = await GET(makeRequest(), makeContext())
 
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.context).toBeNull()
+  })
+
+  it('retorna contexto básico del paciente (fallback Supabase) sin turno activo', async () => {
+    const token = makeJwt({ tenant_id: 'tenant-uuid-1234' })
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    mockGetSession.mockResolvedValue({ data: { session: { access_token: token } } })
+
+    mockFastAPIRequest.mockRejectedValue(new Error('FastAPI request failed'))
+
+    // patients → devuelve paciente
+    const patientData = { patient_id: 'p-1', full_name: 'Ana Torres', phone_number: '+5491111111111' }
+    const mockPatientMaybeSingle = vi.fn().mockResolvedValue({ data: patientData })
+    const mockPatientEq = vi.fn().mockReturnValue({ maybeSingle: mockPatientMaybeSingle })
+    const mockPatientSelect = vi.fn().mockReturnValue({ eq: mockPatientEq })
+
+    // appointments → sin turno activo
+    const mockApptMaybeSingle = vi.fn().mockResolvedValue({ data: null })
+    const mockApptLimit = vi.fn().mockReturnValue({ maybeSingle: mockApptMaybeSingle })
+    const mockApptOrder = vi.fn().mockReturnValue({ limit: mockApptLimit })
+    const mockApptIn = vi.fn().mockReturnValue({ order: mockApptOrder })
+    const mockApptEq = vi.fn().mockReturnValue({ in: mockApptIn })
+    const mockApptSelect = vi.fn().mockReturnValue({ eq: mockApptEq })
+
+    mockSupabaseFrom.mockImplementation((table: string) => {
+      if (table === 'patients') return { select: mockPatientSelect }
+      if (table === 'appointments') return { select: mockApptSelect }
+      return { select: vi.fn() }
+    })
+
+    const res = await GET(makeRequest(), makeContext())
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.context).toEqual({
+      patient_name: 'Ana Torres',
+      phone_number: '+5491111111111',
+    })
+  })
+
+  it('enriquece el fallback con el turno activo del paciente', async () => {
+    const token = makeJwt({ tenant_id: 'tenant-uuid-1234' })
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    mockGetSession.mockResolvedValue({ data: { session: { access_token: token } } })
+
+    mockFastAPIRequest.mockRejectedValue(new Error('FastAPI request failed'))
+
+    const patientData = { patient_id: 'p-1', full_name: 'Carlos Ruiz', phone_number: '+5491122334455' }
+    const mockPatientMaybeSingle = vi.fn().mockResolvedValue({ data: patientData })
+    const mockPatientEq = vi.fn().mockReturnValue({ maybeSingle: mockPatientMaybeSingle })
+    const mockPatientSelect = vi.fn().mockReturnValue({ eq: mockPatientEq })
+
+    const appointmentData = {
+      start_at: '2026-06-01T10:00:00+00:00',
+      status: 'confirmed',
+      services: { name: 'Kinesiología' },
+    }
+    const mockApptMaybeSingle = vi.fn().mockResolvedValue({ data: appointmentData })
+    const mockApptLimit = vi.fn().mockReturnValue({ maybeSingle: mockApptMaybeSingle })
+    const mockApptOrder = vi.fn().mockReturnValue({ limit: mockApptLimit })
+    const mockApptIn = vi.fn().mockReturnValue({ order: mockApptOrder })
+    const mockApptEq = vi.fn().mockReturnValue({ in: mockApptIn })
+    const mockApptSelect = vi.fn().mockReturnValue({ eq: mockApptEq })
+
+    mockSupabaseFrom.mockImplementation((table: string) => {
+      if (table === 'patients') return { select: mockPatientSelect }
+      if (table === 'appointments') return { select: mockApptSelect }
+      return { select: vi.fn() }
+    })
+
+    const res = await GET(makeRequest('+5491122334455'), makeContext('+5491122334455'))
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.context).toEqual({
+      patient_name: 'Carlos Ruiz',
+      phone_number: '+5491122334455',
+      service_requested: 'Kinesiología',
+      slot_requested: '2026-06-01T10:00:00+00:00',
+      detected_intent: 'Turno confirmado',
+    })
   })
 
   it('retorna { context: AgentContext } cuando FastAPI responde correctamente', async () => {
