@@ -376,7 +376,7 @@ function ServiceRow({
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-[var(--color-text-primary)] truncate">{service.name}</p>
         <p className="text-xs text-[var(--color-text-secondary)]">
-          {service.professional_name ?? '—'} · {service.duration_minutes}min · Cal: {service.calendar_id}
+          {service.professional_name ?? '—'} · {service.duration_minutes}min
         </p>
       </div>
       <div className="flex items-center gap-3 shrink-0">
