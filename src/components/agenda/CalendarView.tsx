@@ -1,18 +1,6 @@
 'use client'
 
-// CSS imports en orden obligatorio — react-big-calendar primero, luego DnD addon
-import 'react-big-calendar/lib/css/react-big-calendar.css'
-import 'react-big-calendar/lib/addons/dragAndDrop/styles.css'
-
-import { useState, useRef } from 'react'
-import { Calendar, dateFnsLocalizer, Views } from 'react-big-calendar'
-// withDragAndDrop: import ESM para que vi.mock lo intercepte correctamente en tests
-// El cast any es necesario porque los tipos genéricos de CJS no son compatibles con strict mode
-import withDragAndDropImport from 'react-big-calendar/lib/addons/dragAndDrop'
-import { format, parse, startOfWeek, getDay, parseISO } from 'date-fns'
-import { es } from 'date-fns/locale'
-import { useQueryClient } from '@tanstack/react-query'
-import { toast } from 'sonner'
+import { format } from 'date-fns'
 import { Pencil, Clock } from 'lucide-react'
 import {
   type Appointment,
@@ -21,34 +9,15 @@ import {
   appointmentToCalendarEvent,
 } from '@/types/appointments'
 import { AgendaDayViewSkeleton } from './AgendaDayView'
-import { RescheduleConfirmModal } from './RescheduleConfirmModal'
-
-// Cast controlado para compatibilidad con tipos CJS de react-big-calendar en strict mode
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const withDragAndDrop: (Cal: typeof Calendar) => any = withDragAndDropImport as any
-
-const locales = { es }
-
-const localizer = dateFnsLocalizer({
-  format,
-  parse,
-  startOfWeek,
-  getDay,
-  locales,
-})
-
-// withDragAndDrop cast controlado — los tipos de CJS no son compatibles con strict mode
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const DragAndDropCalendar = withDragAndDrop(Calendar) as any
 
 function getEventColor(status: AppointmentStatus): string {
   switch (status) {
     case 'confirmed':
-      return 'var(--color-interactive)'
+      return '#0071e3'
     case 'rescheduled':
       return '#f97316'
     case 'cancelled':
-      return 'var(--color-text-secondary)'
+      return '#8e8e93'
     case 'no_show':
       return '#ef4444'
     case 'pending':
@@ -58,20 +27,161 @@ function getEventColor(status: AppointmentStatus): string {
   }
 }
 
-interface EventInteractionArgs {
-  event: CalendarEvent
-  start: Date | string
-  end: Date | string
+// ─── Vista Día: lista vertical de turnos ─────────────────────────────────────
+// El time-grid de react-big-calendar es ilegible cuando hay múltiples
+// profesionales con solapamiento. Esta lista ordena los turnos
+// cronológicamente y muestra toda la información en un card legible.
+
+function DayListView({
+  events,
+  onReschedule,
+}: {
+  events: CalendarEvent[]
+  onReschedule?: (appointment: Appointment) => void
+}) {
+  const sorted = [...events].sort((a, b) => a.start.getTime() - b.start.getTime())
+
+  if (sorted.length === 0) {
+    return (
+      <div
+        style={{
+          padding: '64px 0',
+          textAlign: 'center',
+          color: 'var(--color-text-secondary)',
+          fontSize: 14,
+        }}
+      >
+        Sin turnos para este día
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 0' }}>
+      {sorted.map((event) => {
+        const color = getEventColor(event.resource.status)
+        const isPendingSync = event.resource.calendar_event_id === null
+        const profName =
+          event.resource.professionals?.name ??
+          event.resource.services?.professional_name ??
+          null
+        const serviceName = event.resource.services?.name ?? null
+        const patientName = event.resource.patients?.full_name ?? 'Paciente'
+
+        return (
+          <div
+            key={event.id}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 16,
+              padding: '12px 16px',
+              backgroundColor: `${color}12`,
+              borderLeft: `4px solid ${color}`,
+              borderRadius: '0 8px 8px 0',
+            }}
+          >
+            {/* Horario */}
+            <div style={{ minWidth: 88, flexShrink: 0 }}>
+              <div
+                style={{
+                  fontSize: 14,
+                  fontWeight: 700,
+                  color,
+                  lineHeight: 1.3,
+                }}
+              >
+                {format(event.start, 'HH:mm')}
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: 'var(--color-text-secondary)',
+                  lineHeight: 1.3,
+                }}
+              >
+                {format(event.end, 'HH:mm')}
+              </div>
+            </div>
+
+            {/* Paciente + servicio + profesional */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: 'var(--color-text-primary)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  lineHeight: 1.4,
+                }}
+              >
+                {patientName}
+              </div>
+              {(serviceName ?? profName) && (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: 'var(--color-text-secondary)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    marginTop: 2,
+                    lineHeight: 1.3,
+                  }}
+                >
+                  {[serviceName, profName].filter(Boolean).join(' · ')}
+                </div>
+              )}
+            </div>
+
+            {/* Acciones */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+              {isPendingSync && (
+                <Clock
+                  style={{ width: 16, height: 16, opacity: 0.45, color: 'var(--color-text-secondary)' }}
+                  aria-label="Pendiente de sincronización con Google Calendar"
+                />
+              )}
+              {onReschedule && (
+                <button
+                  type="button"
+                  onClick={() => onReschedule(event.resource)}
+                  style={{
+                    width: 32,
+                    height: 32,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: 6,
+                    border: 'none',
+                    background: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--color-text-secondary)',
+                    transition: 'background 0.12s',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = 'rgba(0,0,0,0.06)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'none'
+                  }}
+                  aria-label={`Reprogramar turno de ${patientName}`}
+                  title="Reprogramar"
+                >
+                  <Pencil style={{ width: 15, height: 15 }} />
+                </button>
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
-interface PendingDrop {
-  event: CalendarEvent
-  originalStart: Date
-  originalEnd: Date
-  newStart: Date
-  newEnd: Date
-}
-
+// ─── Componente principal ─────────────────────────────────────────────────────
 interface CalendarViewProps {
   date: string
   appointments: Appointment[]
@@ -81,87 +191,13 @@ interface CalendarViewProps {
   onReschedule?: (appointment: Appointment) => void
 }
 
-function CustomEvent({
-  event,
-  onReschedule,
-}: {
-  event: CalendarEvent
-  onReschedule?: (appointment: Appointment) => void
-}) {
-  const isPendingSync = event.resource.calendar_event_id === null
-  const professionalName =
-    event.resource.professionals?.name ??
-    event.resource.services?.professional_name ??
-    null
-
-  return (
-    <div className="flex items-start justify-between gap-1 h-full px-1 py-0.5 text-xs">
-      <div className="flex flex-col gap-0 min-w-0 flex-1">
-        <span className="truncate leading-tight">{event.title}</span>
-        {professionalName && (
-          <span className="text-[10px] opacity-80 truncate">{professionalName}</span>
-        )}
-      </div>
-      <div className="flex items-center gap-0.5 shrink-0">
-        {isPendingSync && (
-          <Clock
-            className="w-3 h-3 shrink-0 opacity-70"
-            aria-label="Pendiente de sincronización con Google Calendar"
-          />
-        )}
-        {onReschedule && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              onReschedule(event.resource)
-            }}
-            className="shrink-0 min-h-[20px] min-w-[20px] flex items-center justify-center rounded hover:bg-white/20 transition-colors"
-            aria-label={`Reprogramar turno de ${event.resource.patients?.full_name ?? 'paciente'}`}
-            title="Reprogramar"
-          >
-            <Pencil className="w-3 h-3" />
-          </button>
-        )}
-      </div>
-    </div>
-  )
-}
-
 export function CalendarView({
-  date,
   appointments,
   isLoading,
   isError,
   onRefetch,
   onReschedule,
 }: CalendarViewProps) {
-  const queryClient = useQueryClient()
-
-  // Todos los hooks ANTES de cualquier early return
-
-  // localEvents: estado derivado de appointments + optimistic updates
-  // Usamos useState inicializado con la primera versión de appointments
-  const [localEvents, setLocalEvents] = useState<CalendarEvent[]>(() =>
-    appointments.map(appointmentToCalendarEvent)
-  )
-  // Guardamos la ref de appointments para detectar cambios sin useEffect
-  const prevAppointmentsRef = useRef(appointments)
-  // Si appointments cambió (nueva data del servidor), sincronizar localEvents
-  if (prevAppointmentsRef.current !== appointments) {
-    prevAppointmentsRef.current = appointments
-    // Aplicar sincronización durante el render (React docs: "during render" pattern)
-    setLocalEvents(appointments.map(appointmentToCalendarEvent))
-  }
-
-  const [pendingDrop, setPendingDrop] = useState<PendingDrop | null>(null)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-
-  // Ref para acceder al pendingDrop actual dentro de async handlers sin stale closure
-  const pendingDropRef = useRef<PendingDrop | null>(null)
-  pendingDropRef.current = pendingDrop
-
-  // Early returns después de todos los hooks
   if (isLoading) {
     return <AgendaDayViewSkeleton />
   }
@@ -183,139 +219,9 @@ export function CalendarView({
     )
   }
 
-  function handleEventDrop({ event, start, end }: EventInteractionArgs) {
-    // Fix A-14: No mover turnos cancelados o no-show
-    const status = event.resource.status
-    if (status === 'cancelled' || status === 'no_show') return
+  const events: CalendarEvent[] = appointments
+    .filter((apt) => apt && apt.start_at && apt.end_at)
+    .map(appointmentToCalendarEvent)
 
-    const newStart = start instanceof Date ? start : new Date(start)
-    const newEnd = end instanceof Date ? end : new Date(end)
-
-    // 1. Optimistic update inmediato
-    setLocalEvents((prev) =>
-      prev.map((e) => e.id === event.id ? { ...e, start: newStart, end: newEnd } : e)
-    )
-
-    // 2. Guardar estado pendiente — el modal se abre al detectar pendingDrop !== null
-    setPendingDrop({
-      event,
-      originalStart: event.start,
-      originalEnd: event.end,
-      newStart,
-      newEnd,
-    })
-  }
-
-  function revertDrop(drop: PendingDrop) {
-    setLocalEvents((prev) =>
-      prev.map((e) =>
-        e.id === drop.event.id
-          ? { ...e, start: drop.originalStart, end: drop.originalEnd }
-          : e
-      )
-    )
-    setPendingDrop(null)
-  }
-
-  async function handleConfirmReschedule() {
-    const drop = pendingDropRef.current
-    if (!drop) return
-    setIsSubmitting(true)
-
-    try {
-      const response = await fetch(`/api/appointments/${drop.event.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          start_at: drop.newStart.toISOString(),
-          end_at: drop.newEnd.toISOString(),
-        }),
-      })
-
-      if (response.ok) {
-        queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
-        setPendingDrop(null)
-      } else if (response.status === 409) {
-        revertDrop(drop)
-        toast.error('Ese horario ya no está disponible')
-      } else {
-        revertDrop(drop)
-        toast.error('No se pudo reprogramar el turno', {
-          action: {
-            label: 'Reintentar',
-            onClick: () => void handleConfirmReschedule(),
-          },
-        })
-      }
-    } catch {
-      revertDrop(drop)
-      toast.error('Error de conexión al reprogramar')
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  function handleCancelReschedule() {
-    const drop = pendingDropRef.current
-    if (!drop) return
-    revertDrop(drop)
-  }
-
-  const pendingPatientName = pendingDrop?.event.resource.patients?.full_name ?? 'Paciente'
-  const pendingOriginalTime = pendingDrop ? format(pendingDrop.originalStart, 'HH:mm') : ''
-  const pendingNewTime = pendingDrop ? format(pendingDrop.newStart, 'HH:mm') : ''
-
-  return (
-    <div className="rbc-wrapper">
-      <DragAndDropCalendar
-        localizer={localizer}
-        events={localEvents}
-        defaultView={Views.DAY}
-        views={[Views.DAY]}
-        date={parseISO(date)}
-        onNavigate={() => {
-          // navegación de fecha la maneja page.tsx
-        }}
-        toolbar={false}
-        onEventDrop={handleEventDrop}
-        onEventResize={undefined}
-        step={30}
-        timeslots={2}
-        min={new Date(0, 0, 0, 7, 0, 0)}
-        max={new Date(0, 0, 0, 21, 0, 0)}
-        style={{ height: 'calc(100vh - 280px)', minHeight: '500px' }}
-        culture="es"
-        messages={{
-          noEventsInRange: 'Sin turnos para este día',
-          today: 'Hoy',
-          previous: 'Anterior',
-          next: 'Siguiente',
-          day: 'Día',
-        }}
-        eventPropGetter={(event: CalendarEvent) => ({
-          style: {
-            backgroundColor: getEventColor(event.resource.status),
-            border: 'none',
-            borderRadius: '4px',
-            color: 'white',
-          },
-        })}
-        components={{
-          event: (props: { event: CalendarEvent }) => (
-            <CustomEvent event={props.event} onReschedule={onReschedule} />
-          ),
-        }}
-      />
-
-      <RescheduleConfirmModal
-        open={pendingDrop !== null}
-        patientName={pendingPatientName}
-        originalTime={pendingOriginalTime}
-        newTime={pendingNewTime}
-        onConfirm={() => void handleConfirmReschedule()}
-        onCancel={handleCancelReschedule}
-        isSubmitting={isSubmitting}
-      />
-    </div>
-  )
+  return <DayListView events={events} onReschedule={onReschedule} />
 }

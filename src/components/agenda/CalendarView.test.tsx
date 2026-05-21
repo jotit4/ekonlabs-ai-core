@@ -1,93 +1,8 @@
-import { render, screen, act, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import type { Appointment } from '@/types/appointments'
 
-// Mock CSS imports
-vi.mock('react-big-calendar/lib/css/react-big-calendar.css', () => ({}))
-vi.mock('react-big-calendar/lib/addons/dragAndDrop/styles.css', () => ({}))
-
-// Objeto compartido para capturar callbacks del Calendar mock
-// Usado como objeto (no variable primitiva) para evitar problemas con el closure del mock hoisted
-const calendarMockRef = { onEventDrop: undefined as ((args: unknown) => void) | undefined }
-
-// Mock react-big-calendar
-vi.mock('react-big-calendar', async () => {
-  const React = await import('react')
-  return {
-    Calendar: (props: {
-      events: unknown[]
-      onEventDrop?: (args: unknown) => void
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      components?: any
-    }) => {
-      // Capturar onEventDrop para los tests
-      calendarMockRef.onEventDrop = props.onEventDrop
-
-      return React.createElement('div', { 'data-testid': 'rbc-calendar' },
-        props.events.map((e: unknown) => {
-          const ev = e as { id: string; title: string; resource: Appointment }
-          return React.createElement('div', { key: ev.id, 'data-testid': `event-${ev.id}` },
-            props.components?.event
-              ? props.components.event({ event: ev })
-              : ev.title
-          )
-        })
-      )
-    },
-    dateFnsLocalizer: () => ({}),
-    Views: { DAY: 'day' },
-  }
-})
-
-// Mock DnD addon — identity function (withDragAndDrop devuelve el mismo Calendar)
-vi.mock('react-big-calendar/lib/addons/dragAndDrop', async () => {
-  return {
-    // default es la función withDragAndDrop — identity para tests
-    default: (Cal: React.ComponentType) => Cal,
-    __esModule: true,
-  }
-})
-
-// Mock @base-ui/react/dialog
-vi.mock('@base-ui/react/dialog', async () => {
-  const React = await import('react')
-  return {
-    Dialog: {
-      Root: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
-        open ? React.createElement('div', { 'data-testid': 'dialog-root' }, children) : null,
-      Portal: ({ children }: { children: React.ReactNode }) =>
-        React.createElement('div', null, children),
-      Backdrop: () => null,
-      Popup: ({ children }: { children: React.ReactNode }) =>
-        React.createElement('div', { role: 'dialog' }, children),
-      Title: ({ children }: { children: React.ReactNode }) =>
-        React.createElement('h2', null, children),
-      Close: ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) =>
-        React.createElement('button', { type: 'button', onClick }, children),
-    },
-  }
-})
-
-// Mock @tanstack/react-query
-const mockInvalidateQueries = vi.fn()
-vi.mock('@tanstack/react-query', () => ({
-  useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries }),
-}))
-
-// Mock date-fns/locale
-vi.mock('date-fns/locale', () => ({ es: {} }))
-
-// Mock sonner
-vi.mock('sonner', () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
-}))
-
-// Mock fetch
-const mockFetch = vi.fn()
-global.fetch = mockFetch
-
-// Importar CalendarView después de que todos los mocks estén configurados
 import { CalendarView } from './CalendarView'
 
 const BASE_APPOINTMENT: Appointment = {
@@ -106,25 +21,15 @@ const BASE_APPOINTMENT: Appointment = {
   services: { name: 'Kinesiología', professional: 'Dra. Patricia Pérez' },
 }
 
-const BASE_CALENDAR_EVENT = {
-  id: 'apt-1',
-  title: 'Juan García · Kinesiología',
-  start: new Date('2026-05-07T09:00:00'),
-  end: new Date('2026-05-07T10:00:00'),
-  resource: BASE_APPOINTMENT,
-}
-
 const mockOnRefetch = vi.fn()
 
 describe('CalendarView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    calendarMockRef.onEventDrop = undefined
-    mockFetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ success: true }) })
   })
 
   describe('renderizado básico', () => {
-    it('renderiza el calendario sin error cuando appointments está vacío', () => {
+    it('muestra mensaje vacío cuando appointments está vacío', () => {
       render(
         <CalendarView
           date="2026-05-07"
@@ -134,7 +39,7 @@ describe('CalendarView', () => {
           onRefetch={mockOnRefetch}
         />
       )
-      expect(screen.getByTestId('rbc-calendar')).toBeInTheDocument()
+      expect(screen.getByText(/sin turnos para este día/i)).toBeInTheDocument()
     })
 
     it('muestra skeleton cuando isLoading=true', () => {
@@ -148,7 +53,6 @@ describe('CalendarView', () => {
         />
       )
       expect(screen.getByLabelText('Cargando turnos')).toBeInTheDocument()
-      expect(screen.queryByTestId('rbc-calendar')).not.toBeInTheDocument()
     })
 
     it('muestra error con botón Reintentar cuando isError=true', () => {
@@ -181,8 +85,8 @@ describe('CalendarView', () => {
     })
   })
 
-  describe('mapeo de appointments a CalendarEvents', () => {
-    it('mapea appointments correctamente a eventos del calendario', async () => {
+  describe('renderizado de turnos', () => {
+    it('muestra el nombre del paciente', () => {
       render(
         <CalendarView
           date="2026-05-07"
@@ -192,12 +96,10 @@ describe('CalendarView', () => {
           onRefetch={mockOnRefetch}
         />
       )
-      await waitFor(() => {
-        expect(screen.getByTestId('event-apt-1')).toBeInTheDocument()
-      })
+      expect(screen.getByText('Juan García')).toBeInTheDocument()
     })
 
-    it('muestra el título del evento con nombre de paciente y servicio', async () => {
+    it('muestra el horario inicio y fin del turno', () => {
       render(
         <CalendarView
           date="2026-05-07"
@@ -207,15 +109,11 @@ describe('CalendarView', () => {
           onRefetch={mockOnRefetch}
         />
       )
-      await waitFor(() => {
-        expect(screen.getByText(/Juan García/)).toBeInTheDocument()
-        expect(screen.getByText(/Kinesiología/)).toBeInTheDocument()
-      })
+      expect(screen.getByText('09:00')).toBeInTheDocument()
+      expect(screen.getByText('10:00')).toBeInTheDocument()
     })
-  })
 
-  describe('drag-and-drop con optimistic update', () => {
-    async function renderAndSimulateDrop() {
+    it('muestra el nombre del servicio', () => {
       render(
         <CalendarView
           date="2026-05-07"
@@ -225,150 +123,52 @@ describe('CalendarView', () => {
           onRefetch={mockOnRefetch}
         />
       )
-
-      // Esperar que el Calendar monte con onEventDrop disponible
-      await waitFor(() => {
-        expect(calendarMockRef.onEventDrop).toBeDefined()
-      })
-
-      // Simular drop — llamar onEventDrop directamente
-      await act(async () => {
-        calendarMockRef.onEventDrop?.({
-          event: BASE_CALENDAR_EVENT,
-          start: new Date('2026-05-07T15:00:00'),
-          end: new Date('2026-05-07T16:00:00'),
-        })
-      })
-    }
-
-    it('abre el modal de confirmación cuando se hace drop', async () => {
-      await renderAndSimulateDrop()
-
-      await waitFor(() => {
-        expect(screen.getByTestId('dialog-root')).toBeInTheDocument()
-      })
-      // El modal muestra título y botones de confirmación
-      expect(screen.getByRole('heading', { name: /reprogramar turno/i })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /confirmar/i })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /cancelar/i })).toBeInTheDocument()
+      expect(screen.getByText(/Kinesiología/)).toBeInTheDocument()
     })
 
-    it('llama a la API PATCH al confirmar el drop', async () => {
-      await renderAndSimulateDrop()
-      await screen.findByTestId('dialog-root')
-
-      const user = userEvent.setup()
-      await user.click(screen.getByRole('button', { name: /confirmar/i }))
-
-      await waitFor(() => {
-        expect(mockFetch).toHaveBeenCalledWith(
-          '/api/appointments/apt-1',
-          expect.objectContaining({ method: 'PATCH' })
-        )
-      })
-    })
-
-    it('cancela el drop y cierra el modal sin llamar a la API', async () => {
-      await renderAndSimulateDrop()
-      await screen.findByTestId('dialog-root')
-
-      const user = userEvent.setup()
-      await user.click(screen.getByRole('button', { name: /cancelar/i }))
-
-      await waitFor(() => {
-        expect(screen.queryByTestId('dialog-root')).not.toBeInTheDocument()
-      })
-      expect(mockFetch).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('guard de status en drag-and-drop', () => {
-    it('NO abre el modal cuando se arrastra un turno cancelled', async () => {
-      const cancelledAppointment: Appointment = {
+    it('ordena los turnos cronológicamente', () => {
+      const earlyApt: Appointment = {
         ...BASE_APPOINTMENT,
-        appointment_id: 'apt-cancelled',
-        status: 'cancelled',
+        appointment_id: 'apt-2',
+        start_at: '2026-05-07T07:00:00',
+        end_at: '2026-05-07T08:00:00',
+        patients: { full_name: 'Ana López' },
       }
-
       render(
         <CalendarView
           date="2026-05-07"
-          appointments={[cancelledAppointment]}
+          appointments={[BASE_APPOINTMENT, earlyApt]}
           isLoading={false}
           isError={false}
           onRefetch={mockOnRefetch}
         />
       )
-
-      await waitFor(() => expect(calendarMockRef.onEventDrop).toBeDefined())
-
-      const cancelledEvent = {
-        id: 'apt-cancelled',
-        title: 'Juan García · Kinesiología',
-        start: new Date('2026-05-07T09:00:00'),
-        end: new Date('2026-05-07T10:00:00'),
-        resource: cancelledAppointment,
-      }
-
-      await act(async () => {
-        calendarMockRef.onEventDrop?.({
-          event: cancelledEvent,
-          start: new Date('2026-05-07T15:00:00'),
-          end: new Date('2026-05-07T16:00:00'),
-        })
-      })
-
-      // El modal NO debe abrirse
-      expect(screen.queryByTestId('dialog-root')).not.toBeInTheDocument()
-      // La API NO debe llamarse
-      expect(mockFetch).not.toHaveBeenCalled()
+      // Ana López (07:00) debe aparecer antes que Juan García (09:00)
+      const names = screen.getAllByText(/Ana López|Juan García/)
+      expect(names[0]).toHaveTextContent('Ana López')
+      expect(names[1]).toHaveTextContent('Juan García')
     })
 
-    it('NO abre el modal cuando se arrastra un turno no_show', async () => {
-      const noShowAppointment: Appointment = {
-        ...BASE_APPOINTMENT,
-        appointment_id: 'apt-noshow',
-        status: 'no_show',
-      }
-
+    it('filtra appointments inválidos (sin start_at o end_at)', () => {
+      const invalidApt = { ...BASE_APPOINTMENT, appointment_id: 'apt-bad', start_at: null } as unknown as Appointment
       render(
         <CalendarView
           date="2026-05-07"
-          appointments={[noShowAppointment]}
+          appointments={[BASE_APPOINTMENT, invalidApt]}
           isLoading={false}
           isError={false}
           onRefetch={mockOnRefetch}
         />
       )
-
-      await waitFor(() => expect(calendarMockRef.onEventDrop).toBeDefined())
-
-      const noShowEvent = {
-        id: 'apt-noshow',
-        title: 'Juan García · Kinesiología',
-        start: new Date('2026-05-07T09:00:00'),
-        end: new Date('2026-05-07T10:00:00'),
-        resource: noShowAppointment,
-      }
-
-      await act(async () => {
-        calendarMockRef.onEventDrop?.({
-          event: noShowEvent,
-          start: new Date('2026-05-07T15:00:00'),
-          end: new Date('2026-05-07T16:00:00'),
-        })
-      })
-
-      expect(screen.queryByTestId('dialog-root')).not.toBeInTheDocument()
-      expect(mockFetch).not.toHaveBeenCalled()
+      // Solo el turno válido debe renderizarse
+      expect(screen.getAllByText('Juan García')).toHaveLength(1)
     })
   })
 
   describe('callback onReschedule', () => {
-    it('llama onReschedule cuando se hace click en el botón del evento', async () => {
+    it('llama onReschedule cuando se hace click en el botón reprogramar', async () => {
       const mockOnReschedule = vi.fn()
       const user = userEvent.setup()
-
       render(
         <CalendarView
           date="2026-05-07"
@@ -379,13 +179,50 @@ describe('CalendarView', () => {
           onReschedule={mockOnReschedule}
         />
       )
-
-      await waitFor(() => {
-        expect(screen.getByLabelText(/reprogramar turno de juan garcía/i)).toBeInTheDocument()
-      })
-
       await user.click(screen.getByLabelText(/reprogramar turno de juan garcía/i))
       expect(mockOnReschedule).toHaveBeenCalledWith(BASE_APPOINTMENT)
+    })
+
+    it('no muestra el botón reprogramar cuando onReschedule no se pasa', () => {
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      expect(screen.queryByLabelText(/reprogramar/i)).not.toBeInTheDocument()
+    })
+  })
+
+  describe('indicador de sync pendiente', () => {
+    it('muestra icono de reloj cuando calendar_event_id es null', () => {
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      expect(screen.getByLabelText(/pendiente de sincronización/i)).toBeInTheDocument()
+    })
+
+    it('no muestra icono de reloj cuando calendar_event_id está definido', () => {
+      const syncedApt: Appointment = { ...BASE_APPOINTMENT, calendar_event_id: 'gcal-event-123' }
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[syncedApt]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      expect(screen.queryByLabelText(/pendiente de sincronización/i)).not.toBeInTheDocument()
     })
   })
 })
