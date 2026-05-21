@@ -1,7 +1,36 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { ChatwootMessage } from '@/types/conversations'
 
 interface RouteContext {
   params: Promise<{ conversation_id: string }>
+}
+
+// Fallback: leer historial de mensajes desde Supabase cuando Chatwoot no tiene el contacto
+async function getMessagesFromSupabase(
+  supabase: SupabaseClient,
+  phone: string
+): Promise<ChatwootMessage[]> {
+  const { data, error } = await supabase
+    .from('conversations')
+    .select('id, content, role, created_at')
+    .eq('phone_number', phone)
+    .order('created_at', { ascending: true })
+    .limit(200)
+
+  if (error || !data?.length) return []
+
+  return data.map((row, index) => ({
+    id: index + 1,
+    content: row.content as string,
+    // role 'user' = incoming (0), 'assistant'/'system' = outgoing (1)
+    message_type: (row.role as string) === 'user' ? 0 : 1,
+    created_at: Math.floor(new Date(row.created_at as string).getTime() / 1000),
+    sender: {
+      name: (row.role as string) === 'user' ? 'Paciente' : 'Ekon',
+      type: (row.role as string) === 'user' ? 'contact' : 'agent_bot',
+    },
+  }))
 }
 
 export async function GET(_request: Request, context: RouteContext) {
@@ -22,14 +51,22 @@ export async function GET(_request: Request, context: RouteContext) {
   const chatwootToken = process.env.CHATWOOT_ACCESS_TOKEN
   const chatwootAccountId = process.env.CHATWOOT_ACCOUNT_ID
 
+  const isPhone = /^\+?\d{9,}$/.test(conversation_id)
+
   if (!chatwootBaseUrl || !chatwootToken || !chatwootAccountId) {
+    // Sin config de Chatwoot: ir directo a Supabase si es teléfono
+    if (isPhone) {
+      const messages = await getMessagesFromSupabase(supabase, conversation_id)
+      return Response.json({ messages }, { status: 200 })
+    }
     return Response.json({ error: 'chatwoot_unavailable' }, { status: 503 })
   }
 
   // 3. Resolver phone_number → Chatwoot conversation ID si conversation_id parece un teléfono
   // Formato: dígitos con prefijo opcional +, mínimo 9 dígitos (ej: 5491133334444 sin +)
   let resolvedId = conversation_id
-  if (/^\+?\d{9,}$/.test(conversation_id)) {
+  let foundInChatwoot = false
+  if (isPhone) {
     // Normalizar: quitar + si existe para la búsqueda en Chatwoot
     const phoneForSearch = conversation_id.startsWith('+') ? conversation_id.slice(1) : conversation_id
     try {
@@ -58,15 +95,21 @@ export async function GET(_request: Request, context: RouteContext) {
             const convData = await convRes.json() as { payload?: Array<{ id: number }> }
             const convs = convData.payload ?? []
             if (convs.length > 0) {
-              // Usar la conversación más reciente (primera en la lista)
               resolvedId = String(convs[0].id)
+              foundInChatwoot = true
             }
           }
         }
       }
     } catch (err) {
-      // Si falla la resolución, continúa con el ID original (fallback)
+      // Si falla la resolución, continúa con fallback Supabase
       console.error('[chatwoot/messages] Error resolviendo phone_number a Chatwoot ID:', err)
+    }
+
+    // Si es teléfono y no se encontró en Chatwoot, usar Supabase directamente
+    if (!foundInChatwoot) {
+      const messages = await getMessagesFromSupabase(supabase, conversation_id)
+      return Response.json({ messages }, { status: 200 })
     }
   }
 
@@ -79,6 +122,11 @@ export async function GET(_request: Request, context: RouteContext) {
     })
 
     if (!response.ok) {
+      // Fallback a Supabase si Chatwoot falla y tenemos teléfono
+      if (isPhone) {
+        const messages = await getMessagesFromSupabase(supabase, conversation_id)
+        return Response.json({ messages }, { status: 200 })
+      }
       return Response.json(
         { error: 'chatwoot_error', status: response.status },
         { status: response.status }
@@ -86,12 +134,28 @@ export async function GET(_request: Request, context: RouteContext) {
     }
 
     const data = await response.json() as { payload?: unknown[]; messages?: unknown[] }
+    const chatwootMessages = data.payload ?? data.messages ?? []
+
+    // Si Chatwoot devuelve vacío y tenemos teléfono, fallback a Supabase
+    if (chatwootMessages.length === 0 && isPhone) {
+      const messages = await getMessagesFromSupabase(supabase, conversation_id)
+      return Response.json({ messages }, { status: 200 })
+    }
+
     // Retornar solo los mensajes — NUNCA incluir chatwootToken en la respuesta
-    return Response.json({ messages: data.payload ?? data.messages ?? [] }, { status: 200 })
+    return Response.json({ messages: chatwootMessages }, { status: 200 })
   } catch (err) {
-    // AbortError = timeout (NFR22)
+    // AbortError = timeout (NFR22) — fallback a Supabase
     if (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+      if (isPhone) {
+        const messages = await getMessagesFromSupabase(supabase, conversation_id)
+        return Response.json({ messages }, { status: 200 })
+      }
       return Response.json({ error: 'chatwoot_unavailable' }, { status: 503 })
+    }
+    if (isPhone) {
+      const messages = await getMessagesFromSupabase(supabase, conversation_id)
+      return Response.json({ messages }, { status: 200 })
     }
     return Response.json({ error: 'chatwoot_unavailable' }, { status: 503 })
   }

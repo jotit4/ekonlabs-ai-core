@@ -44,7 +44,23 @@ export async function GET(
     if (err instanceof FastAPIError || err instanceof Error) {
       console.error('[context/GET] FastAPI error:', err)
     }
-    // Degradación silenciosa — el panel mostrará estado de error sin romper la página
+    // Fallback: leer datos básicos del paciente desde Supabase
+    try {
+      const { data: patient } = await supabase
+        .from('patients')
+        .select('full_name, phone_number')
+        .eq('phone_number', phone)
+        .maybeSingle()
+      if (patient?.full_name) {
+        const fallbackContext: AgentContext = {
+          patient_name: patient.full_name,
+          phone_number: patient.phone_number,
+        }
+        return Response.json({ context: fallbackContext })
+      }
+    } catch {
+      // ignorar — fallback también falló
+    }
     return Response.json({ context: null })
   }
 }

@@ -1,8 +1,9 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 // vi.hoisted — variables referenciadas en factories de vi.mock
-const { mockGetUser } = vi.hoisted(() => ({
+const { mockGetUser, mockFrom } = vi.hoisted(() => ({
   mockGetUser: vi.fn(),
+  mockFrom: vi.fn(),
 }))
 
 // Mock server-only
@@ -16,13 +17,14 @@ vi.mock('next/headers', () => ({
   }),
 }))
 
-// Mock createSupabaseServerClient
+// Mock createSupabaseServerClient — incluye auth y from() para el fallback Supabase
 vi.mock('@/lib/supabase/server', () => ({
   createSupabaseServerClient: vi.fn(() =>
     Promise.resolve({
       auth: {
         getUser: mockGetUser,
       },
+      from: mockFrom,
     })
   ),
 }))
@@ -52,6 +54,16 @@ describe('GET /api/chatwoot/conversations/[conversation_id]/messages', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+
+    // mockFrom: cadena vacía por defecto (para el fallback Supabase)
+    const queryChain = { data: [], error: null }
+    const chainMethods = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue(queryChain),
+    }
+    mockFrom.mockReturnValue(chainMethods)
 
     // Configurar env vars para chatwoot
     process.env = {
