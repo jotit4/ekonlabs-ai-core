@@ -19,11 +19,12 @@ export class FastAPIClient {
     const signals: AbortSignal[] = [AbortSignal.timeout(5000)]
     if (init?.signal) signals.push(init.signal)
 
+    const hasBody = init?.body !== undefined && init?.body !== null
     const response = await fetch(`${this.baseUrl}${path}`, {
       ...init,
       headers: {
         ...init?.headers,
-        "content-type": "application/json",
+        ...(hasBody ? { "content-type": "application/json" } : {}),
         "x-api-key": this.apiKey,
       },
       signal: AbortSignal.any(signals),
