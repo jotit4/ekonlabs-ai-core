@@ -16,6 +16,8 @@ export function statusToVariant(status: AppointmentStatus): StatusDotVariant {
   switch (status) {
     case 'confirmed':
       return 'active'
+    case 'completed':
+      return 'active'
     case 'pending':
       return 'warning'
     case 'rescheduled':

@@ -112,7 +112,7 @@ export default function PacienteFichaPage() {
     (tab) => !tab.roles || (role && (tab.roles as string[]).includes(role))
   )
 
-  // Obtener datos del paciente con join de appointments y thread_states
+  // Obtener datos del paciente con join de appointments
   const {
     data: patient,
     isPending,
@@ -123,7 +123,7 @@ export default function PacienteFichaPage() {
       const { data, error } = await supabase
         .from('patients')
         .select(
-          '*, appointments(appointment_id, start_at, end_at, status, services(name, professional_name)), thread_states(status, paused_reason)'
+          '*, appointments(appointment_id, start_at, end_at, status, services(name, professional_name))'
         )
         .eq('patient_id', patientId)
         .maybeSingle()
@@ -132,6 +132,23 @@ export default function PacienteFichaPage() {
     },
     staleTime: 5 * 60 * 1000,
     enabled: !!patientId,
+  })
+
+  // thread_states se fetcha por separado usando phone_number — evita depender de la FK
+  // thread_states_patient_fkey que aún no está aplicada en producción
+  const { data: threadStateData } = useQuery({
+    queryKey: ['thread_states', patient?.phone_number],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('thread_states')
+        .select('status, paused_reason')
+        .eq('phone_number', patient!.phone_number)
+        .maybeSingle()
+      if (error) throw error
+      return data
+    },
+    enabled: !!patient?.phone_number,
+    staleTime: 5 * 60 * 1000,
   })
 
   // Soft-sync pasivo — fire-and-forget (Story 2.7)
@@ -215,8 +232,7 @@ export default function PacienteFichaPage() {
   // Detectar si el paciente tiene eliminación pendiente
   const hasDeletionPending = !!patient.deletion_requested_at
 
-  // Estado del agente — tomar el primero de thread_states
-  const threadState = patient.thread_states?.[0] ?? null
+  const threadState = threadStateData ?? null
 
   return (
     <main className="mx-auto w-full max-w-6xl px-6 py-8">

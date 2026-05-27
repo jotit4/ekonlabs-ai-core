@@ -1,7 +1,23 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import type { Appointment } from '@/types/appointments'
+
+// Mock next/link
+vi.mock('next/link', () => ({
+  default: ({ href, children, ...props }: { href: string; children: React.ReactNode; [key: string]: unknown }) => (
+    <a href={href} {...props}>{children}</a>
+  ),
+}))
+
+// Mock @tanstack/react-query
+const mockInvalidateQueries = vi.fn()
+vi.mock('@tanstack/react-query', () => ({
+  useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries }),
+}))
+
+const mockFetch = vi.fn()
+global.fetch = mockFetch
 
 import { CalendarView } from './CalendarView'
 
@@ -19,6 +35,7 @@ const BASE_APPOINTMENT: Appointment = {
   created_at: '2026-05-01T00:00:00.000Z',
   patients: { full_name: 'Juan García' },
   services: { name: 'Kinesiología', professional: 'Dra. Patricia Pérez' },
+  professionals: null,
 }
 
 const mockOnRefetch = vi.fn()
@@ -26,6 +43,10 @@ const mockOnRefetch = vi.fn()
 describe('CalendarView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ success: true }),
+    })
   })
 
   describe('renderizado básico', () => {
@@ -197,8 +218,8 @@ describe('CalendarView', () => {
     })
   })
 
-  describe('indicador de sync pendiente', () => {
-    it('muestra icono de reloj cuando calendar_event_id es null', () => {
+  describe('Feature B — Cancelar turno', () => {
+    it('muestra botón de cancelar en cada turno activo', () => {
       render(
         <CalendarView
           date="2026-05-07"
@@ -208,21 +229,245 @@ describe('CalendarView', () => {
           onRefetch={mockOnRefetch}
         />
       )
-      expect(screen.getByLabelText(/pendiente de sincronización/i)).toBeInTheDocument()
+      expect(screen.getByLabelText(/cancelar turno de juan garcía/i)).toBeInTheDocument()
     })
 
-    it('no muestra icono de reloj cuando calendar_event_id está definido', () => {
-      const syncedApt: Appointment = { ...BASE_APPOINTMENT, calendar_event_id: 'gcal-event-123' }
+    it('abre modal de confirmación al hacer click en cancelar', async () => {
+      const user = userEvent.setup()
       render(
         <CalendarView
           date="2026-05-07"
-          appointments={[syncedApt]}
+          appointments={[BASE_APPOINTMENT]}
           isLoading={false}
           isError={false}
           onRefetch={mockOnRefetch}
         />
       )
-      expect(screen.queryByLabelText(/pendiente de sincronización/i)).not.toBeInTheDocument()
+      await user.click(screen.getByLabelText(/cancelar turno de juan garcía/i))
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByText(/¿Cancelar el turno de Juan García\?/i)).toBeInTheDocument()
+      expect(screen.getByText(/Esta acción no se puede deshacer/i)).toBeInTheDocument()
+    })
+
+    it('cierra el modal al hacer click en "No, volver"', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      await user.click(screen.getByLabelText(/cancelar turno de juan garcía/i))
+      await user.click(screen.getByRole('button', { name: /no, volver/i }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('llama a PATCH /api/appointments/[id]/status al confirmar cancelación', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      await user.click(screen.getByLabelText(/cancelar turno de juan garcía/i))
+      await user.click(screen.getByRole('button', { name: /sí, cancelar turno/i }))
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          '/api/appointments/apt-1/status',
+          expect.objectContaining({
+            method: 'PATCH',
+            body: JSON.stringify({ status: 'cancelled' }),
+          })
+        )
+      })
+    })
+
+    it('invalida queries de la agenda tras confirmar cancelación', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      await user.click(screen.getByLabelText(/cancelar turno de juan garcía/i))
+      await user.click(screen.getByRole('button', { name: /sí, cancelar turno/i }))
+
+      await waitFor(() => {
+        expect(mockInvalidateQueries).toHaveBeenCalledWith(
+          expect.objectContaining({ queryKey: ['agenda', 'day', '2026-05-07'] })
+        )
+      })
+    })
+
+    it('no muestra botón cancelar para turnos ya cancelados', () => {
+      const cancelledApt: Appointment = { ...BASE_APPOINTMENT, status: 'cancelled' }
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[cancelledApt]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      expect(screen.queryByLabelText(/cancelar turno/i)).not.toBeInTheDocument()
+    })
+  })
+
+  describe('Feature C — Marcar asistencia', () => {
+    it('muestra botón de marcar asistencia (reloj) en cada turno activo', () => {
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      expect(screen.getByLabelText(/marcar asistencia de juan garcía/i)).toBeInTheDocument()
+    })
+
+    it('abre dropdown al hacer click en el reloj', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      await user.click(screen.getByLabelText(/marcar asistencia de juan garcía/i))
+      expect(screen.getByRole('menu')).toBeInTheDocument()
+      expect(screen.getByRole('menuitem', { name: /confirmar asistencia/i })).toBeInTheDocument()
+      expect(screen.getByRole('menuitem', { name: /marcar no-show/i })).toBeInTheDocument()
+      expect(screen.getByRole('menuitem', { name: /cerrar/i })).toBeInTheDocument()
+    })
+
+    it('cierra el dropdown al hacer click en "Cerrar"', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      await user.click(screen.getByLabelText(/marcar asistencia de juan garcía/i))
+      await user.click(screen.getByRole('menuitem', { name: /cerrar/i }))
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    })
+
+    it('llama a PATCH con status completed al confirmar asistencia', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      await user.click(screen.getByLabelText(/marcar asistencia de juan garcía/i))
+      await user.click(screen.getByRole('menuitem', { name: /confirmar asistencia/i }))
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          '/api/appointments/apt-1/status',
+          expect.objectContaining({
+            method: 'PATCH',
+            body: JSON.stringify({ status: 'completed' }),
+          })
+        )
+      })
+    })
+
+    it('llama a PATCH con status no_show al marcar no-show', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      await user.click(screen.getByLabelText(/marcar asistencia de juan garcía/i))
+      await user.click(screen.getByRole('menuitem', { name: /marcar no-show/i }))
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          '/api/appointments/apt-1/status',
+          expect.objectContaining({
+            method: 'PATCH',
+            body: JSON.stringify({ status: 'no_show' }),
+          })
+        )
+      })
+    })
+
+    it('no muestra botón de asistencia para turnos cancelados', () => {
+      const cancelledApt: Appointment = { ...BASE_APPOINTMENT, status: 'cancelled' }
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[cancelledApt]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      expect(screen.queryByLabelText(/marcar asistencia/i)).not.toBeInTheDocument()
+    })
+  })
+
+  describe('Feature D — Link nombre paciente', () => {
+    it('muestra el nombre del paciente como link cuando patient_id está presente', () => {
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      const link = screen.getByRole('link', { name: /ver ficha de juan garcía/i })
+      expect(link).toBeInTheDocument()
+      expect(link).toHaveAttribute('href', '/pacientes/pat-1')
+    })
+
+    it('muestra el nombre sin link cuando patient_id es null', () => {
+      const noPidApt: Appointment = { ...BASE_APPOINTMENT, patient_id: null }
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[noPidApt]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      expect(screen.getByText('Juan García')).toBeInTheDocument()
+      expect(screen.queryByRole('link', { name: /ver ficha/i })).not.toBeInTheDocument()
     })
   })
 })

@@ -1,6 +1,7 @@
 export type AppointmentStatus =
   | 'confirmed'
   | 'cancelled'
+  | 'completed'
   | 'rescheduled'
   | 'no_show'
   | 'pending'
@@ -28,6 +29,7 @@ export interface Appointment {
 export const STATUS_LABELS: Record<AppointmentStatus, string> = {
   confirmed: 'Confirmado',
   cancelled: 'Cancelado',
+  completed: 'Completado',
   rescheduled: 'Reprogramado',
   no_show: 'No-show',
   pending: 'Pendiente',

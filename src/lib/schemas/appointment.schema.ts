@@ -1,10 +1,11 @@
 import { z } from 'zod'
 
-// Schema para la búsqueda de paciente por DNI
+// Schema para la búsqueda de paciente (DNI, nombre o teléfono)
 export const patientSearchSchema = z.object({
-  dni: z
+  query: z
     .string()
-    .regex(/^\d{7,8}$/, { error: 'Ingresá un DNI válido de 7 u 8 dígitos' }),
+    .min(2, { error: 'Ingresá al menos 2 caracteres para buscar' })
+    .max(100, { error: 'Búsqueda demasiado larga' }),
 })
 
 export type PatientSearchValues = z.infer<typeof patientSearchSchema>

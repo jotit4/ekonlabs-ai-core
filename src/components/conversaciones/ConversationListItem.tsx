@@ -41,15 +41,15 @@ function statusToLabel(status: ConversationStatus, confidenceLevel: ConfidenceLe
 function statusToConfidenceText(status: ConversationStatus, confidenceLevel: ConfidenceLevel): string {
   switch (status) {
     case 'needs_intervention':
-      return 'Necesita ayuda'
+      return 'Requiere atención'
     case 'human_takeover':
-      return 'Humano en control'
+      return 'Requiere atención'
     case 'resolved':
       return 'Resuelta'
     case 'ai_active':
       if (confidenceLevel === 'high') return 'Agente activo'
       if (confidenceLevel === 'medium') return 'Revisando…'
-      return 'Necesita ayuda'
+      return 'Requiere atención'
   }
 }
 

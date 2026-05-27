@@ -94,7 +94,7 @@ export default function PacientesPage() {
           ]
         : [],
     sorters: [{ field: 'full_name', order: 'asc' }],
-    pagination: { mode: 'off' },
+    pagination: { mode: 'server', pageSize: 500, currentPage: 1 },
     queryOptions: {
       queryKey: ['patients', 'list', debouncedQuery],
       staleTime: 5 * 60 * 1000,

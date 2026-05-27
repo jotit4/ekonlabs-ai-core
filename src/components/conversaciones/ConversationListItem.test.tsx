@@ -39,6 +39,26 @@ describe('ConversationListItem', () => {
     expect(screen.getByRole('img', { name: /necesita intervención/i })).toBeInTheDocument()
   })
 
+  it('needs_intervention → muestra texto "Requiere atención"', () => {
+    render(
+      <ConversationListItem
+        conversation={makeConversation({ status: 'needs_intervention', confidence_level: 'low' })}
+        onSelect={onSelect}
+      />
+    )
+    expect(screen.getByText('Requiere atención')).toBeInTheDocument()
+  })
+
+  it('human_takeover → muestra texto "Requiere atención"', () => {
+    render(
+      <ConversationListItem
+        conversation={makeConversation({ status: 'human_takeover', confidence_level: 'medium' })}
+        onSelect={onSelect}
+      />
+    )
+    expect(screen.getByText('Requiere atención')).toBeInTheDocument()
+  })
+
   it('ai_active + confidence_level high → StatusDot active, label "IA activa"', () => {
     render(
       <ConversationListItem

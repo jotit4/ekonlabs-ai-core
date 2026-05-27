@@ -115,10 +115,14 @@ describe('ConversationThread', () => {
     const { container } = render(<ConversationThread messages={[msg]} isConnected={true} />)
     const audioEl = container.querySelector('audio')
     expect(audioEl).toBeInTheDocument()
-    expect(audioEl).toHaveAttribute('src', 'https://example.com/audio.ogg')
+    // Las URLs externas se proxean via /api/media/audio para evitar CORS/CSP block
+    expect(audioEl).toHaveAttribute(
+      'src',
+      '/api/media/audio?url=' + encodeURIComponent('https://example.com/audio.ogg')
+    )
   })
 
-  it('usa data_url del attachment de audio si está disponible', () => {
+  it('usa data_url del attachment de audio si está disponible (data URI — sin proxy)', () => {
     const msg = makeMessage({
       content: '',
       attachments: [
@@ -133,6 +137,7 @@ describe('ConversationThread', () => {
     const { container } = render(<ConversationThread messages={[msg]} isConnected={true} />)
     const audioEl = container.querySelector('audio')
     expect(audioEl).toBeInTheDocument()
+    // data: URIs no necesitan proxy — se usan directamente
     expect(audioEl).toHaveAttribute('src', 'data:audio/ogg;base64,abc123')
   })
 

@@ -90,16 +90,26 @@ function MessageBubble({ message }: { message: ChatwootMessage }) {
           <div style={{ marginTop: message.content ? 8 : 0 }}>
             {message.attachments
               .filter((a) => a.file_type === 'audio')
-              .map((a) => (
-                <audio
-                  key={a.id}
-                  controls
-                  src={a.data_url ?? a.file_url}
-                  style={{ display: 'block', maxWidth: '100%', minWidth: 200 }}
-                >
-                  Tu navegador no soporta reproducción de audio.
-                </audio>
-              ))}
+              .map((a) => {
+                // Usar data_url directamente si es un data URI (no tiene restricciones CORS).
+                // Para URLs externas de Chatwoot, proxear via /api/media/audio para evitar
+                // MEDIA_ELEMENT_ERROR code 4 (CORS/CSP cross-origin media block en el browser).
+                const rawSrc = a.data_url ?? a.file_url
+                const src =
+                  rawSrc.startsWith('data:')
+                    ? rawSrc
+                    : `/api/media/audio?url=${encodeURIComponent(rawSrc)}`
+                return (
+                  <audio
+                    key={a.id}
+                    controls
+                    src={src}
+                    style={{ display: 'block', maxWidth: '100%', minWidth: 200 }}
+                  >
+                    Tu navegador no soporta reproducción de audio.
+                  </audio>
+                )
+              })}
           </div>
         )}
       </div>

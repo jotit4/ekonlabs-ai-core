@@ -6,13 +6,13 @@ import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
 import { useQueryClient } from '@tanstack/react-query'
 import { useList } from '@refinedev/core'
 import { Dialog } from '@base-ui/react/dialog'
-import { createSupabaseBrowserClient } from '@/lib/supabase/client'
 import {
   patientSearchSchema,
   newAppointmentSchema,
   type PatientSearchValues,
   type NewAppointmentFormValues,
 } from '@/lib/schemas/appointment.schema'
+import { PatientFormSchema, type PatientFormValues } from '@/lib/schemas/patient.schema'
 
 interface PatientResult {
   patient_id: string
@@ -52,21 +52,33 @@ function generateTimeSlots(durationMinutes: number): string[] {
 
 export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
   const queryClient = useQueryClient()
-  const dniInputRef = useRef<HTMLInputElement | null>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
 
   // Patient search state
   const [patient, setPatient] = useState<PatientResult | null>(null)
+  const [patientResults, setPatientResults] = useState<PatientResult[] | null>(null)
   const [patientSearchError, setPatientSearchError] = useState<string | null>(null)
   const [isSearching, setIsSearching] = useState(false)
+
+  // Inline patient creation state
+  const [showCreatePatient, setShowCreatePatient] = useState(false)
+  const [isCreatingPatient, setIsCreatingPatient] = useState(false)
+  const [createPatientError, setCreatePatientError] = useState<string | null>(null)
 
   // Slot conflict error
   const [slotConflictError, setSlotConflictError] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
-  // DNI search form
+  // Search form
   const searchForm = useForm<PatientSearchValues>({
     resolver: standardSchemaResolver(patientSearchSchema),
-    defaultValues: { dni: '' },
+    defaultValues: { query: '' },
+  })
+
+  // Inline patient creation form
+  const createPatientForm = useForm<PatientFormValues>({
+    resolver: standardSchemaResolver(PatientFormSchema),
+    defaultValues: { full_name: '', phone_number: '', dni: '', email: '' },
   })
 
   // Appointment form
@@ -97,11 +109,11 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
   const durationMinutes = selectedService?.duration_minutes ?? 60
   const timeSlots = generateTimeSlots(durationMinutes)
 
-  // Focus DNI input when modal opens
+  // Focus search input when modal opens
   useEffect(() => {
     if (!open) return
     const timer = setTimeout(() => {
-      dniInputRef.current?.focus()
+      searchInputRef.current?.focus()
     }, 50)
     return () => clearTimeout(timer)
   }, [open])
@@ -109,10 +121,15 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
   const handleClose = () => {
     // Reset all state before closing
     setPatient(null)
+    setPatientResults(null)
     setPatientSearchError(null)
+    setShowCreatePatient(false)
+    setIsCreatingPatient(false)
+    setCreatePatientError(null)
     setSlotConflictError(null)
     setSubmitError(null)
     searchForm.reset()
+    createPatientForm.reset()
     appointmentForm.reset({
       patient_id: '',
       service_id: '',
@@ -126,39 +143,99 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
     setIsSearching(true)
     setPatientSearchError(null)
     setPatient(null)
+    setPatientResults(null)
+    setShowCreatePatient(false)
+    setCreatePatientError(null)
 
     try {
-      const supabase = createSupabaseBrowserClient()
-      const { data, error } = await supabase
-        .from('patients')
-        .select('patient_id, full_name, phone_number, obra_social, deletion_requested_at')
-        .eq('dni', values.dni)
-        .maybeSingle()
+      const res = await fetch(
+        `/api/patients/search?q=${encodeURIComponent(values.query)}`,
+      )
+      const body = await res.json() as { patients?: PatientResult[]; error?: string }
 
-      if (error) {
-        setPatientSearchError('Error al buscar el paciente. Intentá de nuevo.')
+      if (!res.ok) {
+        setPatientSearchError(body.error ?? 'Error al buscar pacientes. Intentá de nuevo.')
         return
       }
 
-      if (!data) {
-        setPatientSearchError(`Sin resultados para '${values.dni}'`)
+      const results = body.patients ?? []
+
+      if (results.length === 0) {
+        setPatientSearchError(`Sin resultados para '${values.query}'.`)
+        setShowCreatePatient(true)
+        // Pre-fill phone if query looks like a phone number
+        if (/^\+?\d[\d\s\-]{6,}$/.test(values.query.trim())) {
+          createPatientForm.setValue('phone_number', values.query.trim())
+        }
         return
       }
 
-      const foundPatient = data as PatientResult
-
-      // Bloquear selección si el paciente tiene eliminación pendiente
-      if (foundPatient.deletion_requested_at) {
-        setPatientSearchError('Este paciente tiene una eliminación programada')
+      if (results.length === 1) {
+        // Auto-seleccionar si hay exactamente 1 resultado
+        const found = results[0]
+        if (found.deletion_requested_at) {
+          setPatientSearchError('Este paciente tiene una eliminación programada')
+          return
+        }
+        setPatient(found)
+        appointmentForm.setValue('patient_id', found.patient_id)
         return
       }
 
-      setPatient(foundPatient)
-      appointmentForm.setValue('patient_id', data.patient_id)
+      // Múltiples resultados — mostrar lista para que elija
+      setPatientResults(results)
     } catch {
       setPatientSearchError('Error de red al buscar el paciente.')
     } finally {
       setIsSearching(false)
+    }
+  }
+
+  const handleSelectPatient = (selected: PatientResult) => {
+    if (selected.deletion_requested_at) {
+      setPatientSearchError('Este paciente tiene una eliminación programada')
+      setPatientResults(null)
+      return
+    }
+    setPatient(selected)
+    setPatientResults(null)
+    appointmentForm.setValue('patient_id', selected.patient_id)
+  }
+
+  const handleCreatePatient = async (values: PatientFormValues) => {
+    setIsCreatingPatient(true)
+    setCreatePatientError(null)
+
+    try {
+      const res = await fetch('/api/patients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(values),
+      })
+      const body = await res.json() as { patient?: { patient_id: string }; error?: string }
+
+      if (!res.ok) {
+        setCreatePatientError(body.error ?? 'Error al crear el paciente.')
+        return
+      }
+
+      const newPatient: PatientResult = {
+        patient_id: body.patient!.patient_id,
+        full_name: values.full_name,
+        phone_number: values.phone_number,
+        obra_social: null,
+        deletion_requested_at: null,
+      }
+      setPatient(newPatient)
+      appointmentForm.setValue('patient_id', newPatient.patient_id)
+      setShowCreatePatient(false)
+      setPatientSearchError(null)
+      createPatientForm.reset()
+      queryClient.invalidateQueries({ queryKey: ['patients'] })
+    } catch {
+      setCreatePatientError('Error de red al crear el paciente.')
+    } finally {
+      setIsCreatingPatient(false)
     }
   }
 
@@ -239,30 +316,29 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
               <form
                 onSubmit={searchForm.handleSubmit(handleSearchPatient)}
                 noValidate
-                aria-label="Buscar paciente por DNI"
+                aria-label="Buscar paciente"
               >
                 <label
-                  htmlFor="dni-input"
+                  htmlFor="patient-search-input"
                   className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
                 >
-                  DNI del paciente
+                  Buscar paciente
                 </label>
                 <div className="flex gap-2">
                   <input
-                    id="dni-input"
+                    id="patient-search-input"
                     type="text"
-                    inputMode="numeric"
-                    placeholder="Ej: 12345678"
-                    {...searchForm.register('dni')}
+                    placeholder="DNI, nombre o teléfono..."
+                    {...searchForm.register('query')}
                     ref={(el) => {
-                      searchForm.register('dni').ref(el)
-                      dniInputRef.current = el
+                      searchForm.register('query').ref(el)
+                      searchInputRef.current = el
                     }}
-                    className={inputClass(!!searchForm.formState.errors.dni)}
-                    aria-invalid={!!searchForm.formState.errors.dni}
+                    className={inputClass(!!searchForm.formState.errors.query)}
+                    aria-invalid={!!searchForm.formState.errors.query}
                     aria-describedby={
-                      searchForm.formState.errors.dni
-                        ? 'dni-error'
+                      searchForm.formState.errors.query
+                        ? 'patient-search-validation-error'
                         : patientSearchError
                           ? 'patient-search-error'
                           : undefined
@@ -281,19 +357,154 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
                     {isSearching ? 'Buscando...' : 'Buscar'}
                   </button>
                 </div>
-                {searchForm.formState.errors.dni && (
-                  <p id="dni-error" role="alert" className="mt-1 text-xs text-red-600">
-                    {searchForm.formState.errors.dni.message}
+                {searchForm.formState.errors.query && (
+                  <p id="patient-search-validation-error" role="alert" className="mt-1 text-xs text-red-600">
+                    {searchForm.formState.errors.query.message}
                   </p>
                 )}
-                {patientSearchError && !searchForm.formState.errors.dni && (
+                {patientSearchError && !searchForm.formState.errors.query && (
                   <p id="patient-search-error" role="alert" className="mt-1 text-xs text-red-600">
                     {patientSearchError}
                   </p>
                 )}
               </form>
 
-              {/* Tarjeta del paciente encontrado */}
+              {/* Formulario inline de creación de paciente */}
+              {showCreatePatient && !patient && (
+                <div className="rounded-[8px] border border-[var(--color-border)] p-4 space-y-3">
+                  <p className="text-sm font-semibold text-[var(--color-text-primary)]">Nuevo paciente</p>
+                  <form
+                    id="create-patient-form"
+                    onSubmit={createPatientForm.handleSubmit(handleCreatePatient)}
+                    noValidate
+                    className="space-y-3"
+                    aria-label="Crear nuevo paciente"
+                  >
+                    <div>
+                      <label
+                        htmlFor="cp-full-name"
+                        className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1"
+                      >
+                        Nombre completo *
+                      </label>
+                      <input
+                        id="cp-full-name"
+                        type="text"
+                        {...createPatientForm.register('full_name')}
+                        className={inputClass(!!createPatientForm.formState.errors.full_name)}
+                        aria-invalid={!!createPatientForm.formState.errors.full_name}
+                      />
+                      {createPatientForm.formState.errors.full_name && (
+                        <p role="alert" className="mt-1 text-xs text-red-600">
+                          {createPatientForm.formState.errors.full_name.message}
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="cp-phone"
+                        className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1"
+                      >
+                        Teléfono *
+                      </label>
+                      <input
+                        id="cp-phone"
+                        type="tel"
+                        {...createPatientForm.register('phone_number')}
+                        className={inputClass(!!createPatientForm.formState.errors.phone_number)}
+                        aria-invalid={!!createPatientForm.formState.errors.phone_number}
+                      />
+                      {createPatientForm.formState.errors.phone_number && (
+                        <p role="alert" className="mt-1 text-xs text-red-600">
+                          {createPatientForm.formState.errors.phone_number.message}
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="cp-dni"
+                        className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1"
+                      >
+                        DNI (opcional)
+                      </label>
+                      <input
+                        id="cp-dni"
+                        type="text"
+                        inputMode="numeric"
+                        {...createPatientForm.register('dni')}
+                        className={inputClass(!!createPatientForm.formState.errors.dni)}
+                        aria-invalid={!!createPatientForm.formState.errors.dni}
+                      />
+                      {createPatientForm.formState.errors.dni && (
+                        <p role="alert" className="mt-1 text-xs text-red-600">
+                          {createPatientForm.formState.errors.dni.message}
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="cp-email"
+                        className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1"
+                      >
+                        Email (opcional)
+                      </label>
+                      <input
+                        id="cp-email"
+                        type="email"
+                        {...createPatientForm.register('email')}
+                        className={inputClass(!!createPatientForm.formState.errors.email)}
+                        aria-invalid={!!createPatientForm.formState.errors.email}
+                      />
+                      {createPatientForm.formState.errors.email && (
+                        <p role="alert" className="mt-1 text-xs text-red-600">
+                          {createPatientForm.formState.errors.email.message}
+                        </p>
+                      )}
+                    </div>
+
+                    {createPatientError && (
+                      <p role="alert" className="text-xs text-red-600">{createPatientError}</p>
+                    )}
+                  </form>
+                </div>
+              )}
+
+              {/* Lista de resultados (múltiples) */}
+              {patientResults && patientResults.length > 1 && (
+                <div
+                  role="list"
+                  aria-label="Resultados de búsqueda"
+                  className="rounded-[8px] border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden"
+                >
+                  {patientResults.map((p) => (
+                    <button
+                      key={p.patient_id}
+                      type="button"
+                      role="listitem"
+                      onClick={() => handleSelectPatient(p)}
+                      className={[
+                        'w-full text-left px-4 py-3 text-sm',
+                        'bg-[var(--color-bg)] hover:bg-[var(--color-surface)] transition-colors',
+                        p.deletion_requested_at ? 'opacity-50 cursor-not-allowed' : '',
+                      ].join(' ')}
+                      disabled={!!p.deletion_requested_at}
+                    >
+                      <p className="font-medium text-[var(--color-text-primary)]">{p.full_name}</p>
+                      {p.phone_number && (
+                        <p className="text-[var(--color-text-secondary)]">Tel: {p.phone_number}</p>
+                      )}
+                      {p.deletion_requested_at && (
+                        <p className="text-red-500 text-xs">Eliminación programada</p>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Tarjeta del paciente seleccionado */}
               {patient && (
                 <div className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm space-y-1">
                   <p className="font-medium text-[var(--color-text-primary)]">{patient.full_name}</p>
@@ -441,6 +652,21 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
               >
                 Cancelar
               </Dialog.Close>
+              {showCreatePatient && !patient && (
+                <button
+                  type="submit"
+                  form="create-patient-form"
+                  disabled={isCreatingPatient}
+                  className={[
+                    'px-4 py-2 rounded-[8px] text-sm font-medium min-h-[44px]',
+                    'bg-[var(--color-interactive)] text-white',
+                    'hover:opacity-90 transition-opacity',
+                    isCreatingPatient ? 'opacity-50 cursor-not-allowed' : '',
+                  ].join(' ')}
+                >
+                  {isCreatingPatient ? 'Creando...' : 'Crear paciente'}
+                </button>
+              )}
               {patient && (
                 <button
                   type="submit"

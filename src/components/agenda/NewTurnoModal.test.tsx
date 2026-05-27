@@ -50,7 +50,6 @@ vi.mock('@tanstack/react-query', () => ({
 }))
 
 // Mock @refinedev/core
-// useList retorna { result: QueryObserverResult } — el componente usa result.data para los servicios
 vi.mock('@refinedev/core', () => ({
   useList: () => ({
     result: {
@@ -72,34 +71,48 @@ vi.mock('@refinedev/core', () => ({
   }),
 }))
 
-// Mock Supabase browser client
-const mockMaybeSingle = vi.fn()
-const mockSelect = vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle: mockMaybeSingle })) }))
-vi.mock('@/lib/supabase/client', () => ({
-  createSupabaseBrowserClient: () => ({
-    from: vi.fn(() => ({ select: mockSelect })),
-  }),
-}))
-
 const mockOnClose = vi.fn()
+
+// Helpers para respuestas fetch de búsqueda
+function makeSearchResponse(patients: object[]) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({ patients }),
+  }
+}
+
+function makeAppointmentResponse(ok = true, status = 201) {
+  return {
+    ok,
+    status,
+    json: async () => (ok ? { success: true, appointment_id: 'apt-new' } : { error: 'Error' }),
+  }
+}
 
 describe('NewTurnoModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockMaybeSingle.mockResolvedValue({ data: null, error: null })
-    mockFetch.mockResolvedValue({ ok: true, status: 201, json: async () => ({ success: true, appointment_id: 'apt-new' }) })
+    // Default: búsqueda sin resultados
+    mockFetch.mockResolvedValue(makeSearchResponse([]))
   })
 
   describe('renderizado', () => {
-    it('renderiza el campo DNI y botón Buscar cuando open=true', () => {
+    it('renderiza el campo de búsqueda y botón Buscar cuando open=true', () => {
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
-      expect(screen.getByLabelText('DNI del paciente')).toBeInTheDocument()
+      expect(screen.getByPlaceholderText('DNI, nombre o teléfono...')).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /buscar/i })).toBeInTheDocument()
+    })
+
+    it('el input tiene placeholder "DNI, nombre o teléfono..."', () => {
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
+      const input = screen.getByPlaceholderText('DNI, nombre o teléfono...')
+      expect(input).toBeInTheDocument()
     })
 
     it('no renderiza nada cuando open=false', () => {
       render(<NewTurnoModal open={false} onClose={mockOnClose} date="2026-05-08" />)
-      expect(screen.queryByLabelText('DNI del paciente')).not.toBeInTheDocument()
+      expect(screen.queryByPlaceholderText('DNI, nombre o teléfono...')).not.toBeInTheDocument()
     })
 
     it('tiene el título "Nuevo turno"', () => {
@@ -114,22 +127,45 @@ describe('NewTurnoModal', () => {
   })
 
   describe('búsqueda de paciente', () => {
-    it('muestra datos del paciente tras búsqueda exitosa', async () => {
-      mockMaybeSingle.mockResolvedValue({
-        data: {
+    it('llama al endpoint /api/patients/search con el parámetro q', async () => {
+      mockFetch.mockResolvedValueOnce(makeSearchResponse([
+        {
           patient_id: 'pat-uuid-1',
           full_name: 'Juan García',
           phone_number: '+5491100000000',
           obra_social: 'OSDE',
           deletion_requested_at: null,
         },
-        error: null,
-      })
+      ]))
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByLabelText('DNI del paciente'), '12345678')
+      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), 'Juan')
+      await user.click(screen.getByRole('button', { name: /buscar/i }))
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/api/patients/search?q='),
+        )
+      })
+    })
+
+    it('auto-selecciona y muestra datos del paciente cuando hay exactamente 1 resultado', async () => {
+      mockFetch.mockResolvedValueOnce(makeSearchResponse([
+        {
+          patient_id: 'pat-uuid-1',
+          full_name: 'Juan García',
+          phone_number: '+5491100000000',
+          obra_social: 'OSDE',
+          deletion_requested_at: null,
+        },
+      ]))
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
+
+      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '12345678')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => {
@@ -138,48 +174,119 @@ describe('NewTurnoModal', () => {
       expect(screen.getByText(/OSDE/)).toBeInTheDocument()
     })
 
-    it('muestra "Sin resultados" cuando no hay coincidencia', async () => {
-      mockMaybeSingle.mockResolvedValue({ data: null, error: null })
+    it('muestra lista de opciones cuando hay múltiples resultados', async () => {
+      mockFetch.mockResolvedValueOnce(makeSearchResponse([
+        {
+          patient_id: 'pat-1',
+          full_name: 'Juan García',
+          phone_number: '+5491100000000',
+          obra_social: null,
+          deletion_requested_at: null,
+        },
+        {
+          patient_id: 'pat-2',
+          full_name: 'Juan Pérez',
+          phone_number: '+5491199999999',
+          obra_social: 'OSDE',
+          deletion_requested_at: null,
+        },
+      ]))
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByLabelText('DNI del paciente'), '99999999')
+      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), 'Juan')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => {
-        expect(screen.getByText(/Sin resultados para '99999999'/)).toBeInTheDocument()
+        expect(screen.getByRole('list', { name: 'Resultados de búsqueda' })).toBeInTheDocument()
+        expect(screen.getByText('Juan García')).toBeInTheDocument()
+        expect(screen.getByText('Juan Pérez')).toBeInTheDocument()
       })
     })
 
-    it('muestra error de validación cuando DNI es inválido', async () => {
+    it('selecciona paciente de la lista y muestra la tarjeta', async () => {
+      mockFetch.mockResolvedValueOnce(makeSearchResponse([
+        {
+          patient_id: 'pat-1',
+          full_name: 'Juan García',
+          phone_number: '+5491100000000',
+          obra_social: null,
+          deletion_requested_at: null,
+        },
+        {
+          patient_id: 'pat-2',
+          full_name: 'Juan Pérez',
+          phone_number: '+5491199999999',
+          obra_social: null,
+          deletion_requested_at: null,
+        },
+      ]))
+
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByLabelText('DNI del paciente'), '123') // menos de 7 dígitos
+      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), 'Juan')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => {
-        expect(screen.getByText(/Ingresá un DNI válido de 7 u 8 dígitos/)).toBeInTheDocument()
+        expect(screen.getByRole('list', { name: 'Resultados de búsqueda' })).toBeInTheDocument()
+      })
+
+      // Clic en el primer resultado
+      await user.click(screen.getAllByRole('listitem')[0])
+
+      await waitFor(() => {
+        // La lista desaparece, aparece la tarjeta del paciente seleccionado
+        expect(screen.queryByRole('list', { name: 'Resultados de búsqueda' })).not.toBeInTheDocument()
+        expect(screen.getByLabelText('Datos del turno')).toBeInTheDocument()
       })
     })
 
-    it('muestra error si el paciente tiene eliminación programada y no permite seleccionarlo', async () => {
-      mockMaybeSingle.mockResolvedValue({
-        data: {
+    it('muestra "Sin resultados" y formulario de creación inline cuando no hay coincidencia', async () => {
+      mockFetch.mockResolvedValueOnce(makeSearchResponse([]))
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
+
+      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), 'NoExiste')
+      await user.click(screen.getByRole('button', { name: /buscar/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText(/Sin resultados para 'NoExiste'/)).toBeInTheDocument()
+        expect(screen.getByText(/Nuevo paciente/i)).toBeInTheDocument()
+        expect(screen.getByLabelText(/Nombre completo/i)).toBeInTheDocument()
+        expect(screen.getByLabelText(/Teléfono/i)).toBeInTheDocument()
+      })
+    })
+
+    it('muestra error de validación cuando la búsqueda es menor a 2 caracteres', async () => {
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
+
+      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), 'a')
+      await user.click(screen.getByRole('button', { name: /buscar/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText(/Ingresá al menos 2 caracteres para buscar/)).toBeInTheDocument()
+      })
+    })
+
+    it('muestra error si el paciente único tiene eliminación programada', async () => {
+      mockFetch.mockResolvedValueOnce(makeSearchResponse([
+        {
           patient_id: 'pat-uuid-2',
           full_name: 'Carlos Gómez',
           phone_number: '+5491122334455',
           obra_social: null,
           deletion_requested_at: '2026-05-11T00:00:00Z',
         },
-        error: null,
-      })
+      ]))
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByLabelText('DNI del paciente'), '11223344')
+      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '11223344')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => {
@@ -194,24 +301,21 @@ describe('NewTurnoModal', () => {
   })
 
   describe('formulario de turno', () => {
-    beforeEach(async () => {
-      mockMaybeSingle.mockResolvedValue({
-        data: {
-          patient_id: 'pat-uuid-1',
-          full_name: 'María López',
-          phone_number: '+5491111111111',
-          obra_social: null,
-          deletion_requested_at: null,
-        },
-        error: null,
-      })
-    })
+    const singlePatient = {
+      patient_id: 'pat-uuid-1',
+      full_name: 'María López',
+      phone_number: '+5491111111111',
+      obra_social: null,
+      deletion_requested_at: null,
+    }
 
-    it('muestra el selector de servicio y fecha tras encontrar paciente', async () => {
+    it('muestra el selector de servicio y fecha tras encontrar paciente único', async () => {
+      mockFetch.mockResolvedValueOnce(makeSearchResponse([singlePatient]))
+
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByLabelText('DNI del paciente'), '87654321')
+      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => {
@@ -222,10 +326,12 @@ describe('NewTurnoModal', () => {
     })
 
     it('muestra el botón "Guardar turno" tras encontrar paciente', async () => {
+      mockFetch.mockResolvedValueOnce(makeSearchResponse([singlePatient]))
+
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByLabelText('DNI del paciente'), '87654321')
+      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => {
@@ -234,11 +340,15 @@ describe('NewTurnoModal', () => {
     })
 
     it('envía appointment_time con offset -03:00 (fix C-05)', async () => {
+      mockFetch
+        .mockResolvedValueOnce(makeSearchResponse([singlePatient]))
+        .mockResolvedValueOnce(makeAppointmentResponse())
+
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
 
       // Buscar paciente
-      await user.type(screen.getByLabelText('DNI del paciente'), '87654321')
+      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
       await waitFor(() => screen.getByLabelText('Servicio'))
 
@@ -261,10 +371,12 @@ describe('NewTurnoModal', () => {
     })
 
     it('el input de fecha tiene atributo min (fix M-10)', async () => {
+      mockFetch.mockResolvedValueOnce(makeSearchResponse([singlePatient]))
+
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
 
-      await user.type(screen.getByLabelText('DNI del paciente'), '87654321')
+      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => {
@@ -285,29 +397,19 @@ describe('NewTurnoModal', () => {
   })
 
   describe('patientSearchSchema', () => {
-    it('acepta DNI de 7 dígitos', () => {
-      const result = patientSearchSchema.safeParse({ dni: '1234567' })
-      expect(result.success).toBe(true)
+    it('acepta búsqueda con 2 o más caracteres', () => {
+      expect(patientSearchSchema.safeParse({ query: 'ab' }).success).toBe(true)
+      expect(patientSearchSchema.safeParse({ query: 'Juan García' }).success).toBe(true)
+      expect(patientSearchSchema.safeParse({ query: '12345678' }).success).toBe(true)
     })
 
-    it('acepta DNI de 8 dígitos', () => {
-      const result = patientSearchSchema.safeParse({ dni: '12345678' })
-      expect(result.success).toBe(true)
+    it('rechaza búsqueda con menos de 2 caracteres', () => {
+      expect(patientSearchSchema.safeParse({ query: '' }).success).toBe(false)
+      expect(patientSearchSchema.safeParse({ query: 'a' }).success).toBe(false)
     })
 
-    it('rechaza DNI de menos de 7 dígitos', () => {
-      const result = patientSearchSchema.safeParse({ dni: '123456' })
-      expect(result.success).toBe(false)
-    })
-
-    it('rechaza DNI de más de 8 dígitos', () => {
-      const result = patientSearchSchema.safeParse({ dni: '123456789' })
-      expect(result.success).toBe(false)
-    })
-
-    it('rechaza DNI con letras', () => {
-      const result = patientSearchSchema.safeParse({ dni: '1234567a' })
-      expect(result.success).toBe(false)
+    it('rechaza búsqueda de más de 100 caracteres', () => {
+      expect(patientSearchSchema.safeParse({ query: 'a'.repeat(101) }).success).toBe(false)
     })
   })
 })
