@@ -9,6 +9,16 @@ export interface ClinicalNote {
   updated_at: string
 }
 
+export interface PatientDocument {
+  document_id: string
+  patient_id: string
+  file_name: string
+  mime_type: string
+  size_bytes: number
+  source: 'manual' | 'whatsapp'
+  created_at: string
+}
+
 export interface Patient {
   patient_id: string
   tenant_id: string

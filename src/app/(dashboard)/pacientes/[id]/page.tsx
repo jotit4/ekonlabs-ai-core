@@ -15,6 +15,7 @@ import { WhatsAppHistory } from '@/components/pacientes/WhatsAppHistory'
 import { PatientStatusBadge } from '@/components/pacientes/PatientStatusBadge'
 import { ClinicalNoteEditor } from '@/components/pacientes/ClinicalNoteEditor'
 import { ClinicalNotesHistory } from '@/components/pacientes/ClinicalNotesHistory'
+import { PatientDocuments } from '@/components/pacientes/PatientDocuments'
 import { PatientDeletionRequest } from '@/components/pacientes/PatientDeletionRequest'
 import type { Patient } from '@/types/patients'
 
@@ -26,7 +27,7 @@ interface PatientWithHistory extends Patient {
 
 // ─── Definición de tabs ───────────────────────────────────────────────────────
 
-type TabId = 'datos' | 'turnos' | 'conversaciones' | 'notas'
+type TabId = 'datos' | 'turnos' | 'conversaciones' | 'notas' | 'documentos'
 
 interface TabDef {
   id: TabId
@@ -40,6 +41,7 @@ const TABS: TabDef[] = [
   { id: 'turnos', label: 'Historial de turnos', param: 'turnos' },
   { id: 'conversaciones', label: 'Conversaciones', param: 'conversaciones' },
   { id: 'notas', label: 'Notas clínicas', param: 'notas', roles: ['doctor', 'admin'] },
+  { id: 'documentos', label: 'Documentos', param: 'documentos' },
 ]
 
 // ─── Skeleton ─────────────────────────────────────────────────────────────────
@@ -51,7 +53,7 @@ function PatientFichaSkeleton() {
       <div className="h-8 w-64 animate-pulse rounded bg-[#f5f5f7]" />
       {/* Skeleton para tabs */}
       <div style={{ display: 'flex', gap: 16, borderBottom: '1px solid rgba(0,0,0,0.1)', paddingBottom: 8 }}>
-        {[1, 2, 3, 4].map((i) => (
+        {[1, 2, 3, 4, 5].map((i) => (
           <div key={i} className="h-8 w-32 animate-pulse rounded bg-[#f5f5f7]" />
         ))}
       </div>
@@ -472,6 +474,14 @@ export default function PacienteFichaPage() {
 
           {/* Historial de notas anteriores — siempre visible (solo lectura) */}
           <ClinicalNotesHistory patientId={patientId} />
+        </section>
+      )}
+
+      {/* Tab: Documentos — visible para receptionist/doctor/admin */}
+      {activeTab === 'documentos' && (
+        <section aria-label="Documentos del paciente" role="tabpanel">
+          <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Documentos</h2>
+          <PatientDocuments patientId={patientId} readOnly={hasDeletionPending} />
         </section>
       )}
     </main>

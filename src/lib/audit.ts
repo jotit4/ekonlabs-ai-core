@@ -16,6 +16,8 @@ export type AuditAction =
   | 'user_created'
   | 'user_deactivated'
   | 'user_activated'
+  | 'patient_document_uploaded'
+  | 'patient_document_accessed'
 
 export type AuditEntityType = 'patient' | 'conversation' | 'appointment' | 'config' | 'user'
 
