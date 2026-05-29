@@ -8,7 +8,7 @@ interface UseAgentKPIsOptions {
   hasta: string
 }
 
-const TIMEOUT_MS = 5000
+const TIMEOUT_MS = 15000
 
 export function useAgentKPIs({ desde, hasta }: UseAgentKPIsOptions) {
   const query = useQuery<AgentKPIs>({

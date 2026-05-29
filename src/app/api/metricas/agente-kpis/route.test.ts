@@ -342,7 +342,14 @@ describe('GET /api/metricas/agente-kpis', () => {
 
   it('retorna 500 si falla la query de escalaciones (audit_logs)', async () => {
     setupAdminAuth()
-    mockFrom.mockReturnValueOnce(makeAuditCountChain(null, { message: 'DB error' }))
+    let callCount = 0
+    mockFrom.mockImplementation(() => {
+      callCount++
+      if (callCount === 1) return makeAuditCountChain(null, { message: 'DB error' })
+      if (callCount === 2) return makeDataChain([])
+      if (callCount === 3) return makeAuditDataChain([])
+      return makeMessagesChain([])
+    })
 
     const res = await GET(makeRequest())
     expect(res.status).toBe(500)

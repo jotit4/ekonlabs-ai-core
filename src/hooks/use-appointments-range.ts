@@ -41,7 +41,7 @@ export function useAppointmentsRange(
     pagination: { mode: 'off' },
     queryOptions: {
       queryKey: ['agenda', 'range', dateFrom, dateTo, professionalId ?? '', serviceId ?? ''],
-      staleTime: 0,
+      staleTime: 2 * 60_000,
     },
   })
 

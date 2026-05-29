@@ -103,30 +103,50 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json({ error: 'El rango de fechas es inválido' }, { status: 400 })
   }
 
-  // 4. KPI: Escalaciones — eventos conversation_takeover en el período (audit_logs)
-  // RLS filtra por tenant automáticamente — AR14
-  const { count: escalacionesCount, error: escalacionesError } = await supabase
-    .from('audit_logs')
-    .select('id', { count: 'exact', head: true })
-    .eq('action', 'conversation_takeover')
-    .gte('created_at', desde)
-    .lte('created_at', hasta)
+  // 4-8. Todos los KPIs en paralelo — RLS filtra por tenant automáticamente (AR14)
+  const [
+    escalacionesResult,
+    phoneRowsResult,
+    takeoverLogsResult,
+    responseTimeResult,
+  ] = await Promise.all([
+    supabase
+      .from('audit_logs')
+      .select('id', { count: 'exact', head: true })
+      .eq('action', 'conversation_takeover')
+      .gte('created_at', desde)
+      .lte('created_at', hasta),
+    supabase
+      .from('conversations')
+      .select('phone_number')
+      .eq('role', 'user')
+      .gte('created_at', desde)
+      .lte('created_at', hasta)
+      .range(0, 9999),
+    supabase
+      .from('audit_logs')
+      .select('entity_id')
+      .eq('action', 'conversation_takeover')
+      .gte('created_at', desde)
+      .lte('created_at', hasta),
+    calcularTiempoRespuestaAvg(supabase, desde, hasta).catch(() => null),
+  ])
+
+  const { count: escalacionesCount, error: escalacionesError } = escalacionesResult
+  const { data: phoneRows, error: phonesError } = phoneRowsResult
+  const { data: takeoverLogs, error: takeoverError } = takeoverLogsResult
+  const response_time_avg_ms = responseTimeResult
 
   if (escalacionesError) {
     return Response.json({ error: 'Error al obtener escalaciones' }, { status: 500 })
   }
 
-  // 5. KPI: Total conversaciones — phone_numbers únicos con mensajes de usuario en el período
-  const { data: phoneRows, error: phonesError } = await supabase
-    .from('conversations')
-    .select('phone_number')
-    .eq('role', 'user')
-    .gte('created_at', desde)
-    .lte('created_at', hasta)
-    .range(0, 9999)
-
   if (phonesError) {
     return Response.json({ error: 'Error al obtener conversaciones' }, { status: 500 })
+  }
+
+  if (takeoverError) {
+    return Response.json({ error: 'Error al obtener datos de contención' }, { status: 500 })
   }
 
   if ((phoneRows ?? []).length === 10000) {
@@ -136,36 +156,14 @@ export async function GET(request: Request): Promise<Response> {
   const uniquePhones = new Set((phoneRows ?? []).map((r) => r.phone_number))
   const totalConversaciones = uniquePhones.size
 
-  // 6. Takeover phones en el período — para calcular contención
-  const { data: takeoverLogs, error: takeoverError } = await supabase
-    .from('audit_logs')
-    .select('entity_id')
-    .eq('action', 'conversation_takeover')
-    .gte('created_at', desde)
-    .lte('created_at', hasta)
-
-  if (takeoverError) {
-    return Response.json({ error: 'Error al obtener datos de contención' }, { status: 500 })
-  }
-
   const takeoverPhones = new Set((takeoverLogs ?? []).map((l) => l.entity_id))
 
-  // 7. Tasa de contención (null si no hay conversaciones)
   const containment_rate =
     totalConversaciones > 0
       ? Math.round(
           ((totalConversaciones - takeoverPhones.size) / totalConversaciones) * 100
         )
       : null
-
-  // 8. Tiempo de respuesta promedio (user → primer assistant siguiente)
-  let response_time_avg_ms: number | null = null
-  try {
-    response_time_avg_ms = await calcularTiempoRespuestaAvg(supabase, desde, hasta)
-  } catch {
-    // Degradación graceful — este KPI no bloquea el resto
-    response_time_avg_ms = null
-  }
 
   const agentKpis: AgentKPIs = {
     containment_rate,

@@ -43,12 +43,12 @@ export function useAppointments(
     pagination: { mode: 'off' },
     queryOptions: {
       queryKey: ['agenda', 'day', isoDate, professionalId ?? '', serviceId ?? ''],
-      staleTime: 0,
+      staleTime: 60_000,
     },
     overtimeOptions: { interval: 100 },
   })
 
-  const timedOut = (overtime.elapsedTime ?? 0) >= 5000
+  const timedOut = (overtime.elapsedTime ?? 0) >= 10000
 
   return {
     appointments: (result?.data ?? []) as Appointment[],

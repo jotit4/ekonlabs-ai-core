@@ -16,7 +16,7 @@ export class FastAPIClient {
   ) {}
 
   async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const signals: AbortSignal[] = [AbortSignal.timeout(5000)]
+    const signals: AbortSignal[] = [AbortSignal.timeout(15000)]
     if (init?.signal) signals.push(init.signal)
 
     const hasBody = init?.body !== undefined && init?.body !== null
