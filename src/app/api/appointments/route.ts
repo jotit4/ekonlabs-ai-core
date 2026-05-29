@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Datos inválidos', details: parsed.error.issues }, { status: 400 })
   }
 
-  const { patient_id, service_id, appointment_time, duration_minutes } = parsed.data
+  const { patient_id, service_id, professional_id, appointment_time, duration_minutes } = parsed.data
 
   // Calcular start_at y end_at — DB usa start_at/end_at (NOT NULL)
   const startAt = new Date(appointment_time)
@@ -41,13 +41,35 @@ export async function POST(request: Request) {
   }
   const endAt = new Date(startAt.getTime() + duration_minutes * 60 * 1000)
 
-  // 3. Insertar turno
+  // 3. Validar que el profesional elegido atiende ese servicio.
+  //    RLS de service_professionals filtra por tenant via JOIN a professionals,
+  //    así que esta consulta sólo ve filas del tenant del usuario (AR14).
+  const { data: spRow, error: spError } = await supabase
+    .from('service_professionals')
+    .select('professional_id')
+    .eq('service_id', service_id)
+    .eq('professional_id', professional_id)
+    .maybeSingle()
+
+  if (spError) {
+    console.error('[appointments/POST] service_professionals check error:', spError)
+    return Response.json({ error: 'Error al validar el profesional' }, { status: 500 })
+  }
+  if (!spRow) {
+    return Response.json(
+      { error: 'El profesional seleccionado no atiende ese servicio' },
+      { status: 400 },
+    )
+  }
+
+  // 4. Insertar turno
   const { data: inserted, error: insertError } = await supabase
     .from('appointments')
     .insert({
       tenant_id: tenantId,
       patient_id,
       service_id,
+      professional_id,
       start_at: startAt.toISOString(),
       end_at: endAt.toISOString(),
       calendar_event_id: null,

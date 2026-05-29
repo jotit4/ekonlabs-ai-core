@@ -29,6 +29,11 @@ interface ServiceOption {
   duration_minutes: number
 }
 
+interface ProfessionalOption {
+  professional_id: string
+  name: string
+}
+
 interface NewTurnoModalProps {
   open: boolean
   onClose: () => void
@@ -69,6 +74,11 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
   const [slotConflictError, setSlotConflictError] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
+  // Profesionales del servicio elegido
+  const [professionals, setProfessionals] = useState<ProfessionalOption[]>([])
+  const [isLoadingProfessionals, setIsLoadingProfessionals] = useState(false)
+  const [professionalsError, setProfessionalsError] = useState<string | null>(null)
+
   // Search form
   const searchForm = useForm<PatientSearchValues>({
     resolver: standardSchemaResolver(patientSearchSchema),
@@ -87,6 +97,7 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
     defaultValues: {
       patient_id: '',
       service_id: '',
+      professional_id: '',
       appointment_date: date,
       appointment_time_hhmm: '',
     },
@@ -109,6 +120,56 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
   const durationMinutes = selectedService?.duration_minutes ?? 60
   const timeSlots = generateTimeSlots(durationMinutes)
 
+  // Cargar profesionales del servicio elegido (modelo de turnos por profesional).
+  // El paciente elige el profesional, por eso el selector se filtra por servicio.
+  useEffect(() => {
+    let cancelled = false
+
+    ;(async () => {
+      // Reset del profesional elegido al cambiar de servicio (dentro del async
+      // para no disparar cascading renders síncronos — react-hooks/set-state-in-effect)
+      appointmentForm.setValue('professional_id', '')
+      setProfessionals([])
+      setProfessionalsError(null)
+
+      if (!selectedServiceId) return
+
+      setIsLoadingProfessionals(true)
+      try {
+        const res = await fetch(
+          `/api/services/${encodeURIComponent(selectedServiceId)}/profesionales`,
+        )
+        const body = (await res.json()) as { data?: ProfessionalOption[]; error?: string }
+        if (cancelled) return
+        if (!res.ok) {
+          setProfessionalsError(body.error ?? 'Error al cargar profesionales')
+          return
+        }
+        setProfessionals(body.data ?? [])
+      } catch {
+        if (!cancelled) setProfessionalsError('Error de red al cargar profesionales')
+      } finally {
+        if (!cancelled) setIsLoadingProfessionals(false)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+    // appointmentForm es estable (react-hook-form); sólo depende del servicio
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedServiceId])
+
+  // Preselección del único profesional disponible — en effect separado para que
+  // la opción ya esté renderizada en el <select> antes de setValue (si no, el
+  // DOM ignora el valor por no existir aún la <option>).
+  useEffect(() => {
+    if (professionals.length === 1) {
+      appointmentForm.setValue('professional_id', professionals[0].professional_id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [professionals])
+
   // Focus search input when modal opens
   useEffect(() => {
     if (!open) return
@@ -128,11 +189,15 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
     setCreatePatientError(null)
     setSlotConflictError(null)
     setSubmitError(null)
+    setProfessionals([])
+    setProfessionalsError(null)
+    setIsLoadingProfessionals(false)
     searchForm.reset()
     createPatientForm.reset()
     appointmentForm.reset({
       patient_id: '',
       service_id: '',
+      professional_id: '',
       appointment_date: date,
       appointment_time_hhmm: '',
     })
@@ -252,6 +317,7 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
         body: JSON.stringify({
           patient_id: values.patient_id,
           service_id: values.service_id,
+          professional_id: values.professional_id,
           appointment_time: appointmentTimeISO,
           duration_minutes: durationMinutes,
         }),
@@ -557,6 +623,51 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
                     {appointmentForm.formState.errors.service_id && (
                       <p id="service-error" role="alert" className="mt-1 text-xs text-red-600">
                         {appointmentForm.formState.errors.service_id.message}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Profesional — el paciente elige (modelo por profesional) */}
+                  <div>
+                    <label
+                      htmlFor="professional-select"
+                      className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
+                    >
+                      Profesional
+                    </label>
+                    <select
+                      id="professional-select"
+                      {...appointmentForm.register('professional_id')}
+                      disabled={!selectedServiceId || isLoadingProfessionals || professionals.length === 0}
+                      className={inputClass(!!appointmentForm.formState.errors.professional_id)}
+                      aria-invalid={!!appointmentForm.formState.errors.professional_id}
+                      aria-describedby={
+                        appointmentForm.formState.errors.professional_id ? 'professional-error' : undefined
+                      }
+                    >
+                      <option value="">
+                        {!selectedServiceId
+                          ? 'Seleccioná un servicio primero'
+                          : isLoadingProfessionals
+                            ? 'Cargando profesionales...'
+                            : professionals.length === 0
+                              ? 'Sin profesionales para este servicio'
+                              : 'Seleccioná un profesional'}
+                      </option>
+                      {professionals.map((prof) => (
+                        <option key={prof.professional_id} value={prof.professional_id}>
+                          {prof.name}
+                        </option>
+                      ))}
+                    </select>
+                    {professionalsError && (
+                      <p role="alert" className="mt-1 text-xs text-red-600">
+                        {professionalsError}
+                      </p>
+                    )}
+                    {appointmentForm.formState.errors.professional_id && (
+                      <p id="professional-error" role="alert" className="mt-1 text-xs text-red-600">
+                        {appointmentForm.formState.errors.professional_id.message}
                       </p>
                     )}
                   </div>

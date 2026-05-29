@@ -82,6 +82,18 @@ function makeSearchResponse(patients: object[]) {
   }
 }
 
+function makeProfessionalsResponse(
+  professionals: { professional_id: string; name: string }[] = [
+    { professional_id: 'prof-1', name: 'Patricia Pérez' },
+  ],
+) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({ data: professionals }),
+  }
+}
+
 function makeAppointmentResponse(ok = true, status = 201) {
   return {
     ok,
@@ -340,9 +352,13 @@ describe('NewTurnoModal', () => {
     })
 
     it('envía appointment_time con offset -03:00 (fix C-05)', async () => {
-      mockFetch
-        .mockResolvedValueOnce(makeSearchResponse([singlePatient]))
-        .mockResolvedValueOnce(makeAppointmentResponse())
+      // Routear por URL para no depender del orden de los fetch
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
+        if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse([{ professional_id: 'prof-1', name: 'Patricia Pérez' }]))
+        if (url === '/api/appointments') return Promise.resolve(makeAppointmentResponse())
+        return Promise.resolve(makeSearchResponse([]))
+      })
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
@@ -352,8 +368,13 @@ describe('NewTurnoModal', () => {
       await user.click(screen.getByRole('button', { name: /buscar/i }))
       await waitFor(() => screen.getByLabelText('Servicio'))
 
-      // Seleccionar servicio y hora
+      // Seleccionar servicio → dispara carga de profesionales
       await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+      // Con un único profesional, se preselecciona automáticamente
+      await waitFor(() => {
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('prof-1')
+      })
+
       await user.selectOptions(screen.getByLabelText('Horario'), '09:00')
 
       // Submit
@@ -368,6 +389,41 @@ describe('NewTurnoModal', () => {
           })
         )
       })
+    })
+
+    it('carga el selector de profesionales filtrado por servicio y exige elegir uno', async () => {
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
+        if (url.includes('/profesionales'))
+          return Promise.resolve(
+            makeProfessionalsResponse([
+              { professional_id: 'prof-1', name: 'Patricia Pérez' },
+              { professional_id: 'prof-2', name: 'Aldo Luque' },
+            ]),
+          )
+        return Promise.resolve(makeSearchResponse([]))
+      })
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
+
+      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
+      await user.click(screen.getByRole('button', { name: /buscar/i }))
+      await waitFor(() => screen.getByLabelText('Servicio'))
+
+      await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+
+      // Llama al endpoint de profesionales del servicio elegido
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith('/api/services/svc-1/profesionales')
+      })
+
+      // Con dos profesionales no se preselecciona — ambas opciones disponibles
+      await waitFor(() => {
+        expect(screen.getByRole('option', { name: 'Patricia Pérez' })).toBeInTheDocument()
+        expect(screen.getByRole('option', { name: 'Aldo Luque' })).toBeInTheDocument()
+      })
+      expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('')
     })
 
     it('el input de fecha tiene atributo min (fix M-10)', async () => {
