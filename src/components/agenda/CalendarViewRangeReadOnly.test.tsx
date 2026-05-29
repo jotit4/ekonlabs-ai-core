@@ -38,8 +38,13 @@ vi.mock('react-big-calendar', async () => {
   }
 })
 
-// Mock date-fns/locale
-vi.mock('date-fns/locale', () => ({ es: {} }))
+// Usar el locale real `es` — la vista Semana llama format(day, 'EEE', { locale: es })
+// y date-fns v4 necesita un locale completo (un stub vacío lanza
+// "Cannot read properties of undefined (reading 'preprocessor')").
+vi.mock('date-fns/locale', async () => {
+  const actual = await vi.importActual<typeof import('date-fns/locale')>('date-fns/locale')
+  return { es: actual.es }
+})
 
 import { CalendarViewRangeReadOnly } from './CalendarViewRangeReadOnly'
 
@@ -68,10 +73,26 @@ describe('CalendarViewRangeReadOnly', () => {
     vi.clearAllMocks()
   })
 
-  it('renderiza el calendario con data-testid="rbc-calendar" cuando isLoading=false', () => {
+  it('renderiza la grilla de 7 días en vista Semana cuando isLoading=false', () => {
     render(
       <CalendarViewRangeReadOnly
         view="week"
+        date="2026-05-12"
+        appointments={[]}
+        isLoading={false}
+        isError={false}
+        onRefetch={mockOnRefetch}
+      />,
+    )
+    // La vista Semana (WeekColumnsView) renderiza 7 cabeceras de día (lun-dom)
+    expect(screen.getByText('lun')).toBeInTheDocument()
+    expect(screen.getByText('dom')).toBeInTheDocument()
+  })
+
+  it('renderiza el calendario con data-testid="rbc-calendar" en vista Mes', () => {
+    render(
+      <CalendarViewRangeReadOnly
+        view="month"
         date="2026-05-12"
         appointments={[]}
         isLoading={false}
@@ -128,10 +149,10 @@ describe('CalendarViewRangeReadOnly', () => {
     expect(mockOnRefetch).toHaveBeenCalledOnce()
   })
 
-  it('mapea appointments a eventos del calendario correctamente', () => {
+  it('mapea appointments a eventos en vista Mes (data-testid="event-*")', () => {
     render(
       <CalendarViewRangeReadOnly
-        view="week"
+        view="month"
         date="2026-05-12"
         appointments={[BASE_APPOINTMENT]}
         isLoading={false}
@@ -142,7 +163,41 @@ describe('CalendarViewRangeReadOnly', () => {
     expect(screen.getByTestId('event-apt-1')).toBeInTheDocument()
   })
 
-  it('al hacer click en un evento, llama onAppointmentClick con el appointment correcto', async () => {
+  it('mapea appointments a eventos en vista Semana (turno visible en su columna)', () => {
+    render(
+      <CalendarViewRangeReadOnly
+        view="week"
+        date="2026-05-12"
+        appointments={[BASE_APPOINTMENT]}
+        isLoading={false}
+        isError={false}
+        onRefetch={mockOnRefetch}
+      />,
+    )
+    // En la grilla de Semana el turno se muestra con su hora y el nombre del paciente
+    expect(screen.getByText('María López')).toBeInTheDocument()
+    expect(screen.getByText('09:00')).toBeInTheDocument()
+  })
+
+  it('al hacer click en un evento (vista Mes), llama onAppointmentClick con el appointment correcto', async () => {
+    const user = userEvent.setup()
+    const mockOnAppointmentClick = vi.fn()
+    render(
+      <CalendarViewRangeReadOnly
+        view="month"
+        date="2026-05-12"
+        appointments={[BASE_APPOINTMENT]}
+        isLoading={false}
+        isError={false}
+        onRefetch={mockOnRefetch}
+        onAppointmentClick={mockOnAppointmentClick}
+      />,
+    )
+    await user.click(screen.getByTestId('event-apt-1'))
+    expect(mockOnAppointmentClick).toHaveBeenCalledWith(BASE_APPOINTMENT)
+  })
+
+  it('al hacer click en un evento (vista Semana), llama onAppointmentClick con el appointment correcto', async () => {
     const user = userEvent.setup()
     const mockOnAppointmentClick = vi.fn()
     render(
@@ -156,7 +211,7 @@ describe('CalendarViewRangeReadOnly', () => {
         onAppointmentClick={mockOnAppointmentClick}
       />,
     )
-    await user.click(screen.getByTestId('event-apt-1'))
+    await user.click(screen.getByText('María López'))
     expect(mockOnAppointmentClick).toHaveBeenCalledWith(BASE_APPOINTMENT)
   })
 
