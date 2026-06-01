@@ -6,6 +6,7 @@ import { Pencil } from 'lucide-react'
 import type { Appointment } from '@/types/appointments'
 import { STATUS_LABELS } from '@/types/appointments'
 import { StatusDot, statusToVariant } from '@/components/shared/StatusDot'
+import { ReminderBadge } from './ReminderBadge'
 
 interface TurnoCardProps {
   appointment: Appointment
@@ -35,6 +36,10 @@ export function TurnoCard({ appointment, onReschedule }: TurnoCardProps) {
         {servicio}
         {profesional ? ` · ${profesional}` : ''}
       </span>
+      <ReminderBadge
+        reminderSentAt={appointment.reminder_sent_at}
+        attendanceConfirmed={appointment.attendance_confirmed}
+      />
       <div className="flex items-center gap-1.5 shrink-0">
         <StatusDot variant={variant} label={label} />
         <span className="text-xs text-[var(--color-text-secondary)]">{label}</span>

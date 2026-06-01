@@ -71,6 +71,8 @@ export interface CreateServicePayload {
   professional_name?: string
   duration_minutes?: number
   booking_mode?: 'appointment' | 'walk_in' | 'gated' | 'cycle'
+  reminder_hours_before?: number | null
+  reminder_instructions?: string | null
 }
 
 export interface UpdateServicePayload {
@@ -80,4 +82,6 @@ export interface UpdateServicePayload {
   duration_minutes?: number
   active?: boolean
   booking_mode?: 'appointment' | 'walk_in' | 'gated' | 'cycle'
+  reminder_hours_before?: number | null
+  reminder_instructions?: string | null
 }

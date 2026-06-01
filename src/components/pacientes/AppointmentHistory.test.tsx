@@ -22,6 +22,8 @@ function makeAppointment(overrides: Partial<AppointmentForHistory> = {}): Appoin
     start_at: futureDate(1),
     end_at: futureDate(1),
     status: 'confirmed',
+    reminder_sent_at: null,
+    attendance_confirmed: null,
     services: {
       name: 'Consulta General',
       professional_name: 'Dr. García',

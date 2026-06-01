@@ -29,7 +29,7 @@ export function useAppointmentsRange(
   const { query, result } = useList<Appointment>({
     resource: 'appointments',
     meta: {
-      select: '*, patients(full_name), services(name, professional_name, duration_minutes), professionals(name)',
+      select: '*, reminder_sent_at, attendance_confirmed, patients(full_name), services(name, professional_name, duration_minutes), professionals(name)',
     },
     filters: [
       { field: 'start_at', operator: 'gte', value: startISO },

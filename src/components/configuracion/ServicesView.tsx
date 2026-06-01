@@ -48,15 +48,26 @@ function CreateServiceForm({ onCancel }: CreateFormProps) {
       calendar_id: '',
       professional_name: '',
       duration_minutes: 60,
+      reminder_hours_before: undefined,
+      reminder_instructions: '',
     },
   })
 
   const onSubmit = async (data: CreateServiceFormValues) => {
+    const reminderHours =
+      data.reminder_hours_before == null || Number.isNaN(data.reminder_hours_before)
+        ? null
+        : data.reminder_hours_before
+    const reminderInstructions = data.reminder_instructions?.trim()
+      ? data.reminder_instructions.trim()
+      : null
     const payload = {
       name: data.name,
       calendar_id: data.calendar_id,
       ...(data.professional_name ? { professional_name: data.professional_name } : {}),
       ...(data.duration_minutes !== undefined ? { duration_minutes: data.duration_minutes } : {}),
+      reminder_hours_before: reminderHours,
+      reminder_instructions: reminderInstructions,
     }
     createService.mutate(payload, {
       onSuccess: () => {
@@ -160,6 +171,52 @@ function CreateServiceForm({ onCancel }: CreateFormProps) {
         )}
       </div>
 
+      <div>
+        <label htmlFor="create-reminder-hours" className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
+          Recordatorio (horas antes) <span className="text-[var(--color-text-secondary)] font-normal">(opcional)</span>
+        </label>
+        <input
+          id="create-reminder-hours"
+          type="number"
+          min={1}
+          max={720}
+          {...register('reminder_hours_before', {
+            setValueAs: (v) => (v === '' || v === null || Number.isNaN(Number(v)) ? null : Number(v)),
+          })}
+          className={[
+            'w-full px-3 py-2 rounded-[8px] border text-sm',
+            'bg-[var(--color-bg)] text-[var(--color-text-primary)]',
+            'focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]',
+            errors.reminder_hours_before ? 'border-red-400' : 'border-[var(--color-border)]',
+          ].join(' ')}
+          aria-invalid={!!errors.reminder_hours_before}
+        />
+        {errors.reminder_hours_before && (
+          <p role="alert" className="mt-1 text-xs text-red-600">{errors.reminder_hours_before.message}</p>
+        )}
+      </div>
+
+      <div>
+        <label htmlFor="create-reminder-instructions" className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
+          Instrucciones de recordatorio <span className="text-[var(--color-text-secondary)] font-normal">(opcional)</span>
+        </label>
+        <textarea
+          id="create-reminder-instructions"
+          rows={3}
+          {...register('reminder_instructions')}
+          className={[
+            'w-full px-3 py-2 rounded-[8px] border text-sm',
+            'bg-[var(--color-bg)] text-[var(--color-text-primary)]',
+            'focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]',
+            errors.reminder_instructions ? 'border-red-400' : 'border-[var(--color-border)]',
+          ].join(' ')}
+          aria-invalid={!!errors.reminder_instructions}
+        />
+        {errors.reminder_instructions && (
+          <p role="alert" className="mt-1 text-xs text-red-600">{errors.reminder_instructions.message}</p>
+        )}
+      </div>
+
       <div className="flex gap-2 pt-1">
         <button
           type="submit"
@@ -210,15 +267,27 @@ function EditServiceForm({ service, onCancel }: EditFormProps) {
       calendar_id: service.calendar_id,
       professional_name: service.professional_name ?? '',
       duration_minutes: service.duration_minutes,
+      reminder_hours_before: service.reminder_hours_before ?? undefined,
+      reminder_instructions: service.reminder_instructions ?? '',
     },
   })
 
   const onSubmit = async (data: UpdateServiceFormValues) => {
+    // AC3: enviar SIEMPRE null explícito al limpiar (no omitir la clave) para que el PATCH persista NULL
+    const reminderHours =
+      data.reminder_hours_before == null || Number.isNaN(data.reminder_hours_before)
+        ? null
+        : data.reminder_hours_before
+    const reminderInstructions = data.reminder_instructions?.trim()
+      ? data.reminder_instructions.trim()
+      : null
     const payload = {
       name: data.name,
       calendar_id: data.calendar_id,
       professional_name: data.professional_name || undefined,
       duration_minutes: data.duration_minutes,
+      reminder_hours_before: reminderHours,
+      reminder_instructions: reminderInstructions,
     }
     updateService.mutate(
       { id: service.service_id, payload },
@@ -311,6 +380,52 @@ function EditServiceForm({ service, onCancel }: EditFormProps) {
         />
       </div>
 
+      <div>
+        <label htmlFor={`edit-reminder-hours-${service.service_id}`} className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
+          Recordatorio (horas antes) <span className="text-[var(--color-text-secondary)] font-normal">(opcional)</span>
+        </label>
+        <input
+          id={`edit-reminder-hours-${service.service_id}`}
+          type="number"
+          min={1}
+          max={720}
+          {...register('reminder_hours_before', {
+            setValueAs: (v) => (v === '' || v === null || Number.isNaN(Number(v)) ? null : Number(v)),
+          })}
+          className={[
+            'w-full px-3 py-2 rounded-[8px] border text-sm',
+            'bg-[var(--color-bg)] text-[var(--color-text-primary)]',
+            'focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]',
+            errors.reminder_hours_before ? 'border-red-400' : 'border-[var(--color-border)]',
+          ].join(' ')}
+          aria-invalid={!!errors.reminder_hours_before}
+        />
+        {errors.reminder_hours_before && (
+          <p role="alert" className="mt-1 text-xs text-red-600">{errors.reminder_hours_before.message}</p>
+        )}
+      </div>
+
+      <div>
+        <label htmlFor={`edit-reminder-instructions-${service.service_id}`} className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
+          Instrucciones de recordatorio <span className="text-[var(--color-text-secondary)] font-normal">(opcional)</span>
+        </label>
+        <textarea
+          id={`edit-reminder-instructions-${service.service_id}`}
+          rows={3}
+          {...register('reminder_instructions')}
+          className={[
+            'w-full px-3 py-2 rounded-[8px] border text-sm',
+            'bg-[var(--color-bg)] text-[var(--color-text-primary)]',
+            'focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]',
+            errors.reminder_instructions ? 'border-red-400' : 'border-[var(--color-border)]',
+          ].join(' ')}
+          aria-invalid={!!errors.reminder_instructions}
+        />
+        {errors.reminder_instructions && (
+          <p role="alert" className="mt-1 text-xs text-red-600">{errors.reminder_instructions.message}</p>
+        )}
+      </div>
+
       <div className="flex gap-2 pt-1">
         <button
           type="submit"
@@ -376,7 +491,7 @@ function ServiceRow({
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-[var(--color-text-primary)] truncate">{service.name}</p>
         <p className="text-xs text-[var(--color-text-secondary)]">
-          {service.professional_name ?? '—'} · {service.duration_minutes}min
+          {service.professional_name ?? '—'} · {service.duration_minutes}min · Cal: {service.calendar_id}
         </p>
       </div>
       <div className="flex items-center gap-3 shrink-0">

@@ -4,6 +4,7 @@ import { Dialog } from '@base-ui/react/dialog'
 import { format, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { type Appointment, STATUS_LABELS } from '@/types/appointments'
+import { ReminderBadge } from './ReminderBadge'
 
 interface TurnoDetailModalProps {
   open: boolean
@@ -60,6 +61,12 @@ export function TurnoDetailModal({
                 <span className="font-medium">Estado: </span>
                 {statusLabel}
               </p>
+              {appointment && (
+                <ReminderBadge
+                  reminderSentAt={appointment.reminder_sent_at}
+                  attendanceConfirmed={appointment.attendance_confirmed}
+                />
+              )}
             </div>
 
             <div className="flex justify-end gap-3 pt-2">

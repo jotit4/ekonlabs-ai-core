@@ -13,6 +13,7 @@ export type AuditAction =
   | 'appointment_no_show'
   | 'config_system_prompt_updated'
   | 'config_shadow_mode_updated'
+  | 'config_service_updated'
   | 'user_created'
   | 'user_deactivated'
   | 'user_activated'

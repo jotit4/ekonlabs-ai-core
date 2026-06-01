@@ -14,6 +14,8 @@ const makeAppointment = (status: Appointment['status'], id: string): Appointment
   end_at: new Date(Date.now() + 3600000).toISOString(),
   status,
   calendar_event_id: null,
+  reminder_sent_at: null,
+  attendance_confirmed: null,
   created_at: new Date().toISOString(),
   patients: { full_name: 'Test Paciente' },
   services: { name: 'Kinesiología', professional: 'Dra. Test' },

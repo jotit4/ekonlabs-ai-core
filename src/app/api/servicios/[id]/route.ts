@@ -1,6 +1,7 @@
 import 'server-only'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { parseJwtPayload } from '@/lib/utils/jwt'
+import { logAudit } from '@/lib/audit'
 import { UpdateServiceSchema } from '@/lib/schemas/servicios.schema'
 
 export async function PATCH(
@@ -49,6 +50,14 @@ export async function PATCH(
     }
     return Response.json({ error: 'Error al actualizar el servicio' }, { status: 500 })
   }
+
+  // 6. Audit log — tras UPDATE exitoso (AC5)
+  await logAudit({
+    action: 'config_service_updated',
+    entity_type: 'config',
+    entity_id: id,
+    supabase,
+  })
 
   return Response.json({ data })
 }

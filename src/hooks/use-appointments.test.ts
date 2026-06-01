@@ -48,6 +48,13 @@ describe('useAppointments', () => {
     )
   })
 
+  it('meta.select incluye reminder_sent_at y attendance_confirmed (Story 12.4)', () => {
+    renderHook(() => useAppointments('2026-05-14'))
+    const call = mockUseList.mock.calls[0][0]
+    expect(call.meta.select).toContain('reminder_sent_at')
+    expect(call.meta.select).toContain('attendance_confirmed')
+  })
+
   it('cuando NO hay filtros, el queryKey es ["agenda", "day", isoDate, "", ""]', () => {
     renderHook(() => useAppointments('2026-05-14'))
     const call = mockUseList.mock.calls[0][0]

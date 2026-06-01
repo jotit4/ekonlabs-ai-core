@@ -26,6 +26,8 @@ const BASE_APPOINTMENT: Appointment = {
   end_at: '2026-05-07T10:00:00',
   status: 'confirmed',
   calendar_event_id: null,
+  reminder_sent_at: null,
+  attendance_confirmed: null,
   created_at: '2026-05-01T00:00:00.000Z',
   patients: { full_name: 'Juan García' },
   services: { name: 'Kinesiología', professional: null },
@@ -35,6 +37,8 @@ const SYNCED_APPOINTMENT: Appointment = {
   ...BASE_APPOINTMENT,
   appointment_id: 'apt-2',
   calendar_event_id: 'gcal-event-xyz',
+  reminder_sent_at: null,
+  attendance_confirmed: null,
 }
 
 const DATE = '2026-05-07'

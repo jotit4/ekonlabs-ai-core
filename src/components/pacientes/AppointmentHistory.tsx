@@ -3,6 +3,7 @@
 import { isPast, isFuture, compareDesc, compareAsc, format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { StatusDot, statusToVariant } from '@/components/shared/StatusDot'
+import { ReminderBadge } from '@/components/agenda/ReminderBadge'
 import { STATUS_LABELS, type AppointmentStatus } from '@/types/appointments'
 import type { SoftSyncStatus } from '@/hooks/use-soft-sync'
 
@@ -13,6 +14,8 @@ export interface AppointmentForHistory {
   start_at: string
   end_at: string
   status: AppointmentStatus
+  reminder_sent_at: string | null
+  attendance_confirmed: boolean | null
   services: {
     name: string
     professional_name: string | null
@@ -83,9 +86,15 @@ function AppointmentItem({ apt }: AppointmentItemProps) {
       </div>
 
       {/* Estado */}
-      <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 6 }}>
-        <StatusDot variant={dotVariant} label={statusLabel} />
-        <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{statusLabel}</span>
+      <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <StatusDot variant={dotVariant} label={statusLabel} />
+          <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{statusLabel}</span>
+        </span>
+        <ReminderBadge
+          reminderSentAt={apt.reminder_sent_at}
+          attendanceConfirmed={apt.attendance_confirmed}
+        />
       </div>
     </div>
   )

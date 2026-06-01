@@ -2,11 +2,12 @@ import { vi, describe, it, expect, beforeEach } from 'vitest'
 
 // ── vi.hoisted — variables referenciadas en factories de vi.mock ───────────────
 
-const { mockGetUser, mockGetSession, mockFrom, mockParseJwt } = vi.hoisted(() => ({
+const { mockGetUser, mockGetSession, mockFrom, mockParseJwt, mockLogAudit } = vi.hoisted(() => ({
   mockGetUser: vi.fn(),
   mockGetSession: vi.fn(),
   mockFrom: vi.fn(),
   mockParseJwt: vi.fn(),
+  mockLogAudit: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -32,6 +33,10 @@ vi.mock('@/lib/supabase/server', () => ({
 
 vi.mock('@/lib/utils/jwt', () => ({
   parseJwtPayload: mockParseJwt,
+}))
+
+vi.mock('@/lib/audit', () => ({
+  logAudit: mockLogAudit,
 }))
 
 import { PATCH } from './route'
@@ -180,5 +185,74 @@ describe('PATCH /api/servicios/[id]', () => {
     expect(res.status).toBe(500)
     const body = await res.json() as { error: string }
     expect(body.error).toBe('Error al actualizar el servicio')
+  })
+
+  // ── Story 12.5: campos de recordatorio + audit ──────────────────────────────
+
+  it('actualiza reminder_hours_before y reminder_instructions con valores (12.5)', async () => {
+    setupAdminAuth()
+    const chain = makeUpdateEqSelectSingleChain({
+      data: { ...UPDATED_SERVICE, reminder_hours_before: 48, reminder_instructions: 'Ayuno' },
+      error: null,
+    })
+    mockFrom.mockReturnValue(chain)
+
+    const [req, ctx] = makePatchRequest(SERVICE_ID, {
+      reminder_hours_before: 48,
+      reminder_instructions: 'Ayuno',
+    })
+    const res = await PATCH(req, ctx)
+    expect(res.status).toBe(200)
+    expect(chain.update).toHaveBeenCalledWith(
+      expect.objectContaining({ reminder_hours_before: 48, reminder_instructions: 'Ayuno' })
+    )
+  })
+
+  it('persiste NULL explícito al limpiar los campos (12.5 / AC3)', async () => {
+    setupAdminAuth()
+    const chain = makeUpdateEqSelectSingleChain({ data: UPDATED_SERVICE, error: null })
+    mockFrom.mockReturnValue(chain)
+
+    const [req, ctx] = makePatchRequest(SERVICE_ID, {
+      reminder_hours_before: null,
+      reminder_instructions: null,
+    })
+    const res = await PATCH(req, ctx)
+    expect(res.status).toBe(200)
+    expect(chain.update).toHaveBeenCalledWith(
+      expect.objectContaining({ reminder_hours_before: null, reminder_instructions: null })
+    )
+  })
+
+  it('llama logAudit con config_service_updated tras UPDATE exitoso (12.5 / AC5)', async () => {
+    setupAdminAuth()
+    mockFrom.mockReturnValue(makeUpdateEqSelectSingleChain({ data: UPDATED_SERVICE, error: null }))
+
+    const [req, ctx] = makePatchRequest(SERVICE_ID, { reminder_hours_before: 24 })
+    await PATCH(req, ctx)
+    expect(mockLogAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'config_service_updated',
+        entity_type: 'config',
+        entity_id: SERVICE_ID,
+      })
+    )
+  })
+
+  it('NO llama logAudit si el UPDATE falla (12.5 / AC5)', async () => {
+    setupAdminAuth()
+    mockFrom.mockReturnValue(makeUpdateEqSelectSingleChain({ data: null, error: { code: 'PGRST116' } }))
+
+    const [req, ctx] = makePatchRequest(SERVICE_ID, { reminder_hours_before: 24 })
+    await PATCH(req, ctx)
+    expect(mockLogAudit).not.toHaveBeenCalled()
+  })
+
+  it('rechaza reminder_hours_before inválido con 400 (12.5 / AC4)', async () => {
+    setupAdminAuth()
+
+    const [req, ctx] = makePatchRequest(SERVICE_ID, { reminder_hours_before: 721 })
+    const res = await PATCH(req, ctx)
+    expect(res.status).toBe(400)
   })
 })

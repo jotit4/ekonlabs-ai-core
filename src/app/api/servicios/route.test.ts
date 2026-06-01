@@ -2,11 +2,12 @@ import { vi, describe, it, expect, beforeEach } from 'vitest'
 
 // ── vi.hoisted — variables referenciadas en factories de vi.mock ───────────────
 
-const { mockGetUser, mockGetSession, mockFrom, mockParseJwt } = vi.hoisted(() => ({
+const { mockGetUser, mockGetSession, mockFrom, mockParseJwt, mockLogAudit } = vi.hoisted(() => ({
   mockGetUser: vi.fn(),
   mockGetSession: vi.fn(),
   mockFrom: vi.fn(),
   mockParseJwt: vi.fn(),
+  mockLogAudit: vi.fn(),
 }))
 
 // Mock server-only
@@ -37,6 +38,10 @@ vi.mock('@/lib/utils/jwt', () => ({
   parseJwtPayload: mockParseJwt,
 }))
 
+vi.mock('@/lib/audit', () => ({
+  logAudit: mockLogAudit,
+}))
+
 import { GET, POST } from './route'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -51,8 +56,9 @@ function makeSelectOrderChain(result: { data: unknown; error: unknown }) {
 
 // POST — .insert().select().single()
 function makeInsertSelectSingleChain(result: { data: unknown; error: unknown }) {
+  const insert = vi.fn().mockReturnThis()
   return {
-    insert: vi.fn().mockReturnThis(),
+    insert,
     select: vi.fn().mockReturnThis(),
     single: vi.fn().mockResolvedValue(result),
   }
@@ -230,5 +236,76 @@ describe('POST /api/servicios', () => {
     expect(res.status).toBe(500)
     const body = await res.json() as { error: string }
     expect(body.error).toBe('Error al crear el servicio')
+  })
+
+  // ── Story 12.5: campos de recordatorio + audit ──────────────────────────────
+
+  it('inserta reminder_hours_before y reminder_instructions cuando se envían (12.5)', async () => {
+    setupAdminAuth()
+    const chain = makeInsertSelectSingleChain({ data: SAMPLE_SERVICE, error: null })
+    mockFrom.mockReturnValue(chain)
+
+    const res = await POST(
+      makePostRequest({
+        name: 'Kinesiología',
+        calendar_id: 'kin@cal.com',
+        reminder_hours_before: 24,
+        reminder_instructions: 'Traer estudios previos',
+      })
+    )
+    expect(res.status).toBe(201)
+    expect(chain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reminder_hours_before: 24,
+        reminder_instructions: 'Traer estudios previos',
+      })
+    )
+  })
+
+  it('inserta NULL en los campos de recordatorio cuando se omiten (12.5)', async () => {
+    setupAdminAuth()
+    const chain = makeInsertSelectSingleChain({ data: SAMPLE_SERVICE, error: null })
+    mockFrom.mockReturnValue(chain)
+
+    await POST(makePostRequest({ name: 'Kinesiología', calendar_id: 'kin@cal.com' }))
+    expect(chain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reminder_hours_before: null,
+        reminder_instructions: null,
+      })
+    )
+  })
+
+  it('llama logAudit con config_service_updated tras INSERT exitoso (12.5 / AC5)', async () => {
+    setupAdminAuth()
+    mockFrom.mockReturnValue(makeInsertSelectSingleChain({ data: SAMPLE_SERVICE, error: null }))
+
+    await POST(makePostRequest({ name: 'Kinesiología', calendar_id: 'kin@cal.com' }))
+    expect(mockLogAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'config_service_updated',
+        entity_type: 'config',
+        entity_id: SAMPLE_SERVICE.service_id,
+      })
+    )
+  })
+
+  it('NO llama logAudit si el INSERT falla (12.5 / AC5)', async () => {
+    setupAdminAuth()
+    mockFrom.mockReturnValue(
+      makeInsertSelectSingleChain({ data: null, error: { code: '23505', message: 'unique' } })
+    )
+
+    await POST(makePostRequest({ name: 'Kinesiología', calendar_id: 'kin@cal.com' }))
+    expect(mockLogAudit).not.toHaveBeenCalled()
+  })
+
+  it('rechaza reminder_hours_before inválido con 400 (12.5 / AC4)', async () => {
+    setupAdminAuth()
+
+    const res = await POST(
+      makePostRequest({ name: 'Kinesiología', calendar_id: 'kin@cal.com', reminder_hours_before: 0 })
+    )
+    expect(res.status).toBe(400)
   })
 })

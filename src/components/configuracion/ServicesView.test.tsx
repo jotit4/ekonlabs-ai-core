@@ -266,6 +266,105 @@ describe('ServicesView', () => {
     expect(screen.queryByText('¿Confirmar?')).not.toBeInTheDocument()
   })
 
+  // ── Story 12.5: campos de recordatorio ────────────────────────────────────
+
+  const SERVICE_WITH_REMINDER = {
+    ...ACTIVE_SERVICE,
+    service_id: 'svc-rem',
+    name: 'Consulta con estudios',
+    reminder_hours_before: 24,
+    reminder_instructions: 'Traer estudios previos',
+  }
+
+  it('el formulario de creación muestra los inputs de recordatorio', () => {
+    setupDefaultMocks()
+
+    render(<ServicesView />)
+    fireEvent.click(screen.getByText('Agregar servicio'))
+
+    expect(screen.getByLabelText(/Recordatorio \(horas antes\)/)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Instrucciones de recordatorio/)).toBeInTheDocument()
+  })
+
+  it('el formulario de edición precarga los valores de recordatorio (AC1/AC2)', () => {
+    setupDefaultMocks()
+    mockUseServices.mockReturnValue({
+      services: [SERVICE_WITH_REMINDER],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    })
+
+    render(<ServicesView />)
+    fireEvent.click(screen.getByText('Editar'))
+
+    expect(screen.getByDisplayValue('24')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Traer estudios previos')).toBeInTheDocument()
+  })
+
+  it('precarga vacío cuando el servicio no tiene recordatorio (sin "null")', () => {
+    setupDefaultMocks()
+    mockUseServices.mockReturnValue({
+      services: [ACTIVE_SERVICE],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    })
+
+    render(<ServicesView />)
+    fireEvent.click(screen.getByText('Editar'))
+
+    const hoursInput = screen.getByLabelText(/Recordatorio \(horas antes\)/) as HTMLInputElement
+    const instrInput = screen.getByLabelText(/Instrucciones de recordatorio/) as HTMLTextAreaElement
+    expect(hoursInput.value).toBe('')
+    expect(instrInput.value).toBe('')
+  })
+
+  it('submit de edición con valores envía reminder_hours_before + reminder_instructions (AC2)', async () => {
+    const { updateMutateFn } = setupDefaultMocks()
+    mockUseServices.mockReturnValue({
+      services: [SERVICE_WITH_REMINDER],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    })
+
+    render(<ServicesView />)
+    fireEvent.click(screen.getByText('Editar'))
+    fireEvent.click(screen.getByText('Guardar'))
+
+    await waitFor(() => {
+      expect(updateMutateFn).toHaveBeenCalled()
+    })
+    const arg = updateMutateFn.mock.calls[0][0]
+    expect(arg.payload.reminder_hours_before).toBe(24)
+    expect(arg.payload.reminder_instructions).toBe('Traer estudios previos')
+  })
+
+  it('limpiar los campos en edición envía null explícito (AC3)', async () => {
+    const { updateMutateFn } = setupDefaultMocks()
+    mockUseServices.mockReturnValue({
+      services: [SERVICE_WITH_REMINDER],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    })
+
+    render(<ServicesView />)
+    fireEvent.click(screen.getByText('Editar'))
+
+    fireEvent.change(screen.getByLabelText(/Recordatorio \(horas antes\)/), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText(/Instrucciones de recordatorio/), { target: { value: '' } })
+    fireEvent.click(screen.getByText('Guardar'))
+
+    await waitFor(() => {
+      expect(updateMutateFn).toHaveBeenCalled()
+    })
+    const arg = updateMutateFn.mock.calls[0][0]
+    expect(arg.payload.reminder_hours_before).toBeNull()
+    expect(arg.payload.reminder_instructions).toBeNull()
+  })
+
   it('botón "Cancelar" en edición cierra sin llamar mutate', () => {
     const { updateMutateFn } = setupDefaultMocks()
     mockUseServices.mockReturnValue({

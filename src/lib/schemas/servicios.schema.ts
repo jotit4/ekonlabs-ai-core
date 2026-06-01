@@ -29,6 +29,8 @@ export const CreateServiceSchema = z.object({
   professional_name: z.string().max(100, { error: 'Máximo 100 caracteres' }).optional(),
   duration_minutes: z.number().int().min(5, { error: 'Mínimo 5 minutos' }).max(480, { error: 'Máximo 8 horas' }).optional(),
   booking_mode: z.enum(['appointment', 'walk_in', 'gated', 'cycle']).optional(),
+  reminder_hours_before: z.number().int({ error: 'Debe ser un número entero' }).min(1, { error: 'Mínimo 1 hora' }).max(720, { error: 'Máximo 720 horas (30 días)' }).nullable().optional(),
+  reminder_instructions: z.string().max(500, { error: 'Máximo 500 caracteres' }).nullable().optional(),
 })
 
 export type CreateServiceFormValues = z.infer<typeof CreateServiceSchema>
@@ -40,6 +42,8 @@ export const UpdateServiceSchema = z.object({
   duration_minutes: z.number().int().min(5).max(480).optional(),
   active: z.boolean().optional(),
   booking_mode: z.enum(['appointment', 'walk_in', 'gated', 'cycle']).optional(),
+  reminder_hours_before: z.number().int({ error: 'Debe ser un número entero' }).min(1, { error: 'Mínimo 1 hora' }).max(720, { error: 'Máximo 720 horas (30 días)' }).nullable().optional(),
+  reminder_instructions: z.string().max(500, { error: 'Máximo 500 caracteres' }).nullable().optional(),
 })
 
 export type UpdateServiceFormValues = z.infer<typeof UpdateServiceSchema>

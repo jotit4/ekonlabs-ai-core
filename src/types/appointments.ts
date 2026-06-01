@@ -20,6 +20,9 @@ export interface Appointment {
   status: AppointmentStatus
   calendar_event_id: string | null
   created_at: string
+  // Recordatorios (Story 12.4) — los pobla el agente (12.1 / 12.3); null por defecto
+  reminder_sent_at: string | null
+  attendance_confirmed: boolean | null
   // Joins via Refine meta.select
   patients: { full_name: string | null } | null
   services: { name: string; professional: string | null; professional_name?: string | null; duration_minutes?: number } | null
@@ -34,6 +37,30 @@ export const STATUS_LABELS: Record<AppointmentStatus, string> = {
   no_show: 'No-show',
   pending: 'Pendiente',
   pending_calendar: 'Pendiente (calendario)',
+}
+
+// ─── Estado del recordatorio (Story 12.4) ─────────────────────────────────────
+// NO confundir con `status` (completed/no_show): esto es la confirmación por WhatsApp.
+
+export type ReminderState = 'confirmed' | 'unconfirmed' | 'none'
+
+/**
+ * Deriva el estado del recordatorio a partir de los dos campos que pobla el agente.
+ * - `attendance_confirmed === true`            → 'confirmed'
+ * - `reminder_sent_at != null` y NO confirmado → 'unconfirmed'
+ * - resto (incluye `reminder_sent_at` null)    → 'none' (sin badge)
+ */
+export function reminderState(
+  apt: Pick<Appointment, 'reminder_sent_at' | 'attendance_confirmed'>,
+): ReminderState {
+  if (apt.attendance_confirmed === true) return 'confirmed'
+  if (apt.reminder_sent_at != null) return 'unconfirmed'
+  return 'none'
+}
+
+export const REMINDER_STATE_LABELS: Record<Exclude<ReminderState, 'none'>, string> = {
+  confirmed: 'Confirmado por el paciente',
+  unconfirmed: 'Sin confirmar',
 }
 
 // CalendarEvent — tipo para react-big-calendar (start/end deben ser Date objects)

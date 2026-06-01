@@ -1,6 +1,7 @@
 import 'server-only'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { parseJwtPayload } from '@/lib/utils/jwt'
+import { logAudit } from '@/lib/audit'
 import { CreateServiceSchema } from '@/lib/schemas/servicios.schema'
 
 export async function GET(): Promise<Response> {
@@ -73,6 +74,8 @@ export async function POST(request: Request): Promise<Response> {
       professional_name: parsed.data.professional_name ?? null,
       duration_minutes: parsed.data.duration_minutes ?? 60,
       booking_mode: parsed.data.booking_mode ?? 'appointment',
+      reminder_hours_before: parsed.data.reminder_hours_before ?? null,
+      reminder_instructions: parsed.data.reminder_instructions ?? null,
     })
     .select()
     .single()
@@ -84,6 +87,14 @@ export async function POST(request: Request): Promise<Response> {
     }
     return Response.json({ error: 'Error al crear el servicio' }, { status: 500 })
   }
+
+  // 5. Audit log — tras INSERT exitoso (AC5)
+  await logAudit({
+    action: 'config_service_updated',
+    entity_type: 'config',
+    entity_id: data.service_id,
+    supabase,
+  })
 
   return Response.json({ data }, { status: 201 })
 }

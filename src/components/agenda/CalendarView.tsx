@@ -12,6 +12,7 @@ import {
   appointmentToCalendarEvent,
 } from '@/types/appointments'
 import { AgendaDayViewSkeleton } from './AgendaDayView'
+import { ReminderBadge } from './ReminderBadge'
 
 function getEventColor(status: AppointmentStatus): string {
   switch (status) {
@@ -451,6 +452,12 @@ function DayListView({
                     {[serviceName, profName].filter(Boolean).join(' · ')}
                   </div>
                 )}
+                <div style={{ marginTop: 4 }}>
+                  <ReminderBadge
+                    reminderSentAt={event.resource.reminder_sent_at}
+                    attendanceConfirmed={event.resource.attendance_confirmed}
+                  />
+                </div>
               </div>
 
               {/* Acciones */}

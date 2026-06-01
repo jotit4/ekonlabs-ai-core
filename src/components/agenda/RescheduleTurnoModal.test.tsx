@@ -53,6 +53,8 @@ const SAMPLE_APPOINTMENT: Appointment = {
   end_at: '2026-05-07T11:00:00',
   status: 'confirmed',
   calendar_event_id: null,
+  reminder_sent_at: null,
+  attendance_confirmed: null,
   created_at: '2026-05-01T00:00:00.000Z',
   patients: { full_name: 'María López' },
   services: { name: 'Fisioterapia', professional: 'Rocío González', duration_minutes: 60 },

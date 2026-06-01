@@ -125,7 +125,7 @@ export default function PacienteFichaPage() {
       const { data, error } = await supabase
         .from('patients')
         .select(
-          '*, appointments(appointment_id, start_at, end_at, status, services(name, professional_name))'
+          '*, appointments(appointment_id, start_at, end_at, status, reminder_sent_at, attendance_confirmed, services(name, professional_name))'
         )
         .eq('patient_id', patientId)
         .maybeSingle()
