@@ -36,6 +36,12 @@ vi.mock('@/components/configuracion/ShadowModeToggle', () => ({
   ),
 }))
 
+vi.mock('@/components/configuracion/KnowledgeBaseManager', () => ({
+  KnowledgeBaseManager: ({ canEdit }: { canEdit?: boolean }) => (
+    <div data-testid="knowledge-base-manager" data-can-edit={String(canEdit)} />
+  ),
+}))
+
 import AgentePage from './page'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

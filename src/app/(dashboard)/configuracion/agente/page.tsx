@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 import { AgentPromptEditor } from '@/components/configuracion/AgentPromptEditor'
 import { ShadowModeToggle } from '@/components/configuracion/ShadowModeToggle'
+import { KnowledgeBaseManager } from '@/components/configuracion/KnowledgeBaseManager'
 
 export const dynamic = 'force-dynamic'
 
@@ -47,6 +48,8 @@ export default async function AgentePage() {
           <ShadowModeToggle initialValue={initialShadowMode} />
         </>
       )}
+      <hr className="border-[var(--color-border)] my-8" />
+      <KnowledgeBaseManager canEdit={role !== 'doctor'} />
     </section>
   )
 }

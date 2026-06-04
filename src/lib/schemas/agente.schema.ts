@@ -53,3 +53,50 @@ export const ClinicConfigPatchSchema = z.object({
 })
 
 export type ClinicConfigPatchFormValues = z.infer<typeof ClinicConfigPatchSchema>
+
+// ── Base de conocimiento del agente (Story 6.7) ───────────────────────────────
+
+/**
+ * Schema de creación de entrada de la base de conocimiento. `content` requerido
+ * (no vacío tras trim, ≤5.000 chars). `source_filename` ("tema") opcional, ≤120.
+ * `standardSchema`-compatible (se usa con `standardSchemaResolver`, NO `zodResolver`).
+ */
+export const CreateKnowledgeSchema = z.object({
+  content: z
+    .string()
+    .trim()
+    .min(1, { error: 'El contenido es obligatorio' })
+    .max(5000, { error: 'Máximo 5.000 caracteres' }),
+  source_filename: z
+    .string()
+    .trim()
+    .max(120, { error: 'El tema no puede superar 120 caracteres' })
+    .optional(),
+})
+
+export type CreateKnowledgeFormValues = z.infer<typeof CreateKnowledgeSchema>
+
+/**
+ * Schema de edición de entrada. Ambos campos opcionales pero al menos uno debe
+ * estar presente (`.refine`). Mismas reglas de longitud que la creación.
+ */
+export const UpdateKnowledgeSchema = z
+  .object({
+    content: z
+      .string()
+      .trim()
+      .min(1, { error: 'El contenido es obligatorio' })
+      .max(5000, { error: 'Máximo 5.000 caracteres' })
+      .optional(),
+    source_filename: z
+      .string()
+      .trim()
+      .max(120, { error: 'El tema no puede superar 120 caracteres' })
+      .optional(),
+  })
+  .refine(
+    (data) => data.content !== undefined || data.source_filename !== undefined,
+    { error: 'Nada que actualizar' },
+  )
+
+export type UpdateKnowledgeFormValues = z.infer<typeof UpdateKnowledgeSchema>

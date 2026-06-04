@@ -92,3 +92,44 @@ export interface UpdateClinicConfigPayload {
 export interface UpdateShadowModePayload {
   shadow_mode_enabled: boolean
 }
+
+// ── Base de conocimiento del agente (knowledge_chunks vía backend) — Story 6.7 ──
+
+/**
+ * Entrada de la base de conocimiento que LEE el dashboard. El backend agente
+ * (`ekonlabs-agent`) es la única parte que escribe `knowledge_chunks` (service
+ * role) y genera el `embedding`. El dashboard nunca expone `embedding` ni
+ * `tenant_id` (no vienen en el contrato del backend).
+ */
+export interface KnowledgeEntry {
+  id: string
+  content: string
+  source_filename: string
+  chunk_index: number
+  created_at: string
+}
+
+/**
+ * Respuesta de `GET /api/agente/knowledge` y del backend
+ * `GET /api/v1/tenants/{tenant_id}/knowledge`.
+ */
+export interface KnowledgeListResponse {
+  entries: KnowledgeEntry[]
+}
+
+/**
+ * Body de `POST /api/agente/knowledge`. `source_filename` ("tema" en la UI)
+ * es opcional; el backend usa `"general"` por defecto.
+ */
+export interface CreateKnowledgePayload {
+  content: string
+  source_filename?: string
+}
+
+/**
+ * Body de `PATCH /api/agente/knowledge/[id]`. Al menos un campo presente.
+ */
+export interface UpdateKnowledgePayload {
+  content?: string
+  source_filename?: string
+}
