@@ -13,22 +13,35 @@ vi.mock('@/hooks/use-agent-config', () => ({
   useAgentConfig: vi.fn(),
 }))
 
-vi.mock('@/hooks/use-update-prompt', () => ({
-  useUpdatePrompt: vi.fn(),
+vi.mock('@/hooks/use-update-agent-config', () => ({
+  useUpdateAgentConfig: vi.fn(),
 }))
 
 import { useAgentConfig } from '@/hooks/use-agent-config'
-import { useUpdatePrompt } from '@/hooks/use-update-prompt'
+import { useUpdateAgentConfig } from '@/hooks/use-update-agent-config'
 import { AgentPromptEditor } from './AgentPromptEditor'
-import type { TenantAgentConfig } from '@/types/agente'
+import type { ClinicAgentConfig } from '@/types/agente'
 
 // ── Datos de prueba ────────────────────────────────────────────────────────────
 
-const MOCK_CONFIG: TenantAgentConfig = {
-  tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4',
-  system_prompt_override: 'Mi override de prueba',
-  rules: { max_appointments: 3 },
-  shadow_mode_enabled: false,
+const MOCK_CONFIG: ClinicAgentConfig = {
+  org_id: '5298fcc5-15bf-494c-9655-b49d759cfef4',
+  clinic_name: 'ISADI',
+  agent_name: 'Asistente de prueba',
+  prompt_rules: 'No agendar feriados',
+  ia_config: {
+    tone_base: 'informal',
+    tone_length: 2,
+    identity: 'Soy el asistente',
+    constraints: 'No dar diagnósticos',
+    features: {
+      enable_new_appointment: true,
+      enable_cancel: true,
+      require_dni: false,
+      require_obra_social: false,
+    },
+  },
+  operations_config: { min_notice_hours: 2, future_window_days: 30 },
 }
 
 const MOCK_MUTATION_IDLE = {
@@ -55,9 +68,19 @@ const MOCK_MUTATION_IDLE = {
 describe('AgentPromptEditor', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    // Default mutation mock
-    vi.mocked(useUpdatePrompt).mockReturnValue(MOCK_MUTATION_IDLE as unknown as ReturnType<typeof useUpdatePrompt>)
+    vi.mocked(useUpdateAgentConfig).mockReturnValue(
+      MOCK_MUTATION_IDLE as unknown as ReturnType<typeof useUpdateAgentConfig>
+    )
   })
+
+  function mockConfigLoaded(config: ClinicAgentConfig = MOCK_CONFIG) {
+    vi.mocked(useAgentConfig).mockReturnValue({
+      config,
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    })
+  }
 
   it('muestra skeleton cuando isPending es true', () => {
     vi.mocked(useAgentConfig).mockReturnValue({
@@ -92,118 +115,113 @@ describe('AgentPromptEditor', () => {
     expect(mockRefetch).toHaveBeenCalledOnce()
   })
 
-  it('renderiza textarea y preview cuando config carga correctamente', () => {
-    vi.mocked(useAgentConfig).mockReturnValue({
-      config: MOCK_CONFIG,
-      isPending: false,
-      isError: false,
-      refetch: vi.fn(),
-    })
-
+  it('renderiza todos los campos editables', () => {
+    mockConfigLoaded()
     render(<AgentPromptEditor />)
 
-    const textarea = screen.getByRole('textbox')
-    expect(textarea).toBeInTheDocument()
-    expect(screen.getByText(/preview del prompt ensamblado/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/nombre del agente/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/identidad/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/restricciones/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/tono base/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/extensión de respuestas/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/agendar turnos nuevos/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/cancelar turnos/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/requerir dni/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/requerir obra social/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/anticipación mínima/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/ventana futura/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/reglas en lenguaje natural/i)).toBeInTheDocument()
   })
 
-  it('muestra 3 secciones de preview (base, reglas, override)', () => {
-    vi.mocked(useAgentConfig).mockReturnValue({
-      config: MOCK_CONFIG,
-      isPending: false,
-      isError: false,
-      refetch: vi.fn(),
-    })
+  it('puebla los campos con los valores del config cargado', () => {
+    mockConfigLoaded()
+    render(<AgentPromptEditor />)
 
+    expect(screen.getByLabelText(/nombre del agente/i)).toHaveValue('Asistente de prueba')
+    expect(screen.getByLabelText(/identidad/i)).toHaveValue('Soy el asistente')
+    expect(screen.getByLabelText(/reglas en lenguaje natural/i)).toHaveValue('No agendar feriados')
+    expect((screen.getByLabelText(/agendar turnos nuevos/i) as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByLabelText(/requerir dni/i) as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('muestra preview "Sistema base" read-only y "Reglas de la Clínica"', () => {
+    mockConfigLoaded()
     render(<AgentPromptEditor />)
 
     expect(screen.getByText('Sistema base')).toBeInTheDocument()
-    expect(screen.getByText('Reglas del tenant')).toBeInTheDocument()
-    expect(screen.getByText('Override personalizado')).toBeInTheDocument()
-    expect(screen.getByText('El prompt base está gestionado en el backend de IA y no es editable desde el dashboard.')).toBeInTheDocument()
+    expect(
+      screen.getByText('El prompt base está gestionado en el backend de IA y no es editable desde el dashboard.')
+    ).toBeInTheDocument()
+    // "Reglas de la Clínica" aparece como legend del fieldset y como título del preview
+    expect(screen.getAllByText('Reglas de la Clínica').length).toBeGreaterThanOrEqual(1)
   })
 
-  it('preview de override se actualiza al escribir en el textarea', async () => {
-    vi.mocked(useAgentConfig).mockReturnValue({
-      config: { ...MOCK_CONFIG, system_prompt_override: '' },
-      isPending: false,
-      isError: false,
-      refetch: vi.fn(),
-    })
-
+  it('ya NO muestra "Override personalizado" ni "Reglas del tenant" (deprecados)', () => {
+    mockConfigLoaded()
     render(<AgentPromptEditor />)
 
-    const textarea = screen.getByRole('textbox')
+    expect(screen.queryByText('Override personalizado')).not.toBeInTheDocument()
+    expect(screen.queryByText('Reglas del tenant')).not.toBeInTheDocument()
+  })
+
+  it('el preview de "Reglas de la Clínica" se actualiza al escribir (watch)', async () => {
+    mockConfigLoaded({ ...MOCK_CONFIG, prompt_rules: '' })
+    render(<AgentPromptEditor />)
+
+    const textarea = screen.getByLabelText(/reglas en lenguaje natural/i)
     await userEvent.clear(textarea)
-    await userEvent.type(textarea, 'Nuevo texto de override')
+    await userEvent.type(textarea, 'Nueva regla en vivo')
 
     await waitFor(() => {
-      expect(screen.getByText('Nuevo texto de override')).toBeInTheDocument()
+      expect(screen.getByText('Nueva regla en vivo')).toBeInTheDocument()
     })
   })
 
-  it('muestra error inline cuando override supera longitud máxima', async () => {
-    vi.mocked(useAgentConfig).mockReturnValue({
-      config: MOCK_CONFIG,
-      isPending: false,
-      isError: false,
-      refetch: vi.fn(),
-    })
-
+  it('submit llama a mutation.mutate con el payload parcial del form', async () => {
+    mockConfigLoaded()
     render(<AgentPromptEditor />)
 
-    const textarea = screen.getByRole('textbox')
-    const longText = 'a'.repeat(10001)
-    // Usar fireEvent.change para evitar el timeout de userEvent.type con muchos caracteres
-    fireEvent.change(textarea, { target: { value: longText } })
-
-    const submitBtn = screen.getByRole('button', { name: /guardar/i })
-    fireEvent.click(submitBtn)
-
-    await waitFor(() => {
-      expect(screen.getByRole('alert')).toBeInTheDocument()
-      expect(screen.getByText(/10.000 caracteres/i)).toBeInTheDocument()
-    })
-  })
-
-  it('botón "Guardar" está deshabilitado durante isPending de mutación', () => {
-    vi.mocked(useAgentConfig).mockReturnValue({
-      config: MOCK_CONFIG,
-      isPending: false,
-      isError: false,
-      refetch: vi.fn(),
-    })
-    vi.mocked(useUpdatePrompt).mockReturnValue({
-      ...MOCK_MUTATION_IDLE,
-      isPending: true,
-    } as unknown as ReturnType<typeof useUpdatePrompt>)
-
-    render(<AgentPromptEditor />)
-
-    const submitBtn = screen.getByRole('button', { name: /guardando/i })
-    expect(submitBtn).toBeDisabled()
-  })
-
-  it('submit llama a mutation.mutate con los valores del formulario', async () => {
-    vi.mocked(useAgentConfig).mockReturnValue({
-      config: MOCK_CONFIG,
-      isPending: false,
-      isError: false,
-      refetch: vi.fn(),
-    })
-
-    render(<AgentPromptEditor />)
-
-    // El formulario ya tiene el valor del config cargado
     const submitBtn = screen.getByRole('button', { name: /guardar/i })
     fireEvent.click(submitBtn)
 
     await waitFor(() => {
       expect(mockMutate).toHaveBeenCalledWith(
         expect.objectContaining({
-          system_prompt_override: MOCK_CONFIG.system_prompt_override,
+          agent_name: 'Asistente de prueba',
+          prompt_rules: 'No agendar feriados',
+          ia_config: expect.objectContaining({ tone_base: 'informal' }),
+          operations_config: expect.objectContaining({ min_notice_hours: 2 }),
         })
       )
     })
+  })
+
+  it('muestra error inline cuando prompt_rules supera longitud máxima', async () => {
+    mockConfigLoaded()
+    render(<AgentPromptEditor />)
+
+    const textarea = screen.getByLabelText(/reglas en lenguaje natural/i)
+    fireEvent.change(textarea, { target: { value: 'a'.repeat(10001) } })
+
+    const submitBtn = screen.getByRole('button', { name: /guardar/i })
+    fireEvent.click(submitBtn)
+
+    await waitFor(() => {
+      expect(screen.getByText(/10.000 caracteres/i)).toBeInTheDocument()
+    })
+    expect(mockMutate).not.toHaveBeenCalled()
+  })
+
+  it('botón "Guardar" está deshabilitado durante isPending de mutación', () => {
+    mockConfigLoaded()
+    vi.mocked(useUpdateAgentConfig).mockReturnValue({
+      ...MOCK_MUTATION_IDLE,
+      isPending: true,
+    } as unknown as ReturnType<typeof useUpdateAgentConfig>)
+
+    render(<AgentPromptEditor />)
+
+    const submitBtn = screen.getByRole('button', { name: /guardando/i })
+    expect(submitBtn).toBeDisabled()
   })
 })

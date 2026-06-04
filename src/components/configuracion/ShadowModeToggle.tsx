@@ -1,6 +1,6 @@
 'use client'
 
-import { useAgentConfig } from '@/hooks/use-agent-config'
+import { useShadowMode } from '@/hooks/use-shadow-mode'
 import { useToggleShadowMode } from '@/hooks/use-toggle-shadow-mode'
 
 interface ShadowModeToggleProps {
@@ -8,10 +8,10 @@ interface ShadowModeToggleProps {
 }
 
 export function ShadowModeToggle({ initialValue }: ShadowModeToggleProps) {
-  const { config } = useAgentConfig()
+  const { shadowModeEnabled, isPending: isLoading } = useShadowMode()
   const { toggle, isPending } = useToggleShadowMode()
 
-  const isEnabled = config?.shadow_mode_enabled ?? initialValue
+  const isEnabled = isLoading ? initialValue : shadowModeEnabled
 
   return (
     <section aria-label="Shadow mode" className="space-y-3">

@@ -5,32 +5,26 @@ import { vi, describe, it, expect, beforeEach } from 'vitest'
 
 const mockToggle = vi.fn()
 
-vi.mock('@/hooks/use-agent-config', () => ({
-  useAgentConfig: vi.fn(),
+vi.mock('@/hooks/use-shadow-mode', () => ({
+  useShadowMode: vi.fn(),
 }))
 
 vi.mock('@/hooks/use-toggle-shadow-mode', () => ({
   useToggleShadowMode: vi.fn(),
 }))
 
-import { useAgentConfig } from '@/hooks/use-agent-config'
+import { useShadowMode } from '@/hooks/use-shadow-mode'
 import { useToggleShadowMode } from '@/hooks/use-toggle-shadow-mode'
 import { ShadowModeToggle } from './ShadowModeToggle'
 
-const mockUseAgentConfig = vi.mocked(useAgentConfig)
+const mockUseShadowMode = vi.mocked(useShadowMode)
 const mockUseToggleShadowMode = vi.mocked(useToggleShadowMode)
 
 function setupMocks(shadowModeEnabled: boolean, isPending = false) {
-  mockUseAgentConfig.mockReturnValue({
-    config: {
-      tenant_id: 'test-tenant',
-      shadow_mode_enabled: shadowModeEnabled,
-      system_prompt_override: null,
-      rules: {},
-    },
+  mockUseShadowMode.mockReturnValue({
+    shadowModeEnabled,
     isPending: false,
     isError: false,
-    refetch: vi.fn(),
   })
   mockUseToggleShadowMode.mockReturnValue({
     toggle: mockToggle,

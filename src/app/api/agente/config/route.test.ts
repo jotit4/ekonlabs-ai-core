@@ -10,10 +10,8 @@ const { mockGetUser, mockGetSession, mockFrom, mockParseJwt, mockLogAudit } = vi
   mockLogAudit: vi.fn(),
 }))
 
-// Mock server-only
 vi.mock('server-only', () => ({}))
 
-// Mock next/headers
 vi.mock('next/headers', () => ({
   cookies: vi.fn().mockResolvedValue({
     getAll: () => [],
@@ -21,7 +19,6 @@ vi.mock('next/headers', () => ({
   }),
 }))
 
-// Mock createSupabaseServerClient
 vi.mock('@/lib/supabase/server', () => ({
   createSupabaseServerClient: vi.fn(() =>
     Promise.resolve({
@@ -44,6 +41,8 @@ vi.mock('@/lib/audit', () => ({
 
 import { GET, PATCH } from './route'
 
+const TENANT_ID = '5298fcc5-15bf-494c-9655-b49d759cfef4'
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function makeSelectSingleChain(result: { data: unknown; error: unknown }) {
@@ -53,60 +52,55 @@ function makeSelectSingleChain(result: { data: unknown; error: unknown }) {
   }
 }
 
-function makeUpdateChain(result: { error: unknown }) {
+/**
+ * Chain del UPDATE: .update(...).eq(...).select(...).single() → result
+ */
+function makeUpdateChain(result: { data: unknown; error: unknown }) {
   return {
     update: vi.fn().mockReturnThis(),
-    eq: vi.fn().mockResolvedValue(result),
+    eq: vi.fn().mockReturnThis(),
+    select: vi.fn().mockReturnThis(),
+    single: vi.fn().mockResolvedValue(result),
   }
 }
 
-/**
- * Configura mockFrom para el flujo PATCH completo:
- * 1. SELECT tenants (leer valor anterior)
- * 2. UPDATE tenants
- * 3. INSERT system_prompt_history (no-crítico)
- */
-function setupPatchChain(
-  selectResult: { data: { system_prompt_override: string | null } | null; error: unknown },
-  updateResult: { error: unknown },
-  historyInsertResult: { error: unknown } = { error: null }
-) {
-  const selectChain = makeSelectSingleChain(selectResult)
-  const updateChain = makeUpdateChain(updateResult)
-  const insertChain = { insert: vi.fn().mockResolvedValue(historyInsertResult) }
-
-  let callCount = 0
-  mockFrom.mockImplementation(() => {
-    callCount++
-    if (callCount === 1) return selectChain    // SELECT tenants (historial previo)
-    if (callCount === 2) return updateChain    // UPDATE tenants
-    return insertChain                          // INSERT system_prompt_history
-  })
-}
-
-function setupAdminAuth() {
+function setupAuth(role: string) {
   mockGetUser.mockResolvedValue({
-    data: { user: { id: 'admin-uuid-1' } },
+    data: { user: { id: `${role}-uuid-1` } },
     error: null,
   })
   mockGetSession.mockResolvedValue({
-    data: {
-      session: {
-        access_token: 'eyJhbGciOiJIUzI1NiJ9.eyJhcHBfcm9sZSI6ImFkbWluIiwidGVuYW50X2lkIjoiNTI5OGZjYzUtMTViZi00OTRjLTk2NTUtYjQ5ZDc1OWNmZWY0In0.sig',
-      },
-    },
+    data: { session: { access_token: 'some-token' } },
   })
-  mockParseJwt.mockReturnValue({
-    app_role: 'admin',
-    tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4',
-  })
+  mockParseJwt.mockReturnValue({ app_role: role, tenant_id: TENANT_ID })
 }
 
-const TENANT_CONFIG = {
-  tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4',
-  system_prompt_override: 'Mi override personalizado',
-  rules: { key: 'value' },
-  shadow_mode_enabled: false,
+const CLINIC_CONFIG = {
+  org_id: TENANT_ID,
+  clinic_name: 'ISADI',
+  agent_name: 'Asistente',
+  prompt_rules: 'No agendar feriados',
+  ia_config: {
+    tone_base: 'informal',
+    tone_length: 2,
+    identity: 'Soy el asistente',
+    constraints: '',
+    features: {
+      enable_new_appointment: true,
+      enable_cancel: true,
+      require_dni: false,
+      require_obra_social: false,
+    },
+  },
+  operations_config: { min_notice_hours: 2, future_window_days: 30 },
+}
+
+function makePatchRequest(body: unknown): Request {
+  return new Request('http://localhost/api/agente/config', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
 }
 
 // ── Tests GET ─────────────────────────────────────────────────────────────────
@@ -125,41 +119,58 @@ describe('GET /api/agente/config', () => {
     expect(body.error).toBe('No autorizado')
   })
 
-  it('retorna 403 si el rol es doctor', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: 'doctor-uuid-1' } }, error: null })
-    mockGetSession.mockResolvedValue({ data: { session: { access_token: 'some-token' } } })
-    mockParseJwt.mockReturnValue({ app_role: 'doctor', tenant_id: 'tenant-1' })
+  it('retorna 403 si el app_role no está permitido', async () => {
+    setupAuth('superintendente')
 
     const res = await GET()
     expect(res.status).toBe(403)
     const body = await res.json() as { error: string }
-    expect(body.error).toContain('administradores')
+    expect(body.error).toContain('Sin permiso')
   })
 
-  it('retorna 403 si el rol es receptionist', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: 'rec-uuid-1' } }, error: null })
-    mockGetSession.mockResolvedValue({ data: { session: { access_token: 'some-token' } } })
-    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
+  it('retorna 403 si no hay claim de rol', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'u-1' } }, error: null })
+    mockGetSession.mockResolvedValue({ data: { session: { access_token: 't' } } })
+    mockParseJwt.mockReturnValue(null)
 
     const res = await GET()
     expect(res.status).toBe(403)
-    const body = await res.json() as { error: string }
-    expect(body.error).toContain('administradores')
   })
 
-  it('retorna 200 con { data: TenantAgentConfig } cuando admin con sesión válida', async () => {
-    setupAdminAuth()
-    mockFrom.mockReturnValue(makeSelectSingleChain({ data: TENANT_CONFIG, error: null }))
+  it.each(['admin', 'doctor', 'receptionist'])(
+    'retorna 200 con { data } de v2_clinic_configs para rol %s',
+    async (role) => {
+      setupAuth(role)
+      const chain = makeSelectSingleChain({ data: CLINIC_CONFIG, error: null })
+      mockFrom.mockReturnValue(chain)
 
-    const res = await GET()
-    expect(res.status).toBe(200)
-    const body = await res.json() as { data: typeof TENANT_CONFIG }
-    expect(body.data).toEqual(TENANT_CONFIG)
-    expect(body.data.tenant_id).toBe('5298fcc5-15bf-494c-9655-b49d759cfef4')
+      const res = await GET()
+      expect(res.status).toBe(200)
+      const body = await res.json() as { data: typeof CLINIC_CONFIG }
+      expect(body.data).toEqual(CLINIC_CONFIG)
+      expect(mockFrom).toHaveBeenCalledWith('v2_clinic_configs')
+    }
+  )
+
+  it('no usa .eq() en el SELECT (RLS filtra — AR14)', async () => {
+    setupAuth('admin')
+    const chain = makeSelectSingleChain({ data: CLINIC_CONFIG, error: null })
+    mockFrom.mockReturnValue(chain)
+
+    await GET()
+    expect(chain).not.toHaveProperty('eq')
+  })
+
+  it('no lee de la tabla tenants', async () => {
+    setupAuth('admin')
+    mockFrom.mockReturnValue(makeSelectSingleChain({ data: CLINIC_CONFIG, error: null }))
+
+    await GET()
+    expect(mockFrom).not.toHaveBeenCalledWith('tenants')
   })
 
   it('retorna 500 si Supabase falla', async () => {
-    setupAdminAuth()
+    setupAuth('admin')
     mockFrom.mockReturnValue(makeSelectSingleChain({ data: null, error: { message: 'DB error' } }))
 
     const res = await GET()
@@ -176,133 +187,137 @@ describe('PATCH /api/agente/config', () => {
     vi.clearAllMocks()
   })
 
-  function makePatchRequest(body: unknown): Request {
-    return new Request('http://localhost/api/agente/config', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-  }
-
   it('retorna 401 si no hay usuario autenticado', async () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null })
 
-    const res = await PATCH(makePatchRequest({ system_prompt_override: 'test' }))
+    const res = await PATCH(makePatchRequest({ prompt_rules: 'x' }))
     expect(res.status).toBe(401)
     const body = await res.json() as { error: string }
     expect(body.error).toBe('No autorizado')
   })
 
-  it('retorna 403 si rol no es admin', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: 'doc-1' } }, error: null })
-    mockGetSession.mockResolvedValue({ data: { session: { access_token: 'some-token' } } })
-    mockParseJwt.mockReturnValue({ app_role: 'doctor', tenant_id: 'tenant-1' })
+  it('retorna 403 si el rol es doctor (sin permiso de escritura)', async () => {
+    setupAuth('doctor')
 
-    const res = await PATCH(makePatchRequest({ system_prompt_override: 'test' }))
+    const res = await PATCH(makePatchRequest({ prompt_rules: 'x' }))
     expect(res.status).toBe(403)
     const body = await res.json() as { error: string }
     expect(body.error).toBe('Acceso denegado')
   })
 
-  it('retorna 400 si system_prompt_override supera 10.000 chars', async () => {
-    setupAdminAuth()
+  it('retorna 400 si prompt_rules supera 10.000 chars', async () => {
+    setupAuth('admin')
 
     const longText = 'a'.repeat(10001)
-    const res = await PATCH(makePatchRequest({ system_prompt_override: longText }))
+    const res = await PATCH(makePatchRequest({ prompt_rules: longText }))
     expect(res.status).toBe(400)
-    const body = await res.json() as { error: string }
-    expect(body.error).toBe('Override inválido')
+    const body = await res.json() as { error: string; details: unknown }
+    expect(body.error).toBe('Configuración inválida')
+    expect(body.details).toBeDefined()
   })
 
-  it('retorna 200 y llama logAudit con config_system_prompt_updated cuando es válido', async () => {
-    setupAdminAuth()
+  it('retorna 400 si min_notice_hours es negativo', async () => {
+    setupAuth('admin')
+
+    const res = await PATCH(
+      makePatchRequest({ operations_config: { min_notice_hours: -1 } })
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it.each(['admin', 'receptionist'])(
+    'retorna 200 y llama logAudit(config_agent_updated) para rol %s con body válido',
+    async (role) => {
+      setupAuth(role)
+      mockLogAudit.mockResolvedValue(undefined)
+      const updateChain = makeUpdateChain({ data: CLINIC_CONFIG, error: null })
+      mockFrom.mockReturnValue(updateChain)
+
+      const res = await PATCH(makePatchRequest({ prompt_rules: 'Nuevas reglas' }))
+      expect(res.status).toBe(200)
+
+      const body = await res.json() as { data: typeof CLINIC_CONFIG }
+      expect(body.data).toEqual(CLINIC_CONFIG)
+
+      expect(updateChain.update).toHaveBeenCalledWith({ prompt_rules: 'Nuevas reglas' })
+      expect(updateChain.eq).toHaveBeenCalledWith('org_id', TENANT_ID)
+      expect(mockLogAudit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'config_agent_updated',
+          entity_type: 'config',
+          entity_id: TENANT_ID,
+        })
+      )
+    }
+  )
+
+  it('PATCH parcial sólo de prompt_rules NO incluye agent_name/ia_config/operations_config en el update', async () => {
+    setupAuth('admin')
     mockLogAudit.mockResolvedValue(undefined)
-    setupPatchChain(
-      { data: { system_prompt_override: 'prompt anterior' }, error: null },
-      { error: null }
-    )
+    const updateChain = makeUpdateChain({ data: CLINIC_CONFIG, error: null })
+    mockFrom.mockReturnValue(updateChain)
 
-    const overrideText = 'Mi prompt personalizado válido'
-    const res = await PATCH(makePatchRequest({ system_prompt_override: overrideText }))
-    expect(res.status).toBe(200)
+    await PATCH(makePatchRequest({ prompt_rules: 'solo reglas' }))
 
-    const body = await res.json() as { data: { system_prompt_override: string } }
-    expect(body.data.system_prompt_override).toBe(overrideText)
-
-    expect(mockLogAudit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: 'config_system_prompt_updated',
-        entity_type: 'config',
-        entity_id: '5298fcc5-15bf-494c-9655-b49d759cfef4',
-      })
-    )
+    expect(updateChain.update).toHaveBeenCalledWith({ prompt_rules: 'solo reglas' })
+    const payload = updateChain.update.mock.calls[0][0]
+    expect(payload).not.toHaveProperty('agent_name')
+    expect(payload).not.toHaveProperty('ia_config')
+    expect(payload).not.toHaveProperty('operations_config')
   })
 
-  it('retorna 500 si Supabase falla en el update', async () => {
-    setupAdminAuth()
-    // Solo necesitamos SELECT + UPDATE (UPDATE falla → no llega al INSERT)
-    const selectChain = makeSelectSingleChain({ data: { system_prompt_override: 'anterior' }, error: null })
-    const updateChain = makeUpdateChain({ error: { message: 'DB update error' } })
+  it('merge de ia_config: un PATCH de tone_base NO pisa features/identity existentes (AC4)', async () => {
+    setupAuth('admin')
+    mockLogAudit.mockResolvedValue(undefined)
+
+    const existingIaConfig = {
+      tone_base: 'formal',
+      identity: 'Identidad previa',
+      features: { enable_cancel: true, require_dni: true },
+    }
+    const selectChain = makeSelectSingleChain({ data: { ia_config: existingIaConfig }, error: null })
+    const updateChain = makeUpdateChain({ data: CLINIC_CONFIG, error: null })
+
     let callCount = 0
     mockFrom.mockImplementation(() => {
       callCount++
-      if (callCount === 1) return selectChain
-      return updateChain
+      if (callCount === 1) return selectChain // SELECT ia_config actual
+      return updateChain // UPDATE
     })
 
-    const res = await PATCH(makePatchRequest({ system_prompt_override: 'texto válido' }))
+    await PATCH(makePatchRequest({ ia_config: { tone_base: 'informal' } }))
+
+    const payload = updateChain.update.mock.calls[0][0] as { ia_config: Record<string, unknown> }
+    expect(payload.ia_config).toEqual({
+      tone_base: 'informal',
+      identity: 'Identidad previa',
+      features: { enable_cancel: true, require_dni: true },
+    })
+  })
+
+  it('no escribe a la tabla tenants', async () => {
+    setupAuth('admin')
+    mockLogAudit.mockResolvedValue(undefined)
+    mockFrom.mockReturnValue(makeUpdateChain({ data: CLINIC_CONFIG, error: null }))
+
+    await PATCH(makePatchRequest({ agent_name: 'Nuevo' }))
+    expect(mockFrom).not.toHaveBeenCalledWith('tenants')
+  })
+
+  it('retorna 400 si el body no trae campos editables', async () => {
+    setupAuth('admin')
+
+    const res = await PATCH(makePatchRequest({}))
+    expect(res.status).toBe(400)
+  })
+
+  it('retorna 500 si el update falla', async () => {
+    setupAuth('admin')
+    mockFrom.mockReturnValue(makeUpdateChain({ data: null, error: { message: 'DB update error' } }))
+
+    const res = await PATCH(makePatchRequest({ agent_name: 'X' }))
     expect(res.status).toBe(500)
     const body = await res.json() as { error: string }
-    expect(body.error).toBe('Error al guardar el prompt')
-  })
-
-  it('PATCH exitoso: registra historial con previous_content y new_content correctos', async () => {
-    setupAdminAuth()
-    mockLogAudit.mockResolvedValue(undefined)
-
-    const selectChain = makeSelectSingleChain({ data: { system_prompt_override: 'prompt previo' }, error: null })
-    const updateChain = makeUpdateChain({ error: null })
-    const insertChain = { insert: vi.fn().mockResolvedValue({ error: null }) }
-
-    let callCount = 0
-    mockFrom.mockImplementation(() => {
-      callCount++
-      if (callCount === 1) return selectChain
-      if (callCount === 2) return updateChain
-      return insertChain
-    })
-
-    const overrideText = 'prompt nuevo'
-    const res = await PATCH(makePatchRequest({ system_prompt_override: overrideText }))
-    expect(res.status).toBe(200)
-
-    expect(insertChain.insert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        previous_content: 'prompt previo',
-        new_content: overrideText,
-        user_id: 'admin-uuid-1',
-      })
-    )
-  })
-
-  it('PATCH: si el insert de historial falla → la request retorna 200 igual (no-crítico)', async () => {
-    setupAdminAuth()
-    mockLogAudit.mockResolvedValue(undefined)
-
-    const selectChain = makeSelectSingleChain({ data: { system_prompt_override: null }, error: null })
-    const updateChain = makeUpdateChain({ error: null })
-    // Insert de historial retorna error de Supabase (no lanza excepción)
-    const insertChain = { insert: vi.fn().mockResolvedValue({ data: null, error: { message: 'DB error' } }) }
-
-    let callCount = 0
-    mockFrom.mockImplementation(() => {
-      callCount++
-      if (callCount === 1) return selectChain
-      if (callCount === 2) return updateChain
-      return insertChain
-    })
-
-    const res = await PATCH(makePatchRequest({ system_prompt_override: 'texto válido' }))
-    expect(res.status).toBe(200)
+    expect(body.error).toBe('Error al guardar la configuración')
   })
 })

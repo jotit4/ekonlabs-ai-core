@@ -64,53 +64,58 @@ describe('AgentePage', () => {
     mockFrom.mockReturnValue(makeSelectSingleChain({ data: { shadow_mode_enabled: false }, error: null }))
   })
 
-  it('redirige a /login si no hay usuario autenticado', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: null } })
-    mockGetSession.mockResolvedValue({ data: { session: null } })
+  function setAuth(role: string | null) {
+    if (role === null) {
+      mockGetUser.mockResolvedValue({ data: { user: null } })
+      mockGetSession.mockResolvedValue({ data: { session: null } })
+      return
+    }
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: makeJwt({ app_role: role, tenant_id: 'tenant-1' }) } },
+    })
+  }
 
+  it('redirige a /login si no hay usuario autenticado', async () => {
+    setAuth(null)
     await expect(AgentePage()).rejects.toThrow('REDIRECT:/login')
   })
 
-  it('redirige a /agenda si el rol es receptionist', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
-    mockGetSession.mockResolvedValue({
-      data: {
-        session: {
-          access_token: makeJwt({ app_role: 'receptionist', tenant_id: 'tenant-1' }),
-        },
-      },
-    })
-
+  it('redirige a /agenda si el rol no está contemplado', async () => {
+    setAuth('superintendente')
     await expect(AgentePage()).rejects.toThrow('REDIRECT:/agenda')
   })
 
-  it('redirige a /agenda si el rol es doctor', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
-    mockGetSession.mockResolvedValue({
-      data: {
-        session: {
-          access_token: makeJwt({ app_role: 'doctor', tenant_id: 'tenant-1' }),
-        },
-      },
-    })
+  it.each(['admin', 'doctor', 'receptionist'])(
+    'NO redirige y renderiza AgentPromptEditor para rol %s',
+    async (role) => {
+      setAuth(role)
+      const element = await AgentePage()
+      render(element)
 
-    await expect(AgentePage()).rejects.toThrow('REDIRECT:/agenda')
-  })
+      expect(screen.getByTestId('agent-prompt-editor')).toBeInTheDocument()
+      expect(screen.getByText('Agente IA')).toBeInTheDocument()
+    }
+  )
 
-  it('renderiza AgentPromptEditor cuando el rol es admin', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
-    mockGetSession.mockResolvedValue({
-      data: {
-        session: {
-          access_token: makeJwt({ app_role: 'admin', tenant_id: 'tenant-1' }),
-        },
-      },
-    })
-
+  it('renderiza ShadowModeToggle SOLO para admin', async () => {
+    setAuth('admin')
     const element = await AgentePage()
     render(element)
+    expect(screen.getByTestId('shadow-mode-toggle')).toBeInTheDocument()
+  })
 
-    expect(screen.getByTestId('agent-prompt-editor')).toBeInTheDocument()
-    expect(screen.getByText('Agente IA')).toBeInTheDocument()
+  it('NO renderiza ShadowModeToggle para receptionist', async () => {
+    setAuth('receptionist')
+    const element = await AgentePage()
+    render(element)
+    expect(screen.queryByTestId('shadow-mode-toggle')).not.toBeInTheDocument()
+  })
+
+  it('NO renderiza ShadowModeToggle para doctor', async () => {
+    setAuth('doctor')
+    const element = await AgentePage()
+    render(element)
+    expect(screen.queryByTestId('shadow-mode-toggle')).not.toBeInTheDocument()
   })
 })

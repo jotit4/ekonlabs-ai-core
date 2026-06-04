@@ -2,7 +2,14 @@ import 'server-only'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 import { logAudit } from '@/lib/audit'
-import { SystemPromptOverrideSchema } from '@/lib/schemas/agente.schema'
+import { ClinicConfigPatchSchema } from '@/lib/schemas/agente.schema'
+import type { IaConfig } from '@/types/agente'
+
+// Lectura: admin, doctor y receptionist. Escritura: admin y receptionist (Story 6.6).
+const READ_ROLES = ['admin', 'doctor', 'receptionist']
+const WRITE_ROLES = ['admin', 'receptionist']
+
+const CONFIG_COLUMNS = 'org_id, clinic_name, agent_name, prompt_rules, ia_config, operations_config'
 
 export async function GET(): Promise<Response> {
   const supabase = await createSupabaseServerClient()
@@ -13,20 +20,20 @@ export async function GET(): Promise<Response> {
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }
 
-  // 2. Autorización — solo admin
+  // 2. Autorización — admin / doctor / receptionist
   const { data: sessionData } = await supabase.auth.getSession()
   const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
-  if (claims?.app_role !== 'admin') {
+  if (!READ_ROLES.includes(claims?.app_role as string)) {
     return Response.json(
-      { error: 'Solo administradores pueden ver la configuración del agente' },
+      { error: 'Sin permiso para ver la configuración del agente' },
       { status: 403 }
     )
   }
 
-  // 3. Query con RLS aplicado automáticamente — no agregar .eq('tenant_id', ...) (AR14)
+  // 3. Query a la tabla canónica — RLS filtra por org_id = tenant_id() (AR14: sin .eq)
   const { data, error } = await supabase
-    .from('tenants')
-    .select('tenant_id, system_prompt_override, rules, shadow_mode_enabled')
+    .from('v2_clinic_configs')
+    .select(CONFIG_COLUMNS)
     .single()
 
   if (error) {
@@ -45,54 +52,65 @@ export async function PATCH(request: Request): Promise<Response> {
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }
 
-  // 2. Autorización — solo admin
+  // 2. Autorización — solo admin / receptionist pueden escribir
   const { data: sessionData } = await supabase.auth.getSession()
   const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
-  if (claims?.app_role !== 'admin') {
+  if (!WRITE_ROLES.includes(claims?.app_role as string)) {
     return Response.json({ error: 'Acceso denegado' }, { status: 403 })
   }
 
-  // 3. Parsear y validar body
+  // 3. Parsear y validar body (PATCH parcial)
   const body = await request.json().catch(() => null)
-  const parsed = SystemPromptOverrideSchema.safeParse(body)
+  const parsed = ClinicConfigPatchSchema.safeParse(body)
   if (!parsed.success) {
-    return Response.json({ error: 'Override inválido', details: parsed.error.issues }, { status: 400 })
+    return Response.json(
+      { error: 'Configuración inválida', details: parsed.error.issues },
+      { status: 400 }
+    )
   }
 
-  // 4. Leer el valor anterior para el historial (RLS filtra automáticamente — AR14)
-  const { data: currentData } = await supabase
-    .from('tenants')
-    .select('system_prompt_override')
+  // 4. Construir el update SÓLO con las llaves presentes (merge parcial, AC4)
+  const updatePayload: Record<string, unknown> = {}
+  if (parsed.data.agent_name !== undefined) updatePayload.agent_name = parsed.data.agent_name
+  if (parsed.data.prompt_rules !== undefined) updatePayload.prompt_rules = parsed.data.prompt_rules
+  if (parsed.data.operations_config !== undefined) {
+    updatePayload.operations_config = parsed.data.operations_config
+  }
+
+  // 4b. ia_config: merge superficial sobre el existente (no pisar features/identity, AC4)
+  if (parsed.data.ia_config !== undefined) {
+    const { data: currentRow } = await supabase
+      .from('v2_clinic_configs')
+      .select('ia_config')
+      .single()
+    const currentIaConfig = (currentRow?.ia_config ?? {}) as IaConfig
+    updatePayload.ia_config = { ...currentIaConfig, ...parsed.data.ia_config }
+  }
+
+  // Nada que actualizar → 400 (body vacío o sin campos editables)
+  if (Object.keys(updatePayload).length === 0) {
+    return Response.json({ error: 'No hay campos para actualizar' }, { status: 400 })
+  }
+
+  // 5. UPDATE explícito por tenant (RLS también aplica USING) — sí lleva .eq en UPDATE
+  const { data: updated, error: updateError } = await supabase
+    .from('v2_clinic_configs')
+    .update(updatePayload)
+    .eq('org_id', claims?.tenant_id as string)
+    .select(CONFIG_COLUMNS)
     .single()
 
-  // 5. UPDATE con condición explícita de tenant_id (RLS también aplica USING)
-  const { error: updateError } = await supabase
-    .from('tenants')
-    .update({ system_prompt_override: parsed.data.system_prompt_override })
-    .eq('tenant_id', claims?.tenant_id as string)
-
   if (updateError) {
-    return Response.json({ error: 'Error al guardar el prompt' }, { status: 500 })
+    return Response.json({ error: 'Error al guardar la configuración' }, { status: 500 })
   }
 
-  // 6. Registrar historial (no-crítico — no fallar si falla)
-  const { error: historyError } = await supabase.from('system_prompt_history').insert({
-    tenant_id: claims?.tenant_id as string,
-    user_id: user.id,
-    previous_content: currentData?.system_prompt_override ?? null,
-    new_content: parsed.data.system_prompt_override,
-  })
-  if (historyError) {
-    console.error('[agente/config] Error al registrar historial:', historyError)
-  }
-
-  // 7. Audit log
+  // 6. Audit log
   await logAudit({
-    action: 'config_system_prompt_updated',
+    action: 'config_agent_updated',
     entity_type: 'config',
     entity_id: claims?.tenant_id as string,
     supabase,
   })
 
-  return Response.json({ data: { system_prompt_override: parsed.data.system_prompt_override } })
+  return Response.json({ data: updated })
 }

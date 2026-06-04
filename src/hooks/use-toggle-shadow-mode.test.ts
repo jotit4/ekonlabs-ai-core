@@ -135,7 +135,7 @@ describe('useToggleShadowMode', () => {
     })
   })
 
-  it('invalida [agente, config] en onSuccess', async () => {
+  it('invalida [agente, shadow-mode] en onSuccess', async () => {
     const { useToggleShadowMode } = await import('./use-toggle-shadow-mode')
     const { wrapper, queryClient } = makeWrapper()
     mockFetchSuccess({ data: { shadow_mode_enabled: true } })
@@ -149,7 +149,7 @@ describe('useToggleShadowMode', () => {
 
     await waitFor(() => {
       expect(invalidateSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ queryKey: ['agente', 'config'] })
+        expect.objectContaining({ queryKey: ['agente', 'shadow-mode'] })
       )
     })
   })
@@ -158,14 +158,8 @@ describe('useToggleShadowMode', () => {
     const { useToggleShadowMode } = await import('./use-toggle-shadow-mode')
     const { wrapper, queryClient } = makeWrapper()
 
-    // Pre-poblar el cache
-    const initialConfig = {
-      tenant_id: 'test-tenant',
-      shadow_mode_enabled: false,
-      system_prompt_override: null,
-      rules: {},
-    }
-    queryClient.setQueryData(['agente', 'config'], initialConfig)
+    // Pre-poblar el cache de shadow-mode (boolean)
+    queryClient.setQueryData(['agente', 'shadow-mode'], false)
 
     // Mock fetch que tarda para poder verificar el estado optimista
     let resolveFetch!: (value: unknown) => void
@@ -183,8 +177,8 @@ describe('useToggleShadowMode', () => {
 
     // Verificar que el optimistic update se aplicó inmediatamente
     await waitFor(() => {
-      const cached = queryClient.getQueryData<typeof initialConfig>(['agente', 'config'])
-      expect(cached?.shadow_mode_enabled).toBe(true)
+      const cached = queryClient.getQueryData<boolean>(['agente', 'shadow-mode'])
+      expect(cached).toBe(true)
     })
 
     // Resolver el fetch para limpiar
@@ -195,13 +189,7 @@ describe('useToggleShadowMode', () => {
     const { useToggleShadowMode } = await import('./use-toggle-shadow-mode')
     const { wrapper, queryClient } = makeWrapper()
 
-    const initialConfig = {
-      tenant_id: 'test-tenant',
-      shadow_mode_enabled: false,
-      system_prompt_override: null,
-      rules: {},
-    }
-    queryClient.setQueryData(['agente', 'config'], initialConfig)
+    queryClient.setQueryData(['agente', 'shadow-mode'], false)
 
     mockFetchError(500)
 
@@ -212,8 +200,8 @@ describe('useToggleShadowMode', () => {
     })
 
     await waitFor(() => {
-      const cached = queryClient.getQueryData<typeof initialConfig>(['agente', 'config'])
-      expect(cached?.shadow_mode_enabled).toBe(false)
+      const cached = queryClient.getQueryData<boolean>(['agente', 'shadow-mode'])
+      expect(cached).toBe(false)
     })
   })
 })

@@ -14,6 +14,7 @@ export type AuditAction =
   | 'config_system_prompt_updated'
   | 'config_shadow_mode_updated'
   | 'config_service_updated'
+  | 'config_agent_updated'
   | 'user_created'
   | 'user_deactivated'
   | 'user_activated'

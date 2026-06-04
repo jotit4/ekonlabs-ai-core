@@ -13,7 +13,7 @@ vi.mock('sonner', () => ({
 }))
 
 import { toast } from 'sonner'
-import { useUpdatePrompt } from './use-update-prompt'
+import { useUpdateAgentConfig } from './use-update-agent-config'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -31,7 +31,7 @@ function makeWrapper() {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('useUpdatePrompt', () => {
+describe('useUpdateAgentConfig', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -40,16 +40,16 @@ describe('useUpdatePrompt', () => {
     vi.restoreAllMocks()
   })
 
-  it('llama PATCH /api/agente/config con body correcto', async () => {
+  it('llama PATCH /api/agente/config con payload parcial', async () => {
     const mockFetch = vi.spyOn(global, 'fetch').mockResolvedValueOnce(
-      new Response(JSON.stringify({ data: { system_prompt_override: 'texto de prueba' } }), { status: 200 })
+      new Response(JSON.stringify({ data: { prompt_rules: 'reglas' } }), { status: 200 })
     )
 
     const { Wrapper } = makeWrapper()
-    const { result } = renderHook(() => useUpdatePrompt(), { wrapper: Wrapper })
+    const { result } = renderHook(() => useUpdateAgentConfig(), { wrapper: Wrapper })
 
     await act(async () => {
-      result.current.mutate({ system_prompt_override: 'texto de prueba' })
+      result.current.mutate({ prompt_rules: 'reglas' })
     })
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
@@ -59,38 +59,38 @@ describe('useUpdatePrompt', () => {
       expect.objectContaining({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ system_prompt_override: 'texto de prueba' }),
+        body: JSON.stringify({ prompt_rules: 'reglas' }),
       })
     )
   })
 
   it('muestra toast.success cuando la mutación tiene éxito', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(
-      new Response(JSON.stringify({ data: { system_prompt_override: 'ok' } }), { status: 200 })
+      new Response(JSON.stringify({ data: {} }), { status: 200 })
     )
 
     const { Wrapper } = makeWrapper()
-    const { result } = renderHook(() => useUpdatePrompt(), { wrapper: Wrapper })
+    const { result } = renderHook(() => useUpdateAgentConfig(), { wrapper: Wrapper })
 
     await act(async () => {
-      result.current.mutate({ system_prompt_override: 'ok' })
+      result.current.mutate({ agent_name: 'Bot' })
     })
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
-    expect(toast.success).toHaveBeenCalledWith('Prompt guardado correctamente')
+    expect(toast.success).toHaveBeenCalledWith('Configuración del agente guardada correctamente')
   })
 
-  it('muestra toast.error cuando la mutación falla', async () => {
+  it('muestra toast.error con acción "Reintentar" cuando la mutación falla', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(
-      new Response(JSON.stringify({ error: 'Error al guardar el prompt' }), { status: 500 })
+      new Response(JSON.stringify({ error: 'Error al guardar la configuración' }), { status: 500 })
     )
 
     const { Wrapper } = makeWrapper()
-    const { result } = renderHook(() => useUpdatePrompt(), { wrapper: Wrapper })
+    const { result } = renderHook(() => useUpdateAgentConfig(), { wrapper: Wrapper })
 
     await act(async () => {
-      result.current.mutate({ system_prompt_override: 'texto' })
+      result.current.mutate({ prompt_rules: 'x' })
     })
 
     await waitFor(() => expect(result.current.isError).toBe(true))
@@ -108,39 +108,20 @@ describe('useUpdatePrompt', () => {
 
   it('invalida [agente, config] al tener éxito', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(
-      new Response(JSON.stringify({ data: { system_prompt_override: 'ok' } }), { status: 200 })
+      new Response(JSON.stringify({ data: {} }), { status: 200 })
     )
 
     const { qc, Wrapper } = makeWrapper()
     const invalidateSpy = vi.spyOn(qc, 'invalidateQueries')
 
-    const { result } = renderHook(() => useUpdatePrompt(), { wrapper: Wrapper })
+    const { result } = renderHook(() => useUpdateAgentConfig(), { wrapper: Wrapper })
 
     await act(async () => {
-      result.current.mutate({ system_prompt_override: 'ok' })
+      result.current.mutate({ prompt_rules: 'ok' })
     })
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['agente', 'config'] })
-  })
-
-  it('invalida [agente, prompt-history] al tener éxito', async () => {
-    vi.spyOn(global, 'fetch').mockResolvedValueOnce(
-      new Response(JSON.stringify({ data: { system_prompt_override: 'ok' } }), { status: 200 })
-    )
-
-    const { qc, Wrapper } = makeWrapper()
-    const invalidateSpy = vi.spyOn(qc, 'invalidateQueries')
-
-    const { result } = renderHook(() => useUpdatePrompt(), { wrapper: Wrapper })
-
-    await act(async () => {
-      result.current.mutate({ system_prompt_override: 'ok' })
-    })
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true))
-
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['agente', 'prompt-history'] })
   })
 })

@@ -3,6 +3,32 @@ import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 import { logAudit } from '@/lib/audit'
 
+/**
+ * GET — lee el estado de shadow_mode (en `tenants`) para cualquier rol autenticado.
+ * Lo consume el `ShadowModeBanner` (visible para todos los usuarios del dashboard).
+ * La escritura (PATCH) sigue siendo admin-only.
+ */
+export async function GET(): Promise<Response> {
+  const supabase = await createSupabaseServerClient()
+
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (!user || authError) {
+    return Response.json({ error: 'No autorizado' }, { status: 401 })
+  }
+
+  // RLS filtra por tenant — sin .eq() (AR14)
+  const { data, error } = await supabase
+    .from('tenants')
+    .select('shadow_mode_enabled')
+    .single()
+
+  if (error) {
+    return Response.json({ error: 'Error al obtener shadow mode' }, { status: 500 })
+  }
+
+  return Response.json({ data: { shadow_mode_enabled: data?.shadow_mode_enabled ?? false } })
+}
+
 export async function PATCH(request: Request): Promise<Response> {
   const supabase = await createSupabaseServerClient()
 

@@ -2,7 +2,10 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import type { TenantAgentConfig } from '@/types/agente'
+
+// La fuente de shadow_mode es ahora ['agente','shadow-mode'] (tabla `tenants`),
+// desacoplada de la config del agente (`v2_clinic_configs`) desde la Story 6.6.
+const SHADOW_MODE_KEY = ['agente', 'shadow-mode']
 
 export function useToggleShadowMode() {
   const queryClient = useQueryClient()
@@ -21,19 +24,14 @@ export function useToggleShadowMode() {
       return res.json()
     },
     onMutate: async (newPayload) => {
-      await queryClient.cancelQueries({ queryKey: ['agente', 'config'] })
-      const previous = queryClient.getQueryData<TenantAgentConfig>(['agente', 'config'])
-      if (previous) {
-        queryClient.setQueryData<TenantAgentConfig>(['agente', 'config'], {
-          ...previous,
-          shadow_mode_enabled: newPayload.shadow_mode_enabled,
-        })
-      }
+      await queryClient.cancelQueries({ queryKey: SHADOW_MODE_KEY })
+      const previous = queryClient.getQueryData<boolean>(SHADOW_MODE_KEY)
+      queryClient.setQueryData<boolean>(SHADOW_MODE_KEY, newPayload.shadow_mode_enabled)
       return { previous }
     },
     onError: (_err, newPayload, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(['agente', 'config'], context.previous)
+      if (context?.previous !== undefined) {
+        queryClient.setQueryData(SHADOW_MODE_KEY, context.previous)
       }
       toast.error('Error al cambiar el modo shadow.', {
         action: {
@@ -43,7 +41,7 @@ export function useToggleShadowMode() {
       })
     },
     onSuccess: (_, { shadow_mode_enabled }) => {
-      queryClient.invalidateQueries({ queryKey: ['agente', 'config'] })
+      queryClient.invalidateQueries({ queryKey: SHADOW_MODE_KEY })
       toast.success(
         shadow_mode_enabled
           ? 'Shadow mode activado — agendamiento automático bloqueado'

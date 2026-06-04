@@ -2,13 +2,18 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import type { UpdatePromptPayload } from '@/types/agente'
+import type { UpdateClinicConfigPayload } from '@/types/agente'
 
-export function useUpdatePrompt() {
+/**
+ * Mutación para `PATCH /api/agente/config` (tabla canónica `v2_clinic_configs`).
+ * El payload es parcial: sólo los campos editados. Invalida `['agente','config']`
+ * al éxito y ofrece toast de error con acción "Reintentar" (Story 6.6).
+ */
+export function useUpdateAgentConfig() {
   const queryClient = useQueryClient()
 
   const mutation = useMutation({
-    mutationFn: async (data: UpdatePromptPayload) => {
+    mutationFn: async (data: UpdateClinicConfigPayload) => {
       const res = await fetch('/api/agente/config', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -22,8 +27,7 @@ export function useUpdatePrompt() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['agente', 'config'] })
-      queryClient.invalidateQueries({ queryKey: ['agente', 'prompt-history'] })
-      toast.success('Prompt guardado correctamente')
+      toast.success('Configuración del agente guardada correctamente')
     },
     onError: (_error, variables) => {
       toast.error('Error al guardar.', {

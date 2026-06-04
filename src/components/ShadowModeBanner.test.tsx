@@ -3,14 +3,14 @@ import { vi, describe, it, expect, beforeEach } from 'vitest'
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
-vi.mock('@/hooks/use-agent-config', () => ({
-  useAgentConfig: vi.fn(),
+vi.mock('@/hooks/use-shadow-mode', () => ({
+  useShadowMode: vi.fn(),
 }))
 
-import { useAgentConfig } from '@/hooks/use-agent-config'
+import { useShadowMode } from '@/hooks/use-shadow-mode'
 import { ShadowModeBanner } from './ShadowModeBanner'
 
-const mockUseAgentConfig = vi.mocked(useAgentConfig)
+const mockUseShadowMode = vi.mocked(useShadowMode)
 
 function setupMock({
   shadowModeEnabled,
@@ -21,18 +21,10 @@ function setupMock({
   isPending?: boolean
   isError?: boolean
 }) {
-  mockUseAgentConfig.mockReturnValue({
-    config: isPending || isError
-      ? null
-      : {
-          tenant_id: 'test-tenant',
-          shadow_mode_enabled: shadowModeEnabled,
-          system_prompt_override: null,
-          rules: {},
-        },
+  mockUseShadowMode.mockReturnValue({
+    shadowModeEnabled: isPending || isError ? false : shadowModeEnabled,
     isPending,
     isError,
-    refetch: vi.fn(),
   })
 }
 

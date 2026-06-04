@@ -1,12 +1,12 @@
 'use client'
 
-import { useAgentConfig } from '@/hooks/use-agent-config'
+import { useShadowMode } from '@/hooks/use-shadow-mode'
 
 export function ShadowModeBanner() {
-  const { config, isPending, isError } = useAgentConfig()
+  const { shadowModeEnabled, isPending, isError } = useShadowMode()
 
   if (isPending || isError) return null
-  if (!config?.shadow_mode_enabled) return null
+  if (!shadowModeEnabled) return null
 
   return (
     <div
