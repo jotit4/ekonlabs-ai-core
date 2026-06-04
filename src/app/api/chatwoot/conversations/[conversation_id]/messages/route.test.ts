@@ -107,6 +107,33 @@ describe('GET /api/chatwoot/conversations/[conversation_id]/messages', () => {
     expect(body.messages[0].content).toBe('Hola')
   })
 
+  it('oculta el mensaje de ruido de Evolution (🚀 Connection successfully established!) del hilo', async () => {
+    const mockMessages = [
+      { id: 1, content: 'Hola', message_type: 0, created_at: 1715000000 },
+      { id: 2, content: '🚀 Connection successfully established!', message_type: 1, created_at: 1715000030 },
+      { id: 3, content: 'Buenos días', message_type: 1, created_at: 1715000060 },
+    ]
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ payload: mockMessages }),
+      })
+    )
+
+    const res = await GET(makeRequest(), makeContext())
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.messages).toHaveLength(2)
+    expect(
+      body.messages.some(
+        (m: { content: string }) => m.content === '🚀 Connection successfully established!'
+      )
+    ).toBe(false)
+    expect(body.messages.map((m: { id: number }) => m.id)).toEqual([1, 3])
+  })
+
   it('retorna 503 con error chatwoot_unavailable cuando Chatwoot da timeout', async () => {
     const abortError = new DOMException('The operation was aborted', 'AbortError')
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortError))

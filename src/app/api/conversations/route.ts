@@ -1,6 +1,18 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { parseJwtPayload } from '@/lib/utils/jwt'
+import { isEvolutionPhone } from '@/lib/conversations/evolution-noise'
 import type { ConversationSummary, ConversationStatus, ConfidenceLevel } from '@/types/conversations'
+
+// Fila devuelta por la RPC get_tenant_conversations_overview (Story 4.8)
+interface ConversationOverviewRow {
+  phone_number: string
+  last_content: string | null
+  last_role: string | null
+  last_created_at: string
+  ts_status: string | null
+  ts_paused_reason: string | null
+  ts_updated_at: string | null
+}
 
 // ─── Helpers de derivación de estado ─────────────────────────────────────────
 
@@ -47,66 +59,61 @@ export async function GET() {
     return Response.json({ error: 'Acceso denegado' }, { status: 403 })
   }
 
-  // 2. Obtener thread_states activas del tenant (RLS filtra por tenant_id automáticamente)
-  // NO agregar .eq('tenant_id', ...) — AR14
-  const { data: threadStates, error: tsError } = await supabase
-    .from('thread_states')
-    .select('phone_number, status, paused_reason, updated_at')
-    .order('updated_at', { ascending: false })
+  // 2. Derivar la bandeja desde `conversations` (fuente de verdad) — Story 4.8.
+  // La RPC SECURITY DEFINER hace DISTINCT ON (phone_number) sobre conversations
+  // (último mensaje por número) + LEFT JOIN a thread_states para el estado del
+  // agente (NULL si no existe). Aísla por tenant vía auth.jwt() ->> 'tenant_id'
+  // internamente — NO se pasa tenant_id por parámetro ni body (AR14).
+  // Así, una conversación con mensajes pero SIN thread_state (huérfana por fallo
+  // transitorio del upsert del backend) SÍ aparece, en estado ai_active.
+  const { data: overview, error: overviewError } = await supabase.rpc(
+    'get_tenant_conversations_overview'
+  )
 
-  if (tsError) {
-    console.error('[conversations/GET] thread_states error:', tsError)
+  if (overviewError) {
+    console.error('[conversations/GET] overview RPC error:', overviewError)
     return Response.json({ error: 'Error al obtener conversaciones' }, { status: 500 })
   }
 
-  if (!threadStates?.length) {
+  const rows = (overview ?? []) as ConversationOverviewRow[]
+
+  // Excluir el ruido de infraestructura de Evolution API de la BANDEJA (AC2).
+  // '+123456' (contacto "EvolutionAPI") está persistido en `conversations` →
+  // sin este filtro aparecería en la lista. Constante centralizada en evolution-noise.
+  const visibleRows = rows.filter((row) => !isEvolutionPhone(row.phone_number))
+
+  if (!visibleRows.length) {
     return Response.json({ conversations: [] })
   }
 
-  const phoneNumbers = threadStates.map((ts) => ts.phone_number)
+  const phoneNumbers = visibleRows.map((row) => row.phone_number)
 
-  // 3. Obtener el último mensaje de conversations por phone_number
-  // La RPC usa DISTINCT ON para retornar exactamente 1 fila por número (fix C-13)
-  const { data: lastMessages, error: convError } = await supabase
-    .rpc('get_latest_messages_by_phone', { phone_numbers: phoneNumbers })
-
-  if (convError) {
-    console.error('[conversations/GET] conversations error:', convError)
-    return Response.json({ error: 'Error al obtener mensajes' }, { status: 500 })
-  }
-
-  // 4. Obtener nombres de pacientes por phone_number
+  // 3. Obtener nombres de pacientes por phone_number (RLS filtra por tenant — AR14)
   const { data: patients } = await supabase
     .from('patients')
     .select('phone_number, full_name')
     .in('phone_number', phoneNumbers)
 
-  // 5. Construir mapas auxiliares
-  const lastMessageByPhone = new Map<string, { phone_number: string; content: string; created_at: string }>()
-  for (const msg of lastMessages ?? []) {
-    if (!lastMessageByPhone.has(msg.phone_number)) {
-      lastMessageByPhone.set(msg.phone_number, msg)
-    }
-  }
-
   const nameByPhone = new Map<string, string>(
     (patients ?? []).map((p) => [p.phone_number, p.full_name])
   )
 
-  // 6. Construir ConversationSummary[]
-  const conversations: ConversationSummary[] = threadStates.map((ts) => {
-    const lastMsg = lastMessageByPhone.get(ts.phone_number)
-    const convStatus = deriveStatus(ts.status, ts.paused_reason)
-    const preview = lastMsg?.content?.slice(0, 80) ?? ''
+  // 4. Construir ConversationSummary[]. Si no hay thread_state (ts_status === null)
+  // el default es status='active' / paused_reason=null → deriveStatus → ai_active.
+  const conversations: ConversationSummary[] = visibleRows.map((row) => {
+    const status = row.ts_status ?? 'active'
+    const pausedReason = row.ts_paused_reason ?? null
+    const convStatus = deriveStatus(status, pausedReason)
+    const preview = row.last_content?.slice(0, 80) ?? ''
 
     return {
-      id: ts.phone_number,
-      phone_number: ts.phone_number,
-      patient_name: nameByPhone.get(ts.phone_number) ?? ts.phone_number,
+      id: row.phone_number,
+      phone_number: row.phone_number,
+      patient_name: nameByPhone.get(row.phone_number) ?? row.phone_number,
       status: convStatus,
-      confidence_level: deriveConfidence(ts.paused_reason),
+      confidence_level: deriveConfidence(pausedReason),
       last_message_preview: preview,
-      last_message_at: lastMsg?.created_at ?? ts.updated_at,
+      last_message_at: row.last_created_at,
       is_unread: false, // MVP: sin tracking de leídos
     }
   })

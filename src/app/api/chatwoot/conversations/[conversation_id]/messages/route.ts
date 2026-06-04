@@ -1,6 +1,7 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ChatwootMessage } from '@/types/conversations'
+import { filterEvolutionNoise } from '@/lib/conversations/evolution-noise'
 
 interface RouteContext {
   params: Promise<{ conversation_id: string }>
@@ -142,8 +143,12 @@ export async function GET(_request: Request, context: RouteContext) {
       return Response.json({ messages }, { status: 200 })
     }
 
+    // Ocultar el ruido técnico de Evolution API del hilo (AC2 Story 4.8).
+    // Filtro idempotente y centralizado en evolution-noise.
+    const messages = filterEvolutionNoise(chatwootMessages as ChatwootMessage[])
+
     // Retornar solo los mensajes — NUNCA incluir chatwootToken en la respuesta
-    return Response.json({ messages: chatwootMessages }, { status: 200 })
+    return Response.json({ messages }, { status: 200 })
   } catch (err) {
     // AbortError = timeout (NFR22) — fallback a Supabase
     if (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')) {

@@ -42,8 +42,13 @@ import { GET } from './route'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function makeRequest() {
-  return new Request('http://localhost/api/conversations', { method: 'GET' })
+// Mock de from('patients').select().in() devolviendo los pacientes dados
+function mockPatients(patients: Array<{ phone_number: string; full_name: string }> = []) {
+  mockFrom.mockReturnValue({
+    select: vi.fn().mockReturnValue({
+      in: vi.fn().mockResolvedValue({ data: patients, error: null }),
+    }),
+  })
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -55,6 +60,8 @@ describe('GET /api/conversations', () => {
     mockGetSession.mockResolvedValue({
       data: { session: { access_token: 'mock-admin-token' } },
     })
+    mockParseJwt.mockReturnValue({ app_role: 'admin', tenant_id: 'tenant-1' })
+    mockPatients([])
   })
 
   it('401 si no hay usuario autenticado', async () => {
@@ -81,13 +88,9 @@ describe('GET /api/conversations', () => {
     expect(body.error).toBe('Acceso denegado')
   })
 
-  it('retorna lista vacía si no hay thread_states', async () => {
+  it('retorna lista vacía si la RPC devuelve []', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
-
-    // Simulamos cadena de llamadas: from('thread_states').select(...).order(...)
-    const mockOrder = vi.fn().mockResolvedValue({ data: [], error: null })
-    const mockSelect = vi.fn().mockReturnValue({ order: mockOrder })
-    mockFrom.mockReturnValue({ select: mockSelect })
+    mockRpc.mockResolvedValue({ data: [], error: null })
 
     const res = await GET()
 
@@ -96,12 +99,9 @@ describe('GET /api/conversations', () => {
     expect(body.conversations).toEqual([])
   })
 
-  it('500 si thread_states falla', async () => {
+  it('500 si la RPC get_tenant_conversations_overview falla', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
-
-    const mockOrder = vi.fn().mockResolvedValue({ data: null, error: { message: 'DB error' } })
-    const mockSelect = vi.fn().mockReturnValue({ order: mockOrder })
-    mockFrom.mockReturnValue({ select: mockSelect })
+    mockRpc.mockResolvedValue({ data: null, error: { message: 'DB error' } })
 
     const res = await GET()
 
@@ -110,40 +110,22 @@ describe('GET /api/conversations', () => {
     expect(body.error).toBe('Error al obtener conversaciones')
   })
 
-  it('retorna conversaciones con status derivado correctamente', async () => {
+  it('conversación CON thread_state deriva el status correctamente (paused+low_confidence → needs_intervention)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
-
-    const threadStates = [
-      {
-        phone_number: '+5491111111111',
-        status: 'paused',
-        paused_reason: 'low_confidence',
-        updated_at: '2026-05-11T14:00:00.000Z',
-      },
-    ]
-
-    let fromCallCount = 0
-    mockFrom.mockImplementation(() => {
-      fromCallCount++
-      if (fromCallCount === 1) {
-        // from('thread_states')
-        return {
-          select: vi.fn().mockReturnValue({
-            order: vi.fn().mockResolvedValue({ data: threadStates, error: null }),
-          }),
-        }
-      } else {
-        // from('patients')
-        return {
-          select: vi.fn().mockReturnValue({
-            in: vi.fn().mockResolvedValue({ data: [], error: null }),
-          }),
-        }
-      }
+    mockRpc.mockResolvedValue({
+      data: [
+        {
+          phone_number: '+5491111111111',
+          last_content: 'Necesito ayuda urgente',
+          last_role: 'user',
+          last_created_at: '2026-05-11T14:00:00.000Z',
+          ts_status: 'paused',
+          ts_paused_reason: 'low_confidence',
+          ts_updated_at: '2026-05-11T14:00:00.000Z',
+        },
+      ],
+      error: null,
     })
-
-    // Mock RPC get_latest_messages_by_phone
-    mockRpc.mockResolvedValue({ data: [], error: null })
 
     const res = await GET()
 
@@ -151,70 +133,205 @@ describe('GET /api/conversations', () => {
     const body = await res.json()
     expect(body.conversations).toHaveLength(1)
     expect(body.conversations[0].status).toBe('needs_intervention')
+    expect(body.conversations[0].confidence_level).toBe('low')
     expect(body.conversations[0].phone_number).toBe('+5491111111111')
+    expect(body.conversations[0].last_message_preview).toBe('Necesito ayuda urgente')
   })
 
   it('confidence_level es medium cuando paused_reason no es null ni low_confidence', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
-
-    const threadStates = [
-      {
-        phone_number: '+5491111111111',
-        status: 'paused',
-        paused_reason: 'human_takeover', // No es 'low_confidence' ni null
-        updated_at: '2026-05-11T14:00:00.000Z',
-      },
-    ]
-
-    let fromCallCount = 0
-    mockFrom.mockImplementation(() => {
-      fromCallCount++
-      if (fromCallCount === 1) {
-        return {
-          select: vi.fn().mockReturnValue({
-            order: vi.fn().mockResolvedValue({ data: threadStates, error: null }),
-          }),
-        }
-      } else {
-        return {
-          select: vi.fn().mockReturnValue({
-            in: vi.fn().mockResolvedValue({ data: [], error: null }),
-          }),
-        }
-      }
+    mockRpc.mockResolvedValue({
+      data: [
+        {
+          phone_number: '+5491111111111',
+          last_content: 'hola',
+          last_role: 'user',
+          last_created_at: '2026-05-11T14:00:00.000Z',
+          ts_status: 'paused',
+          ts_paused_reason: 'human_takeover',
+          ts_updated_at: '2026-05-11T14:00:00.000Z',
+        },
+      ],
+      error: null,
     })
-    mockRpc.mockResolvedValue({ data: [], error: null })
 
     const res = await GET()
     const body = await res.json()
+    expect(body.conversations[0].status).toBe('human_takeover')
     expect(body.conversations[0].confidence_level).toBe('medium')
   })
 
-  it('500 si get_latest_messages_by_phone falla', async () => {
+  it('conversación SIN thread_state (ts_status=null) aparece en estado ai_active (caso +5492617198342)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
-
-    const threadStates = [
-      {
-        phone_number: '+5491111111111',
-        status: 'active',
-        paused_reason: null,
-        updated_at: '2026-05-11T14:00:00.000Z',
-      },
-    ]
-
-    mockFrom.mockImplementation(() => {
-      return {
-        select: vi.fn().mockReturnValue({
-          order: vi.fn().mockResolvedValue({ data: threadStates, error: null }),
-        }),
-      }
+    mockRpc.mockResolvedValue({
+      data: [
+        {
+          phone_number: '+5492617198342',
+          last_content: 'Quiero un turno',
+          last_role: 'user',
+          last_created_at: '2026-05-20T10:00:00.000Z',
+          ts_status: null,
+          ts_paused_reason: null,
+          ts_updated_at: null,
+        },
+      ],
+      error: null,
     })
 
-    mockRpc.mockResolvedValue({ data: null, error: { message: 'RPC error' } })
+    const res = await GET()
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.conversations).toHaveLength(1)
+    expect(body.conversations[0].phone_number).toBe('+5492617198342')
+    expect(body.conversations[0].status).toBe('ai_active')
+    expect(body.conversations[0].confidence_level).toBe('high')
+    expect(body.conversations[0].last_message_at).toBe('2026-05-20T10:00:00.000Z')
+  })
+
+  it('mezcla con y sin thread_state: todas presentes, orden por urgencia + last_message_at DESC', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    mockRpc.mockResolvedValue({
+      data: [
+        // sin thread_state → ai_active (urgencia 2)
+        {
+          phone_number: '+5490000000001',
+          last_content: 'a',
+          last_role: 'user',
+          last_created_at: '2026-05-20T09:00:00.000Z',
+          ts_status: null,
+          ts_paused_reason: null,
+          ts_updated_at: null,
+        },
+        // paused+low_confidence → needs_intervention (urgencia 0)
+        {
+          phone_number: '+5490000000002',
+          last_content: 'b',
+          last_role: 'user',
+          last_created_at: '2026-05-20T08:00:00.000Z',
+          ts_status: 'paused',
+          ts_paused_reason: 'low_confidence',
+          ts_updated_at: '2026-05-20T08:00:00.000Z',
+        },
+        // sin thread_state, más reciente → ai_active (urgencia 2)
+        {
+          phone_number: '+5490000000003',
+          last_content: 'c',
+          last_role: 'user',
+          last_created_at: '2026-05-20T11:00:00.000Z',
+          ts_status: null,
+          ts_paused_reason: null,
+          ts_updated_at: null,
+        },
+      ],
+      error: null,
+    })
 
     const res = await GET()
-    expect(res.status).toBe(500)
     const body = await res.json()
-    expect(body.error).toBe('Error al obtener mensajes')
+
+    expect(body.conversations).toHaveLength(3)
+    // needs_intervention primero; luego los dos ai_active por last_message_at DESC
+    expect(body.conversations.map((c: { phone_number: string }) => c.phone_number)).toEqual([
+      '+5490000000002',
+      '+5490000000003',
+      '+5490000000001',
+    ])
+  })
+
+  it('mapea patient_name desde patients y cae al phone_number si no hay match', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    mockRpc.mockResolvedValue({
+      data: [
+        {
+          phone_number: '+5490000000001',
+          last_content: 'a',
+          last_role: 'user',
+          last_created_at: '2026-05-20T09:00:00.000Z',
+          ts_status: null,
+          ts_paused_reason: null,
+          ts_updated_at: null,
+        },
+        {
+          phone_number: '+5490000000002',
+          last_content: 'b',
+          last_role: 'user',
+          last_created_at: '2026-05-20T08:00:00.000Z',
+          ts_status: null,
+          ts_paused_reason: null,
+          ts_updated_at: null,
+        },
+      ],
+      error: null,
+    })
+    mockPatients([{ phone_number: '+5490000000001', full_name: 'Juan Pérez' }])
+
+    const res = await GET()
+    const body = await res.json()
+    const byPhone = Object.fromEntries(
+      body.conversations.map((c: { phone_number: string; patient_name: string }) => [
+        c.phone_number,
+        c.patient_name,
+      ])
+    )
+    expect(byPhone['+5490000000001']).toBe('Juan Pérez')
+    expect(byPhone['+5490000000002']).toBe('+5490000000002')
+  })
+
+  it('excluye el ruido de Evolution (+123456) de la bandeja aunque la RPC lo devuelva', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    mockRpc.mockResolvedValue({
+      data: [
+        {
+          phone_number: '+123456',
+          last_content: '🚀 Connection successfully established!',
+          last_role: 'system',
+          last_created_at: '2026-05-20T12:00:00.000Z',
+          ts_status: null,
+          ts_paused_reason: null,
+          ts_updated_at: null,
+        },
+        {
+          phone_number: '+5492617198342',
+          last_content: 'Hola',
+          last_role: 'user',
+          last_created_at: '2026-05-20T10:00:00.000Z',
+          ts_status: null,
+          ts_paused_reason: null,
+          ts_updated_at: null,
+        },
+      ],
+      error: null,
+    })
+
+    const res = await GET()
+    const body = await res.json()
+
+    const phones = body.conversations.map((c: { phone_number: string }) => c.phone_number)
+    expect(phones).not.toContain('+123456')
+    expect(phones).toContain('+5492617198342')
+    expect(body.conversations).toHaveLength(1)
+  })
+
+  it('lista vacía si tras excluir el ruido de Evolution no queda ninguna conversación', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    mockRpc.mockResolvedValue({
+      data: [
+        {
+          phone_number: '+123456',
+          last_content: '🚀 Connection successfully established!',
+          last_role: 'system',
+          last_created_at: '2026-05-20T12:00:00.000Z',
+          ts_status: null,
+          ts_paused_reason: null,
+          ts_updated_at: null,
+        },
+      ],
+      error: null,
+    })
+
+    const res = await GET()
+    const body = await res.json()
+    expect(body.conversations).toEqual([])
   })
 })
