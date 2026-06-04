@@ -41,6 +41,17 @@ vi.mock('@/hooks/use-appointments-range', () => ({
   })),
 }))
 
+vi.mock('@/hooks/use-availability', () => ({
+  useAvailability: vi.fn(() => ({
+    daysShifts: {},
+    daysSummary: {},
+    isLoading: false,
+    isError: false,
+    refetch: vi.fn(),
+    shiftsForDate: () => [],
+  })),
+}))
+
 vi.mock('@/hooks/use-gcal-channel-status', () => ({
   useGCalChannelStatus: vi.fn(() => ({ status: 'ok' })),
 }))
@@ -110,6 +121,7 @@ import AgendaPage from './page'
 import { useUserRole } from '@/hooks/use-user-role'
 import { useAppointments } from '@/hooks/use-appointments'
 import { useAppointmentsRange } from '@/hooks/use-appointments-range'
+import { useAvailability } from '@/hooks/use-availability'
 import { useTenantConfig } from '@/hooks/use-tenant-config'
 import { useGCalChannelStatus } from '@/hooks/use-gcal-channel-status'
 
@@ -134,10 +146,25 @@ describe('AgendaPage', () => {
       refetch: vi.fn(),
     })
     vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, isPending: false })
+    vi.mocked(useAvailability).mockReturnValue({
+      daysShifts: {},
+      daysSummary: {},
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+      shiftsForDate: () => [],
+    })
   })
 
-  it('sin ?vista en URL → renderiza CalendarView (vista día)', () => {
+  it('sin ?vista en URL → renderiza vista Semana (default, AC6)', () => {
     mockSearchParamsData = {}
+    render(<AgendaPage />)
+    expect(screen.getByTestId('calendar-view-range')).toBeInTheDocument()
+    expect(screen.queryByTestId('calendar-view')).not.toBeInTheDocument()
+  })
+
+  it('?vista=dia → renderiza CalendarView (vista día)', () => {
+    mockSearchParamsData = { vista: 'dia' }
     render(<AgendaPage />)
     expect(screen.getByTestId('calendar-view')).toBeInTheDocument()
     expect(screen.queryByTestId('calendar-view-range')).not.toBeInTheDocument()
@@ -157,6 +184,22 @@ describe('AgendaPage', () => {
     expect(screen.queryByTestId('calendar-view')).not.toBeInTheDocument()
   })
 
+  it('llama useAvailability con summary=true en vista mes', () => {
+    mockSearchParamsData = { vista: 'mes' }
+    render(<AgendaPage />)
+    expect(vi.mocked(useAvailability)).toHaveBeenCalledWith(
+      expect.objectContaining({ summary: true }),
+    )
+  })
+
+  it('llama useAvailability con summary=false en vista semana (default)', () => {
+    mockSearchParamsData = {}
+    render(<AgendaPage />)
+    expect(vi.mocked(useAvailability)).toHaveBeenCalledWith(
+      expect.objectContaining({ summary: false }),
+    )
+  })
+
   it('KPIStrip solo aparece en vista día (no en semana)', () => {
     mockSearchParamsData = { vista: 'semana' }
     render(<AgendaPage />)
@@ -164,37 +207,43 @@ describe('AgendaPage', () => {
   })
 
   it('KPIStrip aparece en vista día', () => {
-    mockSearchParamsData = {}
+    mockSearchParamsData = { vista: 'dia' }
     render(<AgendaPage />)
     expect(screen.getByTestId('kpi-strip')).toBeInTheDocument()
   })
 
-  it('al hacer click en "Semana" en CalendarViewSelector, router push incluye ?vista=semana', () => {
+  it('al hacer click en "Día" en CalendarViewSelector, router push incluye ?vista=dia', () => {
     mockSearchParamsData = {}
-    render(<AgendaPage />)
-    const semanaBtn = screen.getByRole('button', { name: 'Semana' })
-    fireEvent.click(semanaBtn)
-    expect(mockRouterPush).toHaveBeenCalledWith(expect.stringContaining('vista=semana'))
-  })
-
-  it('al hacer click en "Día" en CalendarViewSelector, router push no incluye ?vista', () => {
-    mockSearchParamsData = { vista: 'semana' }
     render(<AgendaPage />)
     const diaBtn = screen.getByRole('button', { name: 'Día' })
     fireEvent.click(diaBtn)
+    expect(mockRouterPush).toHaveBeenCalledWith(expect.stringContaining('vista=dia'))
+  })
+
+  it('al hacer click en "Semana" en CalendarViewSelector, router push no incluye ?vista', () => {
+    mockSearchParamsData = { vista: 'dia' }
+    render(<AgendaPage />)
+    const semanaBtn = screen.getByRole('button', { name: 'Semana' })
+    fireEvent.click(semanaBtn)
     const callArg = mockRouterPush.mock.calls[0][0] as string
     expect(callArg).not.toContain('vista=dia')
     expect(callArg).not.toContain('vista=semana')
   })
 
-  it('el botón "+ Nuevo turno" solo aparece en vista día', () => {
-    mockSearchParamsData = {}
+  it('el botón "+ Nuevo turno" aparece en vista día', () => {
+    mockSearchParamsData = { vista: 'dia' }
     render(<AgendaPage />)
     expect(screen.getByRole('button', { name: /nuevo turno/i })).toBeInTheDocument()
   })
 
-  it('el botón "+ Nuevo turno" NO aparece en vista semana', () => {
+  it('el botón "+ Nuevo turno" aparece en vista semana', () => {
     mockSearchParamsData = { vista: 'semana' }
+    render(<AgendaPage />)
+    expect(screen.getByRole('button', { name: /nuevo turno/i })).toBeInTheDocument()
+  })
+
+  it('el botón "+ Nuevo turno" NO aparece en vista mes', () => {
+    mockSearchParamsData = { vista: 'mes' }
     render(<AgendaPage />)
     expect(screen.queryByRole('button', { name: /nuevo turno/i })).not.toBeInTheDocument()
   })
@@ -205,10 +254,10 @@ describe('AgendaPage', () => {
     expect(screen.getByTestId('agenda-filters')).toBeInTheDocument()
   })
 
-  it('NO muestra AgendaFilters cuando el rol es receptionist', () => {
+  it('muestra AgendaFilters cuando el rol es receptionist (usuaria principal)', () => {
     vi.mocked(useUserRole).mockReturnValue('receptionist')
     render(<AgendaPage />)
-    expect(screen.queryByTestId('agenda-filters')).not.toBeInTheDocument()
+    expect(screen.getByTestId('agenda-filters')).toBeInTheDocument()
   })
 
   it('NO muestra AgendaFilters cuando el rol no está cargado (null)', () => {
@@ -218,7 +267,7 @@ describe('AgendaPage', () => {
   })
 
   it('al hacer click en Anterior en vista día, navega preservando params de la URL', () => {
-    mockSearchParamsData = {}
+    mockSearchParamsData = { vista: 'dia' }
     render(<AgendaPage />)
     const prevButton = screen.getByRole('button', { name: /día anterior/i })
     fireEvent.click(prevButton)
@@ -227,7 +276,7 @@ describe('AgendaPage', () => {
   })
 
   it('al hacer click en Siguiente en vista día, navega preservando params de la URL', () => {
-    mockSearchParamsData = {}
+    mockSearchParamsData = { vista: 'dia' }
     render(<AgendaPage />)
     const nextButton = screen.getByRole('button', { name: /día siguiente/i })
     fireEvent.click(nextButton)
@@ -243,7 +292,7 @@ describe('AgendaPage', () => {
 
   describe('condicionalidad GCal según uses_native_calendar', () => {
     it('muestra banners GCal cuando usesNativeCalendar=false y vista día', () => {
-      mockSearchParamsData = {}
+      mockSearchParamsData = { vista: 'dia' }
       vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, isPending: false })
       render(<AgendaPage />)
       expect(screen.getByTestId('sync-status-banner')).toBeInTheDocument()
@@ -251,7 +300,7 @@ describe('AgendaPage', () => {
     })
 
     it('NO muestra banners GCal cuando usesNativeCalendar=true', () => {
-      mockSearchParamsData = {}
+      mockSearchParamsData = { vista: 'dia' }
       vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: true, isPending: false })
       render(<AgendaPage />)
       expect(screen.queryByTestId('sync-status-banner')).not.toBeInTheDocument()

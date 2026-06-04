@@ -43,6 +43,11 @@ export function useAgendaRealtime(isoDate: string) {
             // Invalidar vistas de rango siempre — cualquier cambio del tenant puede
             // pertenecer a la semana/mes actualmente visible
             queryClient.invalidateQueries({ queryKey: ['agenda', 'range'], exact: false })
+
+            // Invalidar disponibilidad (Story 10.7) — un alta/cancelación cambia la
+            // disponibilidad de ese profesional ese día; invalidar amplio
+            // (exact: false) refresca cualquier rango/summary visible.
+            queryClient.invalidateQueries({ queryKey: ['availability'], exact: false })
           },
         )
         .subscribe()

@@ -441,6 +441,131 @@ describe('CalendarView', () => {
     })
   })
 
+  describe('Story 10.7 — Huecos libres', () => {
+    const FREE_SHIFT = {
+      open: '08:00',
+      close: '08:30',
+      slot_start_iso: '2026-05-07T11:00:00Z',
+      slot_end_iso: '2026-05-07T11:30:00Z',
+      service_id: 'svc-1',
+      service_name: 'Kinesiología',
+      require_referral: false,
+      professional_id: 'prof-1',
+      professional_name: 'Dra. Pérez',
+    }
+
+    it('renderiza bloques "+ Libre" cuando se pasa freeShifts', () => {
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+          freeShifts={[FREE_SHIFT]}
+        />,
+      )
+      expect(screen.getByText(/\+ Libre/)).toBeInTheDocument()
+      // hueco intercalado: el botón usa aria-label de agendar
+      expect(
+        screen.getByRole('button', { name: /agendar a las 08:00 con dra\. pérez/i }),
+      ).toBeInTheDocument()
+    })
+
+    it('muestra el nombre del profesional cuando showProfessionalName=true', () => {
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+          freeShifts={[FREE_SHIFT]}
+          showProfessionalName
+        />,
+      )
+      expect(screen.getByText(/Dra\. Pérez/)).toBeInTheDocument()
+    })
+
+    it('click en un hueco libre llama onFreeSlotClick con el shift correcto', async () => {
+      const user = userEvent.setup()
+      const onFreeSlotClick = vi.fn()
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+          freeShifts={[FREE_SHIFT]}
+          onFreeSlotClick={onFreeSlotClick}
+        />,
+      )
+      await user.click(screen.getByRole('button', { name: /agendar a las 08:00/i }))
+      expect(onFreeSlotClick).toHaveBeenCalledWith(FREE_SHIFT)
+    })
+
+    it('sin freeShifts → no muestra bloques de hueco libre (no regresión)', () => {
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      expect(screen.queryByText(/\+ Libre/)).not.toBeInTheDocument()
+    })
+
+    // Regresión Story 10.7 (hotfix key duplicada): dos servicios distintos del
+    // MISMO profesional a la MISMA hora generaban la misma React key
+    // ("Encountered two children with the same key") en la vista Día
+    // (DayListView). El fix agregó service_id + idx a la key.
+    it('dos huecos del mismo profesional/misma hora con service_id distinto NO emiten warning de key duplicada', () => {
+      const shiftA: typeof FREE_SHIFT = {
+        ...FREE_SHIFT,
+        service_id: 'svc-A',
+        service_name: 'Kinesiología',
+      }
+      const shiftB: typeof FREE_SHIFT = {
+        ...FREE_SHIFT,
+        service_id: 'svc-B',
+        service_name: 'Fisioterapia',
+      }
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+          freeShifts={[shiftA, shiftB]}
+          onFreeSlotClick={vi.fn()}
+        />,
+      )
+
+      // Se renderizan los DOS huecos clickeables (mismo aria-label: misma hora/prof).
+      const slots = screen.getAllByRole('button', {
+        name: /agendar a las 08:00 con dra\. pérez/i,
+      })
+      expect(slots).toHaveLength(2)
+
+      // Y React NO emitió el warning de key duplicada.
+      const duplicateKeyWarning = errorSpy.mock.calls.some((args) =>
+        args.some(
+          (a) =>
+            typeof a === 'string' && (a.includes('same key') || a.includes('unique key')),
+        ),
+      )
+      expect(duplicateKeyWarning).toBe(false)
+
+      errorSpy.mockRestore()
+    })
+  })
+
   describe('Feature D — Link nombre paciente', () => {
     it('muestra el nombre del paciente como link cuando patient_id está presente', () => {
       render(

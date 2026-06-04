@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { format } from 'date-fns'
+import { format, parseISO } from 'date-fns'
 import { Pencil, X, Clock } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -11,6 +11,7 @@ import {
   type CalendarEvent,
   appointmentToCalendarEvent,
 } from '@/types/appointments'
+import type { AvailabilityShift } from '@/types/availability'
 import { AgendaDayViewSkeleton } from './AgendaDayView'
 import { ReminderBadge } from './ReminderBadge'
 
@@ -264,17 +265,41 @@ function AttendanceDropdown({ patientName, onSelect, onClose, isLoading }: Atten
 // profesionales con solapamiento. Esta lista ordena los turnos
 // cronológicamente y muestra toda la información en un card legible.
 
+// Item unificado de la timeline del día: turno ocupado o hueco libre.
+// `sortKey` es el timestamp (ms) usado para intercalar cronológicamente
+// libres y ocupados en la misma línea de tiempo.
+type DayItem =
+  | { kind: 'event'; sortKey: number; event: CalendarEvent }
+  | { kind: 'free'; sortKey: number; shift: AvailabilityShift }
+
 function DayListView({
   events,
   date,
   onReschedule,
+  freeShifts,
+  showProfessionalName,
+  onFreeSlotClick,
 }: {
   events: CalendarEvent[]
   date: string
   onReschedule?: (appointment: Appointment) => void
+  freeShifts?: AvailabilityShift[]
+  showProfessionalName?: boolean
+  onFreeSlotClick?: (shift: AvailabilityShift) => void
 }) {
   const queryClient = useQueryClient()
-  const sorted = [...events].sort((a, b) => a.start.getTime() - b.start.getTime())
+
+  // Lista unificada ordenada cronológicamente — turnos ocupados + huecos libres.
+  // Para ordenar usamos el timestamp UTC (event.start ya es Date; el shift se
+  // parsea con parseISO sobre slot_start_iso, que es UTC con Z).
+  const items: DayItem[] = [
+    ...events.map((event): DayItem => ({ kind: 'event', sortKey: event.start.getTime(), event })),
+    ...(freeShifts ?? []).map((shift): DayItem => ({
+      kind: 'free',
+      sortKey: parseISO(shift.slot_start_iso).getTime(),
+      shift,
+    })),
+  ].sort((a, b) => a.sortKey - b.sortKey)
 
   // Estado para modal de cancelación
   const [cancelTarget, setCancelTarget] = useState<Appointment | null>(null)
@@ -332,7 +357,7 @@ function DayListView({
     }
   }
 
-  if (sorted.length === 0) {
+  if (items.length === 0) {
     return (
       <div
         style={{
@@ -350,7 +375,50 @@ function DayListView({
   return (
     <>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 0' }}>
-        {sorted.map((event) => {
+        {items.map((item, idx) => {
+          if (item.kind === 'free') {
+            const shift = item.shift
+            return (
+              <button
+                key={`free-${shift.slot_start_iso}-${shift.professional_id}-${shift.service_id}-${idx}`}
+                type="button"
+                onClick={() => onFreeSlotClick?.(shift)}
+                aria-label={`Agendar a las ${shift.open} con ${shift.professional_name}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 16,
+                  padding: '10px 16px',
+                  width: '100%',
+                  textAlign: 'left',
+                  border: '1px dashed var(--color-border)',
+                  borderRadius: 8,
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  color: 'var(--color-text-secondary)',
+                  opacity: 0.85,
+                  transition: 'background 0.12s',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface)' }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+              >
+                <div style={{ minWidth: 88, flexShrink: 0, fontSize: 14, fontWeight: 600 }}>
+                  {shift.open}
+                </div>
+                <div style={{ flex: 1, minWidth: 0, fontSize: 13 }}>
+                  + Libre
+                  {showProfessionalName && (
+                    <span style={{ color: 'var(--color-text-secondary)' }}>
+                      {' · '}
+                      {shift.professional_name}
+                    </span>
+                  )}
+                </div>
+              </button>
+            )
+          }
+
+          const event = item.event
           const color = getEventColor(event.resource.status)
           const isCancelled = event.resource.status === 'cancelled'
           const profName =
@@ -601,6 +669,10 @@ interface CalendarViewProps {
   isError: boolean
   onRefetch: () => void
   onReschedule?: (appointment: Appointment) => void
+  // Story 10.7 — huecos libres del día (opcional, sin romper llamadas actuales)
+  freeShifts?: AvailabilityShift[]
+  showProfessionalName?: boolean
+  onFreeSlotClick?: (shift: AvailabilityShift) => void
 }
 
 export function CalendarView({
@@ -610,6 +682,9 @@ export function CalendarView({
   isError,
   onRefetch,
   onReschedule,
+  freeShifts,
+  showProfessionalName,
+  onFreeSlotClick,
 }: CalendarViewProps) {
   if (isLoading) {
     return <AgendaDayViewSkeleton />
@@ -636,5 +711,14 @@ export function CalendarView({
     .filter((apt) => apt && apt.start_at && apt.end_at)
     .map(appointmentToCalendarEvent)
 
-  return <DayListView events={events} date={date} onReschedule={onReschedule} />
+  return (
+    <DayListView
+      events={events}
+      date={date}
+      onReschedule={onReschedule}
+      freeShifts={freeShifts}
+      showProfessionalName={showProfessionalName}
+      onFreeSlotClick={onFreeSlotClick}
+    />
+  )
 }

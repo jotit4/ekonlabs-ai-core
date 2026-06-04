@@ -38,6 +38,11 @@ interface NewTurnoModalProps {
   open: boolean
   onClose: () => void
   date: string // ISO date YYYY-MM-DD
+  // Story 10.7 — prefill al agendar desde un hueco libre (opcional)
+  initialServiceId?: string
+  initialProfessionalId?: string
+  initialDate?: string // YYYY-MM-DD
+  initialTimeHHmm?: string // HH:MM
 }
 
 function generateTimeSlots(durationMinutes: number): string[] {
@@ -55,7 +60,15 @@ function generateTimeSlots(durationMinutes: number): string[] {
   return slots
 }
 
-export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
+export function NewTurnoModal({
+  open,
+  onClose,
+  date,
+  initialServiceId,
+  initialProfessionalId,
+  initialDate,
+  initialTimeHHmm,
+}: NewTurnoModalProps) {
   const queryClient = useQueryClient()
   const searchInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -78,6 +91,10 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
   const [professionals, setProfessionals] = useState<ProfessionalOption[]>([])
   const [isLoadingProfessionals, setIsLoadingProfessionals] = useState(false)
   const [professionalsError, setProfessionalsError] = useState<string | null>(null)
+
+  // Story 10.7 — profesional a fijar una vez cargada la lista (prefill desde hueco).
+  // Se consume en el effect de carga de profesionales para evitar carreras.
+  const pendingProfessionalRef = useRef<string | null>(null)
 
   // Search form
   const searchForm = useForm<PatientSearchValues>({
@@ -164,6 +181,15 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
   // la opción ya esté renderizada en el <select> antes de setValue (si no, el
   // DOM ignora el valor por no existir aún la <option>).
   useEffect(() => {
+    // Prefill (Story 10.7): si hay un profesional pendiente del hueco libre y
+    // ya está en la lista cargada, fijarlo. Tiene prioridad sobre la
+    // preselección automática del único profesional.
+    const pending = pendingProfessionalRef.current
+    if (pending && professionals.some((p) => p.professional_id === pending)) {
+      appointmentForm.setValue('professional_id', pending)
+      pendingProfessionalRef.current = null
+      return
+    }
     if (professionals.length === 1) {
       appointmentForm.setValue('professional_id', professionals[0].professional_id)
     }
@@ -178,6 +204,22 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
     }, 50)
     return () => clearTimeout(timer)
   }, [open])
+
+  // Story 10.7 — prefill al abrir desde un hueco libre. Setear servicio (dispara
+  // la carga de profesionales), fecha y hora; el profesional se fija vía
+  // pendingProfessionalRef una vez cargada la lista. Solo al transicionar a
+  // open=true con prefill (no en cada render).
+  useEffect(() => {
+    if (!open) return
+    if (!initialServiceId && !initialProfessionalId && !initialDate && !initialTimeHHmm) return
+
+    pendingProfessionalRef.current = initialProfessionalId ?? null
+    if (initialDate) appointmentForm.setValue('appointment_date', initialDate)
+    if (initialTimeHHmm) appointmentForm.setValue('appointment_time_hhmm', initialTimeHHmm)
+    if (initialServiceId) appointmentForm.setValue('service_id', initialServiceId)
+    // appointmentForm es estable (react-hook-form); deps = solo open + valores de prefill
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialServiceId, initialProfessionalId, initialDate, initialTimeHHmm])
 
   const handleClose = () => {
     // Reset all state before closing
@@ -325,6 +367,7 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
 
       if (response.status === 409) {
         queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
+        queryClient.invalidateQueries({ queryKey: ['availability'], exact: false })
         setSlotConflictError('Ese horario ya no está disponible')
         return
       }
@@ -337,6 +380,7 @@ export function NewTurnoModal({ open, onClose, date }: NewTurnoModalProps) {
 
       // Éxito
       queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
+      queryClient.invalidateQueries({ queryKey: ['availability'], exact: false })
       handleClose()
     } catch {
       setSubmitError('Error de red. Verificá tu conexión e intentá de nuevo.')

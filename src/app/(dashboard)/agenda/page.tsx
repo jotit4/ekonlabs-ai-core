@@ -15,16 +15,18 @@ import { TurnoDetailModal } from '@/components/agenda/TurnoDetailModal'
 import { KPIStrip } from '@/components/agenda/KPIStrip'
 import { NewTurnoModal } from '@/components/agenda/NewTurnoModal'
 import { RescheduleTurnoModal } from '@/components/agenda/RescheduleTurnoModal'
-import { AgendaFilters } from '@/components/agenda/AgendaFilters'
+import { AgendaFilters, type AvailabilityMode } from '@/components/agenda/AgendaFilters'
 import { SyncStatusBanner } from '@/components/agenda/SyncStatusBanner'
 import { GCalDegradationBanner } from '@/components/agenda/GCalDegradationBanner'
 import { useAgendaRealtime } from '@/hooks/use-agenda-realtime'
 import { useAppointments } from '@/hooks/use-appointments'
 import { useAppointmentsRange } from '@/hooks/use-appointments-range'
+import { useAvailability } from '@/hooks/use-availability'
 import { useGCalChannelStatus } from '@/hooks/use-gcal-channel-status'
 import { useTenantConfig } from '@/hooks/use-tenant-config'
 import { useUserRole } from '@/hooks/use-user-role'
 import type { Appointment } from '@/types/appointments'
+import type { AvailabilityShift } from '@/types/availability'
 
 function parseValidDate(str: string | null): Date {
   if (!str || !/^\d{4}-\d{2}-\d{2}$/.test(str)) return new Date()
@@ -43,12 +45,14 @@ export default function AgendaPage() {
   const professionalId = searchParams.get('professional_id') ?? null
   const serviceId = searchParams.get('service_id') ?? null
 
-  // Determinar vista activa desde query param
+  // Determinar vista activa desde query param.
+  // AC6 (Story 10.7): vista default = Semana. Sin ?vista → 'semana'.
+  // ?vista=dia y ?vista=mes son explícitos.
   const vistaParam = searchParams.get('vista')
   const vistaActiva: CalendarViewType =
-    vistaParam === 'semana' ? 'semana'
+    vistaParam === 'dia' ? 'dia'
     : vistaParam === 'mes' ? 'mes'
-    : 'dia'
+    : 'semana'
 
   // Calcular rangos para vista semana y mes
   const weekStart = formatISO(startOfWeek(selectedDate, { weekStartsOn: 1 }), { representation: 'date' })
@@ -73,6 +77,51 @@ export default function AgendaPage() {
     isError: rangeError,
     refetch: rangeRefetch,
   } = useAppointmentsRange(rangeFrom, rangeTo, { professionalId, serviceId })
+
+  // ── Disponibilidad (Story 10.7) ─────────────────────────────────────────────
+  // Hook SIEMPRE llamado (regla de hooks). Los params se derivan por vista:
+  //   - Día: rango = el día (from==to), modo shifts
+  //   - Semana: rango de la semana, modo shifts
+  //   - Mes: rango del mes, modo summary (liviano)
+  const isMonth = vistaActiva === 'mes'
+  const availFrom = vistaActiva === 'dia' ? isoDate : rangeFrom
+  const availTo = vistaActiva === 'dia' ? isoDate : rangeTo
+
+  const {
+    daysShifts,
+    daysSummary,
+    shiftsForDate,
+  } = useAvailability({
+    dateFrom: availFrom,
+    dateTo: availTo,
+    serviceId,
+    professionalId,
+    summary: isMonth,
+  })
+
+  // Modo "Ver disponibilidad de": derivado de los filtros activos.
+  // Cuando el modo es "por servicio" se etiqueta cada hueco con su profesional.
+  const availabilityMode: AvailabilityMode =
+    professionalId ? 'profesional' : serviceId ? 'servicio' : 'ninguno'
+  // Mostrar "· {profesional}" cuando NO se filtra por un profesional concreto
+  // (la RPC puede traer huecos de varios profesionales).
+  const showProfessionalName = availabilityMode !== 'profesional'
+
+  // Huecos libres para la vista Día (la clave es la fecha consultada = isoDate).
+  const dayFreeShifts: AvailabilityShift[] = vistaActiva === 'dia' ? shiftsForDate(isoDate) : []
+  // Huecos libres indexados por fecha local para la vista Semana.
+  const freeShiftsByDate: Record<string, AvailabilityShift[]> = Object.fromEntries(
+    Object.entries(daysShifts).map(([iso, day]) => [iso, day.shifts]),
+  )
+
+  // Índice inverso shift → fecha local (clave del response). Permite recuperar la
+  // fecha local del hueco al agendar desde la semana sin recomputar desde el UTC.
+  const shiftDateIndex = new Map<string, string>()
+  for (const [iso, shifts] of Object.entries(freeShiftsByDate)) {
+    for (const s of shifts) {
+      shiftDateIndex.set(`${s.slot_start_iso}|${s.professional_id}`, iso)
+    }
+  }
 
   const { usesNativeCalendar, isPending: tenantConfigPending } = useTenantConfig()
   const { status: gcalStatus } = useGCalChannelStatus(!tenantConfigPending && !usesNativeCalendar)
@@ -116,10 +165,11 @@ export default function AgendaPage() {
     return title.charAt(0).toUpperCase() + title.slice(1)
   }
 
-  // Handler para cambiar vista
+  // Handler para cambiar vista.
+  // AC6: 'semana' es el estado limpio (sin ?vista). 'dia'/'mes' se setean explícitos.
   function handleVistaChange(vista: CalendarViewType) {
     const params = new URLSearchParams(searchParams.toString())
-    if (vista === 'dia') {
+    if (vista === 'semana') {
       params.delete('vista')
     } else {
       params.set('vista', vista)
@@ -128,6 +178,13 @@ export default function AgendaPage() {
   }
 
   const [showNewTurnoModal, setShowNewTurnoModal] = useState(false)
+  // Prefill del NewTurnoModal al agendar desde un hueco libre (Story 10.7)
+  const [newTurnoPrefill, setNewTurnoPrefill] = useState<{
+    serviceId: string
+    professionalId: string
+    date: string
+    timeHHmm: string
+  } | null>(null)
   const [showRescheduleTurnoModal, setShowRescheduleTurnoModal] = useState(false)
   const [selectedAppointmentForReschedule, setSelectedAppointmentForReschedule] =
     useState<Appointment | null>(null)
@@ -174,7 +231,47 @@ export default function AgendaPage() {
     router.push(`/agenda?${params.toString()}`)
   }
 
-  const showFilters = role === 'admin'
+  // Modo de disponibilidad — exclusión mutua entre professional_id y service_id.
+  // El cambio efectivo de filtros lo hace AgendaFilters vía
+  // onProfessionalChange/onServiceChange (que ya limpian el opuesto). El modo se
+  // deriva de los params en cada render (availabilityMode), así que el callback
+  // es un no-op explícito que solo habilita el radiogroup en AgendaFilters.
+  function handleAvailabilityModeChange() {
+    // No-op intencional — ver comentario arriba.
+  }
+
+  // Agendar desde un hueco libre (Story 10.7, AC5).
+  // CRÍTICO timezone: NewTurnoModal arma el ISO con `${date}T${hhmm}:00-03:00`.
+  // Por eso pasamos shift.open (HH:MM local) y la fecha LOCAL del slot, derivada
+  // de la clave `date` del response — NUNCA el slot_start_iso (UTC) crudo.
+  function handleFreeSlotClick(shift: AvailabilityShift) {
+    const slotDate =
+      shiftDateIndex.get(`${shift.slot_start_iso}|${shift.professional_id}`) ?? isoDate
+    setNewTurnoPrefill({
+      serviceId: shift.service_id,
+      professionalId: shift.professional_id,
+      date: slotDate,
+      timeHHmm: shift.open,
+    })
+    setShowNewTurnoModal(true)
+  }
+
+  // Click en un día de la vista Mes → navegar a vista Semana de esa fecha
+  // preservando los demás params.
+  function handleDayClick(targetIso: string) {
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('fecha', targetIso)
+    params.delete('vista') // sin vista = semana
+    router.push(`/agenda?${params.toString()}`)
+  }
+
+  function handleCloseNewTurno() {
+    setShowNewTurnoModal(false)
+    setNewTurnoPrefill(null)
+  }
+
+  // La recepcionista es la usuaria principal del módulo → ve los filtros también.
+  const showFilters = role === 'admin' || role === 'receptionist'
 
   return (
     <section className="mx-auto w-full max-w-6xl px-6 py-8">
@@ -188,9 +285,9 @@ export default function AgendaPage() {
         <div className="flex items-center gap-3 mt-2 flex-wrap justify-end">
           <CalendarViewSelector activeView={vistaActiva} onChange={handleVistaChange} />
           <div className="flex items-center gap-2">
-            {vistaActiva === 'dia' && (
+            {(vistaActiva === 'dia' || vistaActiva === 'semana') && (
               <button
-                onClick={() => setShowNewTurnoModal(true)}
+                onClick={() => { setNewTurnoPrefill(null); setShowNewTurnoModal(true) }}
                 className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-[var(--radius-sm)] px-4 text-sm text-white bg-[var(--color-interactive)] hover:opacity-90 transition-opacity"
                 aria-label="Nuevo turno"
               >
@@ -238,6 +335,8 @@ export default function AgendaPage() {
             onServiceChange={handleServiceChange}
             onClear={handleClearFilters}
             showFilters={showFilters}
+            availabilityMode={availabilityMode}
+            onAvailabilityModeChange={handleAvailabilityModeChange}
           />
         </div>
       )}
@@ -258,6 +357,9 @@ export default function AgendaPage() {
             isError={isError}
             onRefetch={refetch}
             onReschedule={handleOpenReschedule}
+            freeShifts={dayFreeShifts}
+            showProfessionalName={showProfessionalName}
+            onFreeSlotClick={handleFreeSlotClick}
           />
         </>
       ) : (
@@ -270,6 +372,11 @@ export default function AgendaPage() {
             isError={rangeError}
             onRefetch={rangeRefetch}
             onAppointmentClick={handleAppointmentClick}
+            freeShiftsByDate={vistaActiva === 'semana' ? freeShiftsByDate : undefined}
+            availabilitySummary={isMonth ? daysSummary : undefined}
+            showProfessionalName={showProfessionalName}
+            onFreeSlotClick={handleFreeSlotClick}
+            onDayClick={handleDayClick}
           />
           <TurnoDetailModal
             open={selectedAppointmentDetail !== null}
@@ -282,8 +389,12 @@ export default function AgendaPage() {
 
       <NewTurnoModal
         open={showNewTurnoModal}
-        onClose={() => setShowNewTurnoModal(false)}
-        date={isoDate}
+        onClose={handleCloseNewTurno}
+        date={newTurnoPrefill?.date ?? isoDate}
+        initialServiceId={newTurnoPrefill?.serviceId}
+        initialProfessionalId={newTurnoPrefill?.professionalId}
+        initialDate={newTurnoPrefill?.date}
+        initialTimeHHmm={newTurnoPrefill?.timeHHmm}
       />
       <RescheduleTurnoModal
         open={showRescheduleTurnoModal}

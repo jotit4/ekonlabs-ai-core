@@ -182,6 +182,25 @@ describe('useAgendaRealtime', () => {
     unmount()
   })
 
+  it('también invalida ["availability"] (exact: false) cuando hay cambio realtime', async () => {
+    const { unmount } = renderHook(() => useAgendaRealtime('2026-05-07'))
+
+    await waitFor(() => {
+      expect(capturedCallback).toBeDefined()
+    })
+
+    capturedCallback!({
+      new: { start_at: '2026-05-07T10:00:00+00:00', appointment_id: 'apt-1' },
+    })
+
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: ['availability'],
+      exact: false,
+    })
+
+    unmount()
+  })
+
   it('llama removeChannel al desmontar (cleanup correcto)', async () => {
     const { unmount } = renderHook(() => useAgendaRealtime('2026-05-07'))
 

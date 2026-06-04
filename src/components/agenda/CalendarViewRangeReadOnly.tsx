@@ -14,6 +14,10 @@ import {
   addDays,
   isSameDay,
   isToday,
+  startOfMonth,
+  endOfMonth,
+  eachDayOfInterval,
+  formatISO,
 } from 'date-fns'
 import { es } from 'date-fns/locale'
 import {
@@ -22,6 +26,7 @@ import {
   type CalendarEvent,
   appointmentToCalendarEvent,
 } from '@/types/appointments'
+import type { AvailabilityShift, DaySummary } from '@/types/availability'
 import { AgendaDayViewSkeleton } from './AgendaDayView'
 
 const locales = { es }
@@ -58,14 +63,25 @@ function getEventColor(status: AppointmentStatus): string {
 // ilegibles). Esta vista muestra 7 columnas, una por día, con eventos
 // apilados en orden cronológico y scroll independiente por columna.
 
+// Item unificado de una columna-día: turno ocupado o hueco libre.
+type WeekItem =
+  | { kind: 'event'; sortKey: number; event: CalendarEvent }
+  | { kind: 'free'; sortKey: number; shift: AvailabilityShift }
+
 function WeekColumnsView({
   weekDate,
   events,
   onEventClick,
+  freeShiftsByDate,
+  showProfessionalName,
+  onFreeSlotClick,
 }: {
   weekDate: Date
   events: CalendarEvent[]
   onEventClick?: (appointment: Appointment) => void
+  freeShiftsByDate?: Record<string, AvailabilityShift[]>
+  showProfessionalName?: boolean
+  onFreeSlotClick?: (shift: AvailabilityShift) => void
 }) {
   const weekStart = startOfWeek(weekDate, { weekStartsOn: 1 })
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
@@ -87,6 +103,25 @@ function WeekColumnsView({
           .filter((e) => isSameDay(e.start, day))
           .sort((a, b) => a.start.getTime() - b.start.getTime())
         const isCurrentDay = isToday(day)
+
+        // Story 10.7 — huecos libres de este día, indexados por la clave `date`
+        // del response (fecha local consultada), no recomputados desde el ISO UTC.
+        const dayIso = formatISO(day, { representation: 'date' })
+        const dayFreeShifts = freeShiftsByDate?.[dayIso] ?? []
+
+        // Lista unificada ordenada cronológicamente (ocupados + libres).
+        const dayItems: WeekItem[] = [
+          ...dayEvents.map((event): WeekItem => ({
+            kind: 'event',
+            sortKey: event.start.getTime(),
+            event,
+          })),
+          ...dayFreeShifts.map((shift): WeekItem => ({
+            kind: 'free',
+            sortKey: parseISO(shift.slot_start_iso).getTime(),
+            shift,
+          })),
+        ].sort((a, b) => a.sortKey - b.sortKey)
 
         return (
           <div
@@ -162,7 +197,43 @@ function WeekColumnsView({
                 gap: 3,
               }}
             >
-              {dayEvents.map((event) => {
+              {dayItems.map((item, idx) => {
+                if (item.kind === 'free') {
+                  const shift = item.shift
+                  return (
+                    <button
+                      key={`free-${shift.slot_start_iso}-${shift.professional_id}-${shift.service_id}-${idx}`}
+                      onClick={() => onFreeSlotClick?.(shift)}
+                      aria-label={`Agendar a las ${shift.open} con ${shift.professional_name}`}
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        textAlign: 'left',
+                        background: 'transparent',
+                        border: '1px dashed var(--color-border)',
+                        borderRadius: 4,
+                        padding: '4px 6px',
+                        cursor: 'pointer',
+                        flexShrink: 0,
+                        color: 'var(--color-text-secondary)',
+                        opacity: 0.85,
+                        transition: 'background 0.12s',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface)' }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                    >
+                      <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.3 }}>
+                        {shift.open}
+                      </div>
+                      <div style={{ fontSize: 10, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        + Libre
+                        {showProfessionalName ? ` · ${shift.professional_name}` : ''}
+                      </div>
+                    </button>
+                  )
+                }
+
+                const event = item.event
                 const color = getEventColor(event.resource.status)
                 const profName =
                   event.resource.professionals?.name ??
@@ -423,6 +494,86 @@ function DayEventsModal({ date, events, onClose, onAppointmentClick }: DayEvents
   )
 }
 
+// ─── Vista Mes: resumen de disponibilidad (Story 10.7) ────────────────────────
+// El time-grid de RBC no expone una API simple para inyectar un indicador por
+// celda con el mock de tests; en su lugar mostramos un resumen compacto debajo
+// del calendario con "● N libres" / "lleno" por día del mes, leyendo
+// `availabilitySummary` (modo summary, liviano). Click → navega a ese día.
+function MonthAvailabilitySummary({
+  monthDate,
+  summary,
+  onDayClick,
+}: {
+  monthDate: Date
+  summary: Record<string, DaySummary>
+  onDayClick?: (isoDate: string) => void
+}) {
+  const days = eachDayOfInterval({
+    start: startOfMonth(monthDate),
+    end: endOfMonth(monthDate),
+  })
+
+  return (
+    <div
+      data-testid="month-availability-summary"
+      role="list"
+      aria-label="Disponibilidad por día"
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+        gap: 6,
+        marginTop: 12,
+      }}
+    >
+      {days.map((day) => {
+        const iso = formatISO(day, { representation: 'date' })
+        const freeCount = summary[iso]?.free_count
+        const hasFree = typeof freeCount === 'number' && freeCount > 0
+        const label = format(day, "EEE d", { locale: es })
+
+        return (
+          <button
+            key={iso}
+            type="button"
+            role="listitem"
+            onClick={() => onDayClick?.(iso)}
+            aria-label={
+              hasFree
+                ? `${label}: ${freeCount} libres`
+                : `${label}: sin disponibilidad`
+            }
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-start',
+              gap: 2,
+              padding: '6px 8px',
+              border: '1px solid var(--color-border)',
+              borderRadius: 6,
+              background: 'var(--color-bg)',
+              cursor: 'pointer',
+              textAlign: 'left',
+            }}
+          >
+            <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', textTransform: 'capitalize' }}>
+              {label}
+            </span>
+            {hasFree ? (
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-interactive)' }}>
+                ● {freeCount} libres
+              </span>
+            ) : (
+              <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                {typeof freeCount === 'number' ? 'lleno' : '—'}
+              </span>
+            )}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 interface CalendarViewRangeReadOnlyProps {
   view: 'week' | 'month'
@@ -432,6 +583,12 @@ interface CalendarViewRangeReadOnlyProps {
   isError: boolean
   onRefetch: () => void
   onAppointmentClick?: (appointment: Appointment) => void
+  // Story 10.7 — disponibilidad (opcional, aditivo)
+  freeShiftsByDate?: Record<string, AvailabilityShift[]> // clave 'YYYY-MM-DD' local
+  availabilitySummary?: Record<string, DaySummary>
+  showProfessionalName?: boolean
+  onFreeSlotClick?: (shift: AvailabilityShift) => void
+  onDayClick?: (isoDate: string) => void
 }
 
 export function CalendarViewRangeReadOnly({
@@ -442,6 +599,11 @@ export function CalendarViewRangeReadOnly({
   isError,
   onRefetch,
   onAppointmentClick,
+  freeShiftsByDate,
+  availabilitySummary,
+  showProfessionalName,
+  onFreeSlotClick,
+  onDayClick,
 }: CalendarViewRangeReadOnlyProps) {
   const [dayPopup, setDayPopup] = useState<{ date: Date; events: CalendarEvent[] } | null>(null)
 
@@ -477,6 +639,9 @@ export function CalendarViewRangeReadOnly({
         weekDate={parseISO(date)}
         events={events}
         onEventClick={onAppointmentClick}
+        freeShiftsByDate={freeShiftsByDate}
+        showProfessionalName={showProfessionalName}
+        onFreeSlotClick={onFreeSlotClick}
       />
     )
   }
@@ -523,6 +688,14 @@ export function CalendarViewRangeReadOnly({
           }}
         />
       </div>
+
+      {availabilitySummary && (
+        <MonthAvailabilitySummary
+          monthDate={parseISO(date)}
+          summary={availabilitySummary}
+          onDayClick={onDayClick}
+        />
+      )}
 
       {dayPopup && (
         <DayEventsModal

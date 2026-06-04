@@ -442,6 +442,88 @@ describe('NewTurnoModal', () => {
     })
   })
 
+  describe('Story 10.7 — prefill desde hueco libre', () => {
+    const singlePatient = {
+      patient_id: 'pat-uuid-1',
+      full_name: 'María López',
+      phone_number: '+5491111111111',
+      obra_social: null,
+      deletion_requested_at: null,
+    }
+
+    it('al abrir con initialServiceId, carga los profesionales de ese servicio', async () => {
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('/profesionales')) {
+          return Promise.resolve(makeProfessionalsResponse([{ professional_id: 'prof-1', name: 'Patricia Pérez' }]))
+        }
+        return Promise.resolve(makeSearchResponse([]))
+      })
+
+      render(
+        <NewTurnoModal
+          open={true}
+          onClose={mockOnClose}
+          date="2026-06-04"
+          initialServiceId="svc-1"
+          initialProfessionalId="prof-1"
+          initialDate="2026-06-04"
+          initialTimeHHmm="09:00"
+        />,
+      )
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith('/api/services/svc-1/profesionales')
+      })
+    })
+
+    it('con prefill: tras seleccionar paciente, service/date/time vienen precargados', async () => {
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
+        if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse([{ professional_id: 'prof-1', name: 'Patricia Pérez' }]))
+        return Promise.resolve(makeSearchResponse([]))
+      })
+
+      const user = userEvent.setup()
+      render(
+        <NewTurnoModal
+          open={true}
+          onClose={mockOnClose}
+          date="2026-06-04"
+          initialServiceId="svc-1"
+          initialProfessionalId="prof-1"
+          initialDate="2026-06-04"
+          initialTimeHHmm="09:00"
+        />,
+      )
+
+      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
+      await user.click(screen.getByRole('button', { name: /buscar/i }))
+
+      await waitFor(() => screen.getByLabelText('Servicio'))
+
+      expect((screen.getByLabelText('Servicio') as HTMLSelectElement).value).toBe('svc-1')
+      expect((screen.getByLabelText('Fecha') as HTMLInputElement).value).toBe('2026-06-04')
+      expect((screen.getByLabelText('Horario') as HTMLSelectElement).value).toBe('09:00')
+      await waitFor(() => {
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('prof-1')
+      })
+    })
+
+    it('sin prefill: el formulario arranca vacío (no regresión)', async () => {
+      mockFetch.mockResolvedValueOnce(makeSearchResponse([singlePatient]))
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-06-04" />)
+
+      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
+      await user.click(screen.getByRole('button', { name: /buscar/i }))
+
+      await waitFor(() => screen.getByLabelText('Servicio'))
+      expect((screen.getByLabelText('Servicio') as HTMLSelectElement).value).toBe('')
+      expect((screen.getByLabelText('Horario') as HTMLSelectElement).value).toBe('')
+    })
+  })
+
   describe('botón Cancelar', () => {
     it('llama a onClose cuando se hace click en Cancelar', async () => {
       const user = userEvent.setup()
