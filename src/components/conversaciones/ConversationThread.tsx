@@ -4,14 +4,26 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { DegradationBanner } from '@/components/pacientes/DegradationBanner'
+import { CorreccionAgenteModal } from '@/components/conversaciones/CorreccionAgenteModal'
+import { findPreviousPatientMessage } from '@/lib/conversaciones/correccion'
 import type { ChatwootMessage } from '@/types/conversations'
 
 interface ConversationThreadProps {
   messages: ChatwootMessage[]
   isConnected: boolean
+  /** Si el rol del usuario puede escribir KB (admin/receptionist). Default false. */
+  canCorrect?: boolean
 }
 
-function MessageBubble({ message }: { message: ChatwootMessage }) {
+function MessageBubble({
+  message,
+  canCorrect,
+  onCorrect,
+}: {
+  message: ChatwootMessage
+  canCorrect: boolean
+  onCorrect: () => void
+}) {
   const isIncoming = message.message_type === 0 // paciente
   const isActivity = message.message_type === 2 // separador
   const isBot = message.message_type === 1 && message.sender?.type === 'agent_bot'
@@ -116,16 +128,45 @@ function MessageBubble({ message }: { message: ChatwootMessage }) {
       <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 2 }}>
         {timestamp}
       </span>
+
+      {/* Botón "Corregir" — sólo en mensajes del agente y para roles con permiso (Story 6.8) */}
+      {canCorrect && isOutgoing && (
+        <button
+          type="button"
+          onClick={onCorrect}
+          aria-label="Corregir esta respuesta del agente"
+          style={{
+            marginTop: 2,
+            background: 'none',
+            border: 'none',
+            padding: '2px 0',
+            minHeight: 28,
+            fontSize: 12,
+            color: 'var(--color-interactive)',
+            cursor: 'pointer',
+            textDecoration: 'underline',
+          }}
+        >
+          Corregir
+        </button>
+      )}
     </li>
   )
 }
 
-export function ConversationThread({ messages, isConnected }: ConversationThreadProps) {
+export function ConversationThread({ messages, isConnected, canCorrect = false }: ConversationThreadProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [hasNewMessages, setHasNewMessages] = useState(false)
   const prevMessageCountRef = useRef(messages.length)
+
+  // Estado del modal de corrección — id del mensaje del agente que se está corrigiendo (Story 6.8)
+  const [correctingMessageId, setCorrectingMessageId] = useState<number | null>(null)
+  const correctingMessage =
+    correctingMessageId !== null
+      ? messages.find((m) => m.id === correctingMessageId)
+      : undefined
 
   // Detectar scroll position
   const handleScroll = () => {
@@ -199,7 +240,12 @@ export function ConversationThread({ messages, isConnected }: ConversationThread
         ) : (
           <ul role="log" aria-live="polite" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
             {messages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} />
+              <MessageBubble
+                key={msg.id}
+                message={msg}
+                canCorrect={canCorrect}
+                onCorrect={() => setCorrectingMessageId(msg.id)}
+              />
             ))}
           </ul>
         )}
@@ -230,6 +276,15 @@ export function ConversationThread({ messages, isConnected }: ConversationThread
             Nuevo mensaje ↓
           </button>
         </div>
+      )}
+
+      {/* Modal de corrección (Story 6.8) — montado desde el thread, no desde la burbuja */}
+      {correctingMessage && (
+        <CorreccionAgenteModal
+          agentMessageContent={correctingMessage.content}
+          patientQuestion={findPreviousPatientMessage(messages, correctingMessage.id)}
+          onClose={() => setCorrectingMessageId(null)}
+        />
       )}
     </section>
   )

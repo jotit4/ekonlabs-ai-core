@@ -100,3 +100,28 @@ export const UpdateKnowledgeSchema = z
   )
 
 export type UpdateKnowledgeFormValues = z.infer<typeof UpdateKnowledgeSchema>
+
+// ── Corrección del agente desde la bandeja (Story 6.8) ────────────────────────
+
+/**
+ * Schema del modal "¿Qué debería haber respondido?" (corrección desde la bandeja).
+ * Sólo valida los campos editables del form: `correct_answer` (la respuesta correcta
+ * que escribe la recepcionista) y `source_filename` ("tema"). El límite real de 5.000
+ * chars se valida sobre el `content` compuesto (`buildCorreccionContent`) — acá un
+ * `.max(4500)` defensivo deja margen para el prefijo "Consulta del paciente...".
+ * `standardSchema`-compatible (se usa con `standardSchemaResolver`, NO `zodResolver`).
+ */
+export const CorreccionAgenteSchema = z.object({
+  correct_answer: z
+    .string()
+    .trim()
+    .min(1, { error: 'La respuesta es obligatoria' })
+    .max(4500, { error: 'La respuesta es demasiado larga (máx. 4.500 caracteres)' }),
+  source_filename: z
+    .string()
+    .trim()
+    .max(120, { error: 'El tema no puede superar 120 caracteres' })
+    .optional(),
+})
+
+export type CorreccionAgenteFormValues = z.infer<typeof CorreccionAgenteSchema>

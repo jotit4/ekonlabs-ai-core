@@ -4,6 +4,7 @@ import { useParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { useChatwootMessages } from '@/hooks/use-chatwoot-messages'
 import { useConversationThreadRealtime } from '@/hooks/use-conversation-thread-realtime'
+import { useUserRole } from '@/hooks/use-user-role'
 import { ConversationThread } from '@/components/conversaciones/ConversationThread'
 import { PatientContextPanel } from '@/components/conversaciones/PatientContextPanel'
 import { TakeoverBar } from '@/components/conversaciones/TakeoverBar'
@@ -15,6 +16,11 @@ export default function ConversationThreadPage() {
 
   const { messages, isConnected, isLoading } = useChatwootMessages(conversationId)
   useConversationThreadRealtime(conversationId)
+
+  // Sólo admin/receptionist pueden corregir al agente (Story 6.8). El POST de KB
+  // igual rechaza otros roles con 403 (guard de 6.7) — esto es defensa en profundidad UI.
+  const role = useUserRole()
+  const canCorrect = role === 'admin' || role === 'receptionist'
 
   // Suscribir reactivamente a la lista de conversaciones para detectar cambios de estado
   const { data: conversations, isPending: isConversationsPending } = useQuery<ConversationSummary[]>({
@@ -79,7 +85,7 @@ export default function ConversationThreadPage() {
               <p style={{ fontSize: 14, color: 'var(--color-text-secondary)' }}>Cargando mensajes...</p>
             </div>
           ) : (
-            <ConversationThread messages={messages} isConnected={isConnected} />
+            <ConversationThread messages={messages} isConnected={isConnected} canCorrect={canCorrect} />
           )}
         </div>
 

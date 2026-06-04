@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { vi, describe, it, expect, beforeAll } from 'vitest'
 import { ConversationThread } from './ConversationThread'
 import type { ChatwootMessage } from '@/types/conversations'
@@ -12,6 +12,15 @@ vi.mock('date-fns/locale', () => ({ es: {} }))
 // Mock DegradationBanner
 vi.mock('@/components/pacientes/DegradationBanner', () => ({
   DegradationBanner: () => <div data-testid="degradation-banner">Chatwoot no disponible</div>,
+}))
+
+// Mock del modal de corrección (Story 6.8) — evita el hook de mutación/query-client
+vi.mock('@/components/conversaciones/CorreccionAgenteModal', () => ({
+  CorreccionAgenteModal: ({ onClose }: { onClose: () => void }) => (
+    <div role="dialog" data-testid="correccion-modal-mock">
+      <button onClick={onClose}>cerrar-mock</button>
+    </div>
+  ),
 }))
 
 // jsdom no implementa scrollTo — mockear para evitar errores
@@ -172,5 +181,51 @@ describe('ConversationThread', () => {
     })
     const { container } = render(<ConversationThread messages={[msg]} isConnected={true} />)
     expect(container.querySelector('audio')).not.toBeInTheDocument()
+  })
+
+  // ── Botón "Corregir" (Story 6.8) ──────────────────────────────────────────
+
+  const agentMsg = makeMessage({
+    id: 2,
+    message_type: 1,
+    content: 'Respuesta del agente',
+    sender: { name: 'bot', type: 'agent_bot' },
+  })
+
+  it('muestra el botón "Corregir" en mensajes del agente cuando canCorrect', () => {
+    render(<ConversationThread messages={[agentMsg]} isConnected={true} canCorrect />)
+    expect(
+      screen.getByRole('button', { name: 'Corregir esta respuesta del agente' }),
+    ).toBeInTheDocument()
+  })
+
+  it('NO muestra "Corregir" cuando canCorrect es false (default)', () => {
+    render(<ConversationThread messages={[agentMsg]} isConnected={true} />)
+    expect(
+      screen.queryByRole('button', { name: 'Corregir esta respuesta del agente' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('NO muestra "Corregir" en mensajes del paciente (type 0) aunque canCorrect', () => {
+    const patientMsg = makeMessage({ id: 5, message_type: 0, content: 'Pregunta' })
+    render(<ConversationThread messages={[patientMsg]} isConnected={true} canCorrect />)
+    expect(
+      screen.queryByRole('button', { name: 'Corregir esta respuesta del agente' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('NO muestra "Corregir" en separadores de actividad (type 2) aunque canCorrect', () => {
+    const activityMsg = makeMessage({ id: 6, message_type: 2, content: 'Tomó control' })
+    render(<ConversationThread messages={[activityMsg]} isConnected={true} canCorrect />)
+    expect(
+      screen.queryByRole('button', { name: 'Corregir esta respuesta del agente' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('clic en "Corregir" abre el modal de corrección', () => {
+    render(<ConversationThread messages={[agentMsg]} isConnected={true} canCorrect />)
+    expect(screen.queryByTestId('correccion-modal-mock')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Corregir esta respuesta del agente' }))
+    expect(screen.getByTestId('correccion-modal-mock')).toBeInTheDocument()
   })
 })
