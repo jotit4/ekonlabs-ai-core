@@ -133,3 +133,37 @@ export interface UpdateKnowledgePayload {
   content?: string
   source_filename?: string
 }
+
+// ── Knowledge Base por temas (Story 6.9) ──────────────────────────────────────
+
+/**
+ * Un "tema" agregado de la KB (todos los chunks de un mismo `source_filename`).
+ * Respuesta de `GET /api/agente/knowledge/topics` y del backend
+ * `GET /api/v1/tenants/{tid}/knowledge/topics`.
+ */
+export interface KnowledgeTopic {
+  source_filename: string
+  chunk_count: number
+  content: string
+  updated_at: string
+}
+
+/**
+ * Respuesta del flujo de propuesta de corrección
+ * (`POST /api/agente/knowledge/propose`). Es efímera: el backend NO persiste.
+ */
+export interface KBProposalResponse {
+  suggested_topic: string
+  is_new_topic: boolean
+  current_text: string
+  proposed_text: string
+  gap_questions: string[]
+  contradiction_warning: string | null
+}
+
+/**
+ * Body de `PUT /api/agente/knowledge/topics/[source]` (reindexado del tema).
+ */
+export interface ReindexTopicPayload {
+  content: string
+}

@@ -125,3 +125,45 @@ export const CorreccionAgenteSchema = z.object({
 })
 
 export type CorreccionAgenteFormValues = z.infer<typeof CorreccionAgenteSchema>
+
+// ── Knowledge Base por temas: propose + reindex (Story 6.9) ───────────────────
+
+/**
+ * Schema del flujo "proponer corrección" de la KB por temas
+ * (`POST /api/agente/knowledge/propose`). El backend usa estos campos para
+ * generar un diff propuesto (no persiste nada). `correction_note` es lo único
+ * obligatorio. `standardSchema`-compatible (se usa con `standardSchemaResolver`,
+ * NO `zodResolver`).
+ */
+export const KBProposeSchema = z.object({
+  correction_note: z
+    .string()
+    .trim()
+    .min(1, { error: 'La nota de corrección es obligatoria' })
+    .max(4500, { error: 'La nota no puede superar 4.500 caracteres' }),
+  patient_question: z.string().optional(),
+  wrong_answer: z.string().optional(),
+  target_topic: z
+    .string()
+    .trim()
+    .max(120, { error: 'El tema no puede superar 120 caracteres' })
+    .optional(),
+})
+
+export type KBProposeFormValues = z.infer<typeof KBProposeSchema>
+
+/**
+ * Schema de reindexado de un tema completo
+ * (`PUT /api/agente/knowledge/topics/[source]`). El `content` reemplaza el texto
+ * del tema entero y el backend re-chunkea + re-embebe.
+ * `standardSchema`-compatible.
+ */
+export const KBTopicReindexSchema = z.object({
+  content: z
+    .string()
+    .trim()
+    .min(1, { error: 'El contenido es obligatorio' })
+    .max(10000, { error: 'Máximo 10.000 caracteres' }),
+})
+
+export type KBTopicReindexFormValues = z.infer<typeof KBTopicReindexSchema>

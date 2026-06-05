@@ -20,8 +20,16 @@ export type AuditAction =
   | 'user_activated'
   | 'patient_document_uploaded'
   | 'patient_document_accessed'
+  | 'kb_topic_reindexed'
+  | 'kb_topic_deleted'
 
-export type AuditEntityType = 'patient' | 'conversation' | 'appointment' | 'config' | 'user'
+export type AuditEntityType =
+  | 'patient'
+  | 'conversation'
+  | 'appointment'
+  | 'config'
+  | 'user'
+  | 'knowledge'
 
 interface LogAuditParams {
   action: AuditAction

@@ -45,6 +45,11 @@ export function findPreviousPatientMessage(
 }
 
 /**
+ * @deprecated Ya no se compone el `content` en el cliente. Desde la Story 6.9 el
+ * texto de la corrección lo redacta el LLM vía `POST /api/agente/knowledge/propose`
+ * (ver `useProposeCorrection`) y se guarda por tema con `useReindexTopic`. Se
+ * conserva por compatibilidad con imports/tests legacy.
+ *
  * Compone el `content` de la entrada de KB para una corrección, anclando la
  * pregunta del paciente para maximizar el match del RAG (ver story 6.8).
  *

@@ -1,19 +1,18 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
-import { useKnowledge } from '@/hooks/use-knowledge'
 import {
-  useCreateKnowledge,
-  useUpdateKnowledge,
-  useDeleteKnowledge,
-} from '@/hooks/use-knowledge-mutations'
+  useKnowledgeTopics,
+  useReindexTopic,
+  useDeleteTopic,
+} from '@/hooks/use-knowledge-topics'
 import {
   CreateKnowledgeSchema,
   type CreateKnowledgeFormValues,
 } from '@/lib/schemas/agente.schema'
-import type { KnowledgeEntry } from '@/types/agente'
+import type { KnowledgeTopic } from '@/types/agente'
 
 const inputClass =
   'w-full px-3 py-2 rounded-[8px] border border-[var(--color-border)] text-sm bg-[var(--color-bg)] text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]'
@@ -29,6 +28,8 @@ const primaryButtonClass = [
   'hover:opacity-90 transition-opacity min-h-[44px]',
 ].join(' ')
 
+const MAX_CONTENT_CHARS = 10000
+
 function formatDate(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
@@ -41,15 +42,13 @@ interface KnowledgeBaseManagerProps {
 }
 
 export function KnowledgeBaseManager({ canEdit = true }: KnowledgeBaseManagerProps) {
-  const { entries, isPending, isError, refetch } = useKnowledge()
-  const createMutation = useCreateKnowledge()
-  const updateMutation = useUpdateKnowledge()
-  const deleteMutation = useDeleteKnowledge()
+  const { topics, isPending, isError, refetch } = useKnowledgeTopics()
+  const reindexMutation = useReindexTopic()
+  const deleteMutation = useDeleteTopic()
 
-  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingSource, setEditingSource] = useState<string | null>(null)
   const [editContent, setEditContent] = useState('')
-  const [editSource, setEditSource] = useState('')
-  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
+  const [confirmingDeleteSource, setConfirmingDeleteSource] = useState<string | null>(null)
 
   const {
     register,
@@ -64,52 +63,35 @@ export function KnowledgeBaseManager({ canEdit = true }: KnowledgeBaseManagerPro
 
   const contentValue = watch('content') ?? ''
 
-  // Agrupar entradas por tema (source_filename).
-  const groups = useMemo(() => {
-    const map = new Map<string, KnowledgeEntry[]>()
-    for (const entry of entries) {
-      const key = entry.source_filename || 'general'
-      const list = map.get(key) ?? []
-      list.push(entry)
-      map.set(key, list)
-    }
-    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b))
-  }, [entries])
-
   const onCreate = (data: CreateKnowledgeFormValues) => {
-    createMutation.mutate(
-      { content: data.content, source_filename: data.source_filename || undefined },
+    const source = data.source_filename?.trim() || 'general'
+    reindexMutation.mutate(
+      { source, content: data.content.trim() },
       { onSuccess: () => reset({ content: '', source_filename: '' }) },
     )
   }
 
-  const startEdit = (entry: KnowledgeEntry) => {
-    setConfirmingDeleteId(null)
-    setEditingId(entry.id)
-    setEditContent(entry.content)
-    setEditSource(entry.source_filename || '')
+  const startEdit = (topic: KnowledgeTopic) => {
+    setConfirmingDeleteSource(null)
+    setEditingSource(topic.source_filename)
+    setEditContent(topic.content)
   }
 
   const cancelEdit = () => {
-    setEditingId(null)
+    setEditingSource(null)
     setEditContent('')
-    setEditSource('')
   }
 
-  const saveEdit = (id: string) => {
-    updateMutation.mutate(
-      {
-        id,
-        content: editContent.trim(),
-        source_filename: editSource.trim() || 'general',
-      },
+  const saveEdit = (source: string) => {
+    reindexMutation.mutate(
+      { source, content: editContent.trim() },
       { onSuccess: () => cancelEdit() },
     )
   }
 
-  const confirmDelete = (id: string) => {
-    deleteMutation.mutate(id, {
-      onSuccess: () => setConfirmingDeleteId(null),
+  const confirmDelete = (source: string) => {
+    deleteMutation.mutate(source, {
+      onSuccess: () => setConfirmingDeleteSource(null),
     })
   }
 
@@ -165,15 +147,15 @@ export function KnowledgeBaseManager({ canEdit = true }: KnowledgeBaseManagerPro
           Base de conocimiento del agente
         </h2>
         <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-          Lo que el agente sabe y consulta para responder. Agregá datos o respuestas
-          en lenguaje natural; agrupalas por tema.
+          Lo que el agente sabe y consulta para responder. Cada tema agrupa el texto
+          completo; editarlo o borrarlo reemplaza todo el tema.
         </p>
       </div>
 
-      {/* ── Crear entrada ───────────────────────────────────────────────── */}
+      {/* ── Crear tema nuevo ────────────────────────────────────────────── */}
       {canEdit && (
         <form onSubmit={handleSubmit(onCreate)} noValidate className="space-y-3">
-          <legend className={sectionTitleClass}>Agregar entrada</legend>
+          <legend className={sectionTitleClass}>Agregar tema nuevo</legend>
 
           <div>
             <label htmlFor="kb-content" className={labelClass}>Contenido</label>
@@ -212,126 +194,117 @@ export function KnowledgeBaseManager({ canEdit = true }: KnowledgeBaseManagerPro
 
           <button
             type="submit"
-            disabled={createMutation.isPending}
-            className={`${primaryButtonClass} ${createMutation.isPending ? 'opacity-50 cursor-not-allowed' : ''}`}
+            disabled={reindexMutation.isPending}
+            className={`${primaryButtonClass} ${reindexMutation.isPending ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
-            {createMutation.isPending ? 'Agregando...' : 'Agregar entrada'}
+            {reindexMutation.isPending ? 'Agregando...' : 'Agregar tema'}
           </button>
         </form>
       )}
 
-      {/* ── Lista agrupada ──────────────────────────────────────────────── */}
-      {entries.length === 0 ? (
+      {/* ── Lista de temas ──────────────────────────────────────────────── */}
+      {topics.length === 0 ? (
         <p className="text-sm text-[var(--color-text-secondary)] italic">
-          Todavía no hay entradas en la base de conocimiento.
+          Todavía no hay temas en la base de conocimiento.
         </p>
       ) : (
-        <div className="space-y-6">
-          {groups.map(([tema, temaEntries]) => (
-            <div key={tema} className="space-y-2">
-              <h3 className={sectionTitleClass}>{tema}</h3>
-              <ul className="space-y-2">
-                {temaEntries.map((entry) => (
-                  <li
-                    key={entry.id}
-                    className="rounded-[8px] border border-[var(--color-border)] p-3"
-                  >
-                    {editingId === entry.id ? (
-                      <div className="space-y-3">
-                        <textarea
-                          aria-label="Editar contenido"
-                          rows={4}
-                          maxLength={5000}
-                          value={editContent}
-                          onChange={(e) => setEditContent(e.target.value)}
-                          className={`${inputClass} resize-vertical`}
-                        />
-                        <input
-                          aria-label="Editar tema"
-                          type="text"
-                          maxLength={120}
-                          value={editSource}
-                          onChange={(e) => setEditSource(e.target.value)}
-                          className={inputClass}
-                          placeholder="Tema"
-                        />
-                        <div className="flex gap-2">
+        <ul className="space-y-2">
+          {topics.map((topic) => (
+            <li
+              key={topic.source_filename}
+              className="rounded-[8px] border border-[var(--color-border)] p-3"
+            >
+              {editingSource === topic.source_filename ? (
+                <div className="space-y-3">
+                  <h3 className={sectionTitleClass}>{topic.source_filename}</h3>
+                  <textarea
+                    aria-label="Editar contenido del tema"
+                    rows={6}
+                    maxLength={MAX_CONTENT_CHARS}
+                    value={editContent}
+                    onChange={(e) => setEditContent(e.target.value)}
+                    className={`${inputClass} resize-vertical`}
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => saveEdit(topic.source_filename)}
+                      disabled={reindexMutation.isPending || editContent.trim().length === 0}
+                      className={`${primaryButtonClass} ${reindexMutation.isPending || editContent.trim().length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      {reindexMutation.isPending ? 'Guardando...' : 'Guardar'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelEdit}
+                      className="px-4 py-2 rounded-[8px] text-sm font-medium border border-[var(--color-border)] text-[var(--color-text-primary)] min-h-[44px]"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <h3 className={sectionTitleClass}>{topic.source_filename}</h3>
+                    <span className="text-xs text-[var(--color-text-secondary)]">
+                      {topic.chunk_count} {topic.chunk_count === 1 ? 'fragmento' : 'fragmentos'}
+                    </span>
+                  </div>
+                  <p className="text-sm text-[var(--color-text-primary)] whitespace-pre-wrap">
+                    {topic.content}
+                  </p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[var(--color-text-secondary)]">
+                      {formatDate(topic.updated_at)}
+                    </span>
+                    {canEdit && (
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => startEdit(topic)}
+                          className="text-sm font-medium text-[var(--color-interactive)] hover:underline"
+                        >
+                          Editar
+                        </button>
+                        {confirmingDeleteSource === topic.source_filename ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => confirmDelete(topic.source_filename)}
+                              disabled={deleteMutation.isPending}
+                              className={`text-sm font-medium text-red-600 hover:underline ${deleteMutation.isPending ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            >
+                              {deleteMutation.isPending ? 'Borrando...' : 'Confirmar borrado'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmingDeleteSource(null)}
+                              className="text-sm text-[var(--color-text-secondary)] hover:underline"
+                            >
+                              Cancelar
+                            </button>
+                          </>
+                        ) : (
                           <button
                             type="button"
-                            onClick={() => saveEdit(entry.id)}
-                            disabled={updateMutation.isPending || editContent.trim().length === 0}
-                            className={`${primaryButtonClass} ${updateMutation.isPending || editContent.trim().length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            onClick={() => {
+                              cancelEdit()
+                              setConfirmingDeleteSource(topic.source_filename)
+                            }}
+                            className="text-sm font-medium text-red-600 hover:underline"
                           >
-                            {updateMutation.isPending ? 'Guardando...' : 'Guardar'}
+                            Borrar
                           </button>
-                          <button
-                            type="button"
-                            onClick={cancelEdit}
-                            className="px-4 py-2 rounded-[8px] text-sm font-medium border border-[var(--color-border)] text-[var(--color-text-primary)] min-h-[44px]"
-                          >
-                            Cancelar
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        <p className="text-sm text-[var(--color-text-primary)] whitespace-pre-wrap">
-                          {entry.content}
-                        </p>
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-[var(--color-text-secondary)]">
-                            {formatDate(entry.created_at)}
-                          </span>
-                          {canEdit && (
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={() => startEdit(entry)}
-                                className="text-sm font-medium text-[var(--color-interactive)] hover:underline"
-                              >
-                                Editar
-                              </button>
-                              {confirmingDeleteId === entry.id ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => confirmDelete(entry.id)}
-                                    disabled={deleteMutation.isPending}
-                                    className={`text-sm font-medium text-red-600 hover:underline ${deleteMutation.isPending ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                  >
-                                    {deleteMutation.isPending ? 'Borrando...' : 'Confirmar borrado'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setConfirmingDeleteId(null)}
-                                    className="text-sm text-[var(--color-text-secondary)] hover:underline"
-                                  >
-                                    Cancelar
-                                  </button>
-                                </>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    cancelEdit()
-                                    setConfirmingDeleteId(entry.id)
-                                  }}
-                                  className="text-sm font-medium text-red-600 hover:underline"
-                                >
-                                  Borrar
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
+                        )}
                       </div>
                     )}
-                  </li>
-                ))}
-              </ul>
-            </div>
+                  </div>
+                </div>
+              )}
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </section>
   )
