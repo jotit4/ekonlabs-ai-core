@@ -1,6 +1,7 @@
 import 'server-only'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { parseJwtPayload } from '@/lib/utils/jwt'
+import { authorizeProfessionalAccess } from '@/lib/utils/professional-access'
 import { CreateProfessionalScheduleSchema } from '@/lib/schemas/profesionales-horarios.schema'
 
 export async function GET(
@@ -15,18 +16,20 @@ export async function GET(
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }
 
-  // 2. Autorización — admin o receptionist
+  // 2. Autorización — admin/receptionist (sin restricción de id) o doctor sobre su propio professional_id
   const { data: sessionData } = await supabase.auth.getSession()
   const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
   const role = claims?.app_role
-  if (role !== 'admin' && role !== 'receptionist') {
-    return Response.json(
-      { error: 'Acceso denegado' },
-      { status: 403 }
-    )
-  }
 
   const { id } = await params
+
+  const auth = await authorizeProfessionalAccess(supabase, role, user.id, id)
+  if (!auth.ok) {
+    return Response.json(
+      { error: auth.status === 403 ? 'Acceso denegado' : 'Error al verificar acceso' },
+      { status: auth.status }
+    )
+  }
 
   // 3. Query con RLS aplicado automáticamente — NO agregar .eq('tenant_id', ...) (AR14)
   const { data, error } = await supabase
@@ -55,18 +58,20 @@ export async function POST(
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }
 
-  // 2. Autorización — admin o receptionist
+  // 2. Autorización — admin/receptionist (sin restricción de id) o doctor sobre su propio professional_id
   const { data: sessionData } = await supabase.auth.getSession()
   const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
   const role = claims?.app_role
-  if (role !== 'admin' && role !== 'receptionist') {
-    return Response.json(
-      { error: 'Acceso denegado' },
-      { status: 403 }
-    )
-  }
 
   const { id } = await params
+
+  const auth = await authorizeProfessionalAccess(supabase, role, user.id, id)
+  if (!auth.ok) {
+    return Response.json(
+      { error: auth.status === 403 ? 'Acceso denegado' : 'Error al verificar acceso' },
+      { status: auth.status }
+    )
+  }
 
   // 3. Parsear y validar body
   const body = await request.json().catch(() => null)

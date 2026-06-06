@@ -1,6 +1,7 @@
 import 'server-only'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { parseJwtPayload } from '@/lib/utils/jwt'
+import { authorizeProfessionalAccess } from '@/lib/utils/professional-access'
 
 export async function DELETE(
   _request: Request,
@@ -14,18 +15,20 @@ export async function DELETE(
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }
 
-  // 2. Autorización — admin o receptionist
+  // 2. Autorización — admin/receptionist (sin restricción de id) o doctor sobre su propio professional_id
   const { data: sessionData } = await supabase.auth.getSession()
   const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
   const role = claims?.app_role
-  if (role !== 'admin' && role !== 'receptionist') {
+
+  const { id, scheduleId } = await params
+
+  const auth = await authorizeProfessionalAccess(supabase, role, user.id, id)
+  if (!auth.ok) {
     return Response.json(
-      { error: 'Acceso denegado' },
-      { status: 403 }
+      { error: auth.status === 403 ? 'Acceso denegado' : 'Error al verificar acceso' },
+      { status: auth.status }
     )
   }
-
-  const { scheduleId } = await params
 
   // 3. DELETE — RLS verifica tenant automáticamente (AR14)
   const { error, count } = await supabase

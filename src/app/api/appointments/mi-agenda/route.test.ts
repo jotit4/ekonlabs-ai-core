@@ -26,13 +26,14 @@ import { GET } from './route'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function setupAuth(email = 'patricia@isadi.com.ar') {
+function setupAuth(userId = 'user-uuid', email = 'patricia@isadi.com.ar') {
   mockGetUser.mockResolvedValue({
-    data: { user: { id: 'user-uuid', email } },
+    data: { user: { id: userId, email } },
     error: null,
   })
 }
 
+// Resuelve el professional_id desde el vínculo dashboard_users.user_id (NO por email).
 function setupProfessionalFound(professionalId = 'prof-uuid-1') {
   return {
     select: vi.fn().mockReturnThis(),
@@ -44,13 +45,14 @@ function setupProfessionalFound(professionalId = 'prof-uuid-1') {
   }
 }
 
+// dashboard_users existe pero sin professional_id asignado → 404.
 function setupProfessionalNotFound() {
   return {
     select: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
     single: vi.fn().mockResolvedValue({
-      data: null,
-      error: { message: 'No rows found', code: 'PGRST116' },
+      data: { professional_id: null },
+      error: null,
     }),
   }
 }
@@ -98,7 +100,7 @@ describe('GET /api/appointments/mi-agenda', () => {
     expect(res.status).toBe(401)
   })
 
-  it('retorna 404 si el usuario no está en professionals', async () => {
+  it('retorna 404 si el usuario no tiene professional_id vinculado en dashboard_users', async () => {
     setupAuth()
     mockFrom.mockReturnValueOnce(setupProfessionalNotFound())
 
@@ -152,8 +154,8 @@ describe('GET /api/appointments/mi-agenda', () => {
     expect(body.data[0].professional_id).toBe('prof-uuid-1')
   })
 
-  it('filtra correctamente por professional_id del profesional logueado', async () => {
-    setupAuth('aldo@isadi.com.ar')
+  it('resuelve professional_id por vínculo (dashboard_users.user_id) y filtra appointments por él', async () => {
+    setupAuth('aldo-user-uuid', 'aldo@isadi.com.ar')
     const profChain = setupProfessionalFound('aldo-prof-uuid')
     const aptsChain = setupAppointmentsQuery([])
 
@@ -163,9 +165,10 @@ describe('GET /api/appointments/mi-agenda', () => {
 
     await GET(makeRequest('2026-05-14'))
 
-    // Verifica que la query de professionals usa el email correcto
-    expect(profChain.eq).toHaveBeenCalledWith('email', 'aldo@isadi.com.ar')
-    // Verifica que appointments se filtra por professional_id
+    // Verifica que dashboard_users se consulta por user_id (vínculo), NO por email
+    expect(profChain.eq).toHaveBeenCalledWith('user_id', 'aldo-user-uuid')
+    expect(profChain.eq).not.toHaveBeenCalledWith('email', expect.anything())
+    // Verifica que appointments se filtra por el professional_id resuelto
     expect(aptsChain.eq).toHaveBeenCalledWith('professional_id', 'aldo-prof-uuid')
   })
 

@@ -32,20 +32,20 @@ describe('AppSidebar', () => {
     expect(screen.queryByText('Métricas')).toBeNull()
   })
 
-  it('doctor: muestra Calendario y Mi Agenda como ítems separados', () => {
+  it('doctor: muestra Mi Agenda, Mi Disponibilidad y Pacientes (NO Calendario ni Conversaciones)', () => {
     render(<AppSidebar role="doctor" />)
-    expect(screen.getAllByText('Calendario').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Mi Agenda').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Pacientes').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Mi Disponibilidad').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Calendario')).toBeNull()
     expect(screen.queryByText('Conversaciones')).toBeNull()
   })
 
-  it('doctor: tiene ítems separados para Calendario y Mi Agenda (hrefs distintos)', () => {
+  it('doctor: NO tiene ítem que apunte a la agenda global (/agenda); Mi Agenda apunta a /agenda/mi-agenda', () => {
     render(<AppSidebar role="doctor" />)
-    const calendarLinks = screen.getAllByRole('link', { name: /calendario/i })
+    const allLinks = screen.getAllByRole('link')
+    expect(allLinks.some((l) => l.getAttribute('href') === '/agenda')).toBe(false)
     const miAgendaLinks = screen.getAllByRole('link', { name: /mi agenda/i })
-    expect(calendarLinks.some((l) => l.getAttribute('href') === '/agenda')).toBe(true)
     expect(miAgendaLinks.some((l) => l.getAttribute('href') === '/agenda/mi-agenda')).toBe(true)
   })
 

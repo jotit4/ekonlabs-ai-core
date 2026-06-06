@@ -24,7 +24,6 @@ const NAV_ITEMS: Record<UserRole, NavItem[]> = {
     { href: '/configuracion/profesionales', label: 'Profesionales', icon: UserCheck },
   ],
   doctor: [
-    { href: '/agenda',               label: 'Calendario',        icon: Calendar },
     { href: '/agenda/mi-agenda',     label: 'Mi Agenda',         icon: UserCheck },
     { href: '/mi-disponibilidad',    label: 'Mi Disponibilidad', icon: CalendarClock },
     { href: '/pacientes',            label: 'Pacientes',         icon: Users },
