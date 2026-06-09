@@ -349,4 +349,41 @@ describe('CalendarViewRangeReadOnly', () => {
     )
     expect(screen.getByTestId('rbc-calendar')).toBeInTheDocument()
   })
+
+  // ── Badge "Sesión X/N" en vista Semana (Story 13.5) ─────────────────────────
+  describe('badge de serie (paquetes)', () => {
+    it('muestra "Sesión X/N" en la vista Semana para un turno con package_id + join', () => {
+      const serieApt: Appointment = {
+        ...BASE_APPOINTMENT,
+        package_id: 'trt-1',
+        session_index: 4,
+        treatments: { total_sessions: 8, status: 'active' },
+      }
+      render(
+        <CalendarViewRangeReadOnly
+          view="week"
+          date="2026-05-12"
+          appointments={[serieApt]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      expect(screen.getByText('Sesión 4/8')).toBeInTheDocument()
+    })
+
+    it('NO muestra badge para un turno suelto (sin package_id) en la vista Semana', () => {
+      render(
+        <CalendarViewRangeReadOnly
+          view="week"
+          date="2026-05-12"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      expect(screen.queryByText(/^Sesión /)).not.toBeInTheDocument()
+    })
+  })
 })

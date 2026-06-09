@@ -14,6 +14,7 @@ import { CalendarViewSelector, type CalendarViewType } from '@/components/agenda
 import { TurnoDetailModal } from '@/components/agenda/TurnoDetailModal'
 import { KPIStrip } from '@/components/agenda/KPIStrip'
 import { NewTurnoModal } from '@/components/agenda/NewTurnoModal'
+import { NewPaqueteModal } from '@/components/paquetes/NewPaqueteModal'
 import { RescheduleTurnoModal } from '@/components/agenda/RescheduleTurnoModal'
 import { AgendaFilters, type AvailabilityMode } from '@/components/agenda/AgendaFilters'
 import { SyncStatusBanner } from '@/components/agenda/SyncStatusBanner'
@@ -178,6 +179,8 @@ export function AgendaView() {
   }
 
   const [showNewTurnoModal, setShowNewTurnoModal] = useState(false)
+  // CTA secundario "Nuevo paquete" (Story 13.5) — abre el modal SIN initialPatient.
+  const [showNewPaqueteModal, setShowNewPaqueteModal] = useState(false)
   // Prefill del NewTurnoModal al agendar desde un hueco libre (Story 10.7)
   const [newTurnoPrefill, setNewTurnoPrefill] = useState<{
     serviceId: string
@@ -294,6 +297,15 @@ export function AgendaView() {
                 + Nuevo turno
               </button>
             )}
+            {showFilters && (vistaActiva === 'dia' || vistaActiva === 'semana') && (
+              <button
+                onClick={() => setShowNewPaqueteModal(true)}
+                className="min-h-[44px] flex items-center justify-center rounded-[var(--radius-sm)] px-4 text-sm text-[var(--color-interactive)] border border-[var(--color-interactive)] hover:bg-[var(--color-surface)] transition-colors"
+                aria-label="Nuevo paquete"
+              >
+                + Nuevo paquete
+              </button>
+            )}
             <nav
               className="flex items-center gap-1"
               aria-label="Navegación de fecha"
@@ -402,6 +414,12 @@ export function AgendaView() {
         appointment={selectedAppointmentForReschedule}
         date={isoDate}
       />
+      {showFilters && (
+        <NewPaqueteModal
+          open={showNewPaqueteModal}
+          onClose={() => setShowNewPaqueteModal(false)}
+        />
+      )}
     </section>
   )
 }

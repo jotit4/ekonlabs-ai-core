@@ -11,6 +11,12 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
 }))
 
+vi.mock('next/link', () => ({
+  default: ({ href, children, ...props }: { href: string; children: React.ReactNode }) => (
+    <a href={href} {...props}>{children}</a>
+  ),
+}))
+
 const mockSignOut = vi.fn().mockResolvedValue({})
 vi.mock('@/lib/supabase/client', () => ({
   createSupabaseBrowserClient: () => ({
@@ -143,5 +149,26 @@ describe('UserProfileButton', () => {
     render(<UserProfileButton collapsed={false} />)
     const receptionistTexts = screen.getAllByText('Recepcionista')
     expect(receptionistTexts.length).toBeGreaterThan(0)
+  })
+
+  // ── Story 10.8: entrada "Mi Perfil" en el popover (visible para los 3 roles) ──
+
+  it('el popover incluye un link "Mi Perfil" con href=/mi-perfil para admin', () => {
+    mockUseCurrentUserFn = () => ({ user: adminUser, isLoading: false })
+    render(<UserProfileButton collapsed={false} />)
+    const link = screen.getByRole('link', { name: /mi perfil/i })
+    expect(link).toHaveAttribute('href', '/mi-perfil')
+  })
+
+  it('el popover incluye un link "Mi Perfil" para doctor', () => {
+    mockUseCurrentUserFn = () => ({ user: doctorUser, isLoading: false })
+    render(<UserProfileButton collapsed={false} />)
+    expect(screen.getByRole('link', { name: /mi perfil/i })).toHaveAttribute('href', '/mi-perfil')
+  })
+
+  it('el popover incluye un link "Mi Perfil" para receptionist', () => {
+    mockUseCurrentUserFn = () => ({ user: receptionistUser, isLoading: false })
+    render(<UserProfileButton collapsed={false} />)
+    expect(screen.getByRole('link', { name: /mi perfil/i })).toHaveAttribute('href', '/mi-perfil')
   })
 })

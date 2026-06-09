@@ -23,6 +23,13 @@ export interface Appointment {
   // Recordatorios (Story 12.4) — los pobla el agente (12.1 / 12.3); null por defecto
   reminder_sent_at: string | null
   attendance_confirmed: boolean | null
+  // Paquetes de sesiones (Story 13.x — migración 037). Opcionales: sólo presentes
+  // cuando el turno pertenece a una serie y el select los pide explícitamente.
+  package_id?: string | null
+  session_index?: number | null
+  // Join opcional appointments.package_id → treatments(total_sessions, status)
+  // (Story 13.5, Task 4). Null cuando el treatment no es visible o el turno es suelto.
+  treatments?: { total_sessions: number; status: string } | null
   // Joins via Refine meta.select
   patients: { full_name: string | null } | null
   services: { name: string; professional: string | null; professional_name?: string | null; duration_minutes?: number } | null

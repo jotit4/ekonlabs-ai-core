@@ -154,6 +154,19 @@ vi.mock('@/components/pacientes/PatientDeletionRequest', () => ({
   ),
 }))
 
+// Mock de PaquetesTracking para aislar (tiene su propia useQuery a Supabase)
+vi.mock('@/components/paquetes/PaquetesTracking', () => ({
+  PaquetesTracking: ({ patientId }: { patientId: string }) => (
+    <div data-testid="paquetes-tracking">PaquetesTracking {patientId}</div>
+  ),
+}))
+
+// Mock de NewPaqueteModal para aislar (usa useList de Refine, sin provider en este test)
+vi.mock('@/components/paquetes/NewPaqueteModal', () => ({
+  NewPaqueteModal: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="new-paquete-modal">NewPaqueteModal</div> : null,
+}))
+
 // Importar componente después de mocks
 import PacienteFichaPage from './page'
 
@@ -370,5 +383,72 @@ describe('PacienteFichaPage', () => {
     expect(screen.queryByTestId('clinical-note-editor')).not.toBeInTheDocument()
     // Pero el historial sí debe estar visible
     expect(screen.getByTestId('clinical-notes-history')).toBeInTheDocument()
+  })
+
+  // ── Tests de la pestaña "Paquetes" + CTA (Story 13.5) ───────────────────────
+
+  it('muestra la pestaña "Paquetes" en la navegación', () => {
+    render(<PacienteFichaPage />)
+    expect(screen.getByRole('tab', { name: /paquetes/i })).toBeInTheDocument()
+  })
+
+  it('?tab=paquetes → renderiza PaquetesTracking', () => {
+    setSearchParams(new URLSearchParams('tab=paquetes'))
+    render(<PacienteFichaPage />)
+    expect(screen.getByTestId('paquetes-tracking')).toBeInTheDocument()
+  })
+
+  it('tab=paquetes con rol admin → muestra el CTA "Cargar tratamiento (10 sesiones)"', () => {
+    mockCurrentTenant.role = 'admin'
+    setSearchParams(new URLSearchParams('tab=paquetes'))
+    render(<PacienteFichaPage />)
+    expect(
+      screen.getByRole('button', { name: /cargar tratamiento \(10 sesiones\)/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('tab=paquetes con rol receptionist → muestra el CTA', () => {
+    mockCurrentTenant.role = 'receptionist'
+    setSearchParams(new URLSearchParams('tab=paquetes'))
+    render(<PacienteFichaPage />)
+    expect(
+      screen.getByRole('button', { name: /cargar tratamiento \(10 sesiones\)/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('tab=paquetes con rol doctor → NO muestra el CTA de creación', () => {
+    mockCurrentTenant.role = 'doctor'
+    setSearchParams(new URLSearchParams('tab=paquetes'))
+    render(<PacienteFichaPage />)
+    expect(
+      screen.queryByRole('button', { name: /cargar tratamiento/i }),
+    ).not.toBeInTheDocument()
+    // Pero la pestaña de tracking sí es visible para el doctor
+    expect(screen.getByTestId('paquetes-tracking')).toBeInTheDocument()
+  })
+
+  it('paciente CON eliminación pendiente + admin → NO muestra el CTA de creación', () => {
+    mockCurrentTenant.role = 'admin'
+    mockQueryState.data = makePatient({
+      deletion_requested_at: '2026-05-11T00:00:00Z',
+      deletion_effective_at: '2026-06-10T00:00:00Z',
+    })
+    setSearchParams(new URLSearchParams('tab=paquetes'))
+    render(<PacienteFichaPage />)
+    expect(
+      screen.queryByRole('button', { name: /cargar tratamiento/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('click en el CTA abre el NewPaqueteModal', async () => {
+    const user = userEvent.setup()
+    mockCurrentTenant.role = 'admin'
+    setSearchParams(new URLSearchParams('tab=paquetes'))
+    render(<PacienteFichaPage />)
+
+    await user.click(screen.getByRole('button', { name: /cargar tratamiento/i }))
+    await waitFor(() => {
+      expect(screen.getByTestId('new-paquete-modal')).toBeInTheDocument()
+    })
   })
 })

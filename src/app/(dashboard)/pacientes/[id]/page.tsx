@@ -17,6 +17,8 @@ import { ClinicalNoteEditor } from '@/components/pacientes/ClinicalNoteEditor'
 import { ClinicalNotesHistory } from '@/components/pacientes/ClinicalNotesHistory'
 import { PatientDocuments } from '@/components/pacientes/PatientDocuments'
 import { PatientDeletionRequest } from '@/components/pacientes/PatientDeletionRequest'
+import { PaquetesTracking } from '@/components/paquetes/PaquetesTracking'
+import { NewPaqueteModal } from '@/components/paquetes/NewPaqueteModal'
 import type { Patient } from '@/types/patients'
 
 // ─── Tipos locales ────────────────────────────────────────────────────────────
@@ -27,7 +29,7 @@ interface PatientWithHistory extends Patient {
 
 // ─── Definición de tabs ───────────────────────────────────────────────────────
 
-type TabId = 'datos' | 'turnos' | 'conversaciones' | 'notas' | 'documentos'
+type TabId = 'datos' | 'turnos' | 'conversaciones' | 'notas' | 'documentos' | 'paquetes'
 
 interface TabDef {
   id: TabId
@@ -39,6 +41,7 @@ interface TabDef {
 const TABS: TabDef[] = [
   { id: 'datos', label: 'Datos personales', param: null },
   { id: 'turnos', label: 'Historial de turnos', param: 'turnos' },
+  { id: 'paquetes', label: 'Paquetes', param: 'paquetes' },
   { id: 'conversaciones', label: 'Conversaciones', param: 'conversaciones' },
   { id: 'notas', label: 'Notas clínicas', param: 'notas', roles: ['doctor', 'admin'] },
   { id: 'documentos', label: 'Documentos', param: 'documentos' },
@@ -96,6 +99,7 @@ export default function PacienteFichaPage() {
   const queryClient = useQueryClient()
   const backButtonRef = useRef<HTMLButtonElement>(null)
   const [editOpen, setEditOpen] = useState(false)
+  const [paqueteOpen, setPaqueteOpen] = useState(false)
 
   const { role } = useCurrentTenant()
   const supabase = createSupabaseBrowserClient()
@@ -233,6 +237,10 @@ export default function PacienteFichaPage() {
 
   // Detectar si el paciente tiene eliminación pendiente
   const hasDeletionPending = !!patient.deletion_requested_at
+
+  // CTA "Cargar tratamiento": sólo admin/receptionist y sin eliminación pendiente (AC1).
+  const canCreatePaquete =
+    (role === 'admin' || role === 'receptionist') && !hasDeletionPending
 
   const threadState = threadStateData ?? null
 
@@ -483,6 +491,62 @@ export default function PacienteFichaPage() {
           <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Documentos</h2>
           <PatientDocuments patientId={patientId} readOnly={hasDeletionPending} />
         </section>
+      )}
+
+      {/* Tab: Paquetes / Tratamientos — tracking de solo lectura (Story 13.5) */}
+      {activeTab === 'paquetes' && (
+        <section aria-label="Paquetes del paciente" role="tabpanel">
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 16,
+              gap: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <h2 style={{ fontSize: 18, fontWeight: 600 }}>Paquetes</h2>
+
+            {/* CTA — sólo admin/receptionist y si no hay eliminación pendiente */}
+            {canCreatePaquete && (
+              <button
+                type="button"
+                onClick={() => setPaqueteOpen(true)}
+                className={[
+                  'px-4 py-2 rounded-[8px] text-sm font-medium min-h-[44px]',
+                  'bg-[var(--color-interactive)] text-white',
+                  'hover:opacity-90 transition-opacity',
+                ].join(' ')}
+              >
+                Cargar tratamiento (10 sesiones)
+              </button>
+            )}
+          </div>
+
+          <PaquetesTracking patientId={patientId} />
+        </section>
+      )}
+
+      {/* Modal de creación de paquete — flujo de 2 pasos (Story 13.5).
+          initialPatient pre-selecciona al paciente de la ficha (sin paso de búsqueda). */}
+      {canCreatePaquete && (
+        <NewPaqueteModal
+          open={paqueteOpen}
+          onClose={() => {
+            setPaqueteOpen(false)
+            void queryClient.invalidateQueries({
+              queryKey: ['treatments', 'by-patient', patientId],
+            })
+          }}
+          initialPatient={{
+            patient_id: patient.patient_id,
+            full_name: patient.full_name,
+            phone_number: patient.phone_number,
+            obra_social: patient.obra_social,
+            deletion_requested_at: patient.deletion_requested_at,
+          }}
+        />
       )}
     </main>
   )

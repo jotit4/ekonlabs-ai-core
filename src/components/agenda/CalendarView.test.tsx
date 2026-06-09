@@ -597,4 +597,58 @@ describe('CalendarView', () => {
       expect(screen.queryByRole('link', { name: /ver ficha/i })).not.toBeInTheDocument()
     })
   })
+
+  // ── Badge "Sesión X/N" de series / paquetes (Story 13.5) ────────────────────
+  describe('badge de serie (paquetes)', () => {
+    it('muestra "Sesión X/N" cuando el turno pertenece a una serie (package_id + join treatments)', () => {
+      const serieApt: Appointment = {
+        ...BASE_APPOINTMENT,
+        package_id: 'trt-1',
+        session_index: 3,
+        treatments: { total_sessions: 10, status: 'active' },
+      }
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[serieApt]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      expect(screen.getByText('Sesión 3/10')).toBeInTheDocument()
+    })
+
+    it('NO muestra badge de serie cuando el turno es suelto (sin package_id/session_index)', () => {
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      expect(screen.queryByText(/^Sesión /)).not.toBeInTheDocument()
+    })
+
+    it('degrada a "Sesión X" cuando hay session_index pero el treatment no es visible (join null)', () => {
+      const serieApt: Appointment = {
+        ...BASE_APPOINTMENT,
+        package_id: 'trt-1',
+        session_index: 2,
+        treatments: null,
+      }
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[serieApt]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      expect(screen.getByText('Sesión 2')).toBeInTheDocument()
+    })
+  })
 })

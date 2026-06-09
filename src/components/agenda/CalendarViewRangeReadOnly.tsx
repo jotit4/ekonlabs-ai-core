@@ -28,6 +28,7 @@ import {
 } from '@/types/appointments'
 import type { AvailabilityShift, DaySummary } from '@/types/availability'
 import { AgendaDayViewSkeleton } from './AgendaDayView'
+import { SesionSerieBadge } from './SesionSerieBadge'
 
 const locales = { es }
 
@@ -300,6 +301,14 @@ function WeekColumnsView({
                         {profName}
                       </div>
                     )}
+                    {event.resource.session_index != null && (
+                      <div style={{ marginTop: 3 }}>
+                        <SesionSerieBadge
+                          sessionIndex={event.resource.session_index}
+                          totalSessions={event.resource.treatments?.total_sessions}
+                        />
+                      </div>
+                    )}
                   </button>
                 )
               })}
@@ -482,6 +491,14 @@ function DayEventsModal({ date, events, onClose, onAppointmentClick }: DayEvents
                       <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {[serviceName, profName].filter(Boolean).join(' · ')}
                       </p>
+                    )}
+                    {ev.resource.session_index != null && (
+                      <div style={{ marginTop: 3 }}>
+                        <SesionSerieBadge
+                          sessionIndex={ev.resource.session_index}
+                          totalSessions={ev.resource.treatments?.total_sessions}
+                        />
+                      </div>
                     )}
                   </div>
                 </button>

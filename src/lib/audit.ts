@@ -22,6 +22,8 @@ export type AuditAction =
   | 'patient_document_accessed'
   | 'kb_topic_reindexed'
   | 'kb_topic_deleted'
+  | 'treatment_created'
+  | 'treatment_generated'
 
 export type AuditEntityType =
   | 'patient'
@@ -30,6 +32,7 @@ export type AuditEntityType =
   | 'config'
   | 'user'
   | 'knowledge'
+  | 'treatment'
 
 interface LogAuditParams {
   action: AuditAction

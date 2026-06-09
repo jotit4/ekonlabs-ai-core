@@ -14,6 +14,7 @@ import {
 import type { AvailabilityShift } from '@/types/availability'
 import { AgendaDayViewSkeleton } from './AgendaDayView'
 import { ReminderBadge } from './ReminderBadge'
+import { SesionSerieBadge } from './SesionSerieBadge'
 
 function getEventColor(status: AppointmentStatus): string {
   switch (status) {
@@ -520,10 +521,14 @@ function DayListView({
                     {[serviceName, profName].filter(Boolean).join(' · ')}
                   </div>
                 )}
-                <div style={{ marginTop: 4 }}>
+                <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
                   <ReminderBadge
                     reminderSentAt={event.resource.reminder_sent_at}
                     attendanceConfirmed={event.resource.attendance_confirmed}
+                  />
+                  <SesionSerieBadge
+                    sessionIndex={event.resource.session_index}
+                    totalSessions={event.resource.treatments?.total_sessions}
                   />
                 </div>
               </div>

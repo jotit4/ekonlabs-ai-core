@@ -1,7 +1,8 @@
 'use client'
 
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { LogOut, ChevronDown } from 'lucide-react'
+import { LogOut, ChevronDown, IdCard } from 'lucide-react'
 import { createSupabaseBrowserClient } from '@/lib/supabase/client'
 import { useCurrentUser } from '@/hooks/use-current-user'
 import {
@@ -99,8 +100,16 @@ export function UserProfileButton({ collapsed }: UserProfileButtonProps) {
           </p>
         </div>
 
-        {/* Botón de logout */}
+        {/* Acciones de cuenta */}
         <div className="p-1">
+          <Link
+            href="/mi-perfil"
+            className="flex items-center gap-2 w-full px-3 py-2 text-[13px] text-[var(--color-text-primary)]
+              hover:bg-[var(--color-surface)] rounded-[6px] transition-colors duration-120 min-h-[36px]"
+          >
+            <IdCard size={15} aria-hidden="true" />
+            Mi Perfil
+          </Link>
           <button
             onClick={handleLogout}
             className="flex items-center gap-2 w-full px-3 py-2 text-[13px] text-[var(--color-text-primary)]

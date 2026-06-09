@@ -112,6 +112,12 @@ vi.mock('@/components/agenda/RescheduleTurnoModal', () => ({
   RescheduleTurnoModal: () => null,
 }))
 
+// Mock de NewPaqueteModal (Story 13.5) — usa useList de Refine, sin provider en este test
+vi.mock('@/components/paquetes/NewPaqueteModal', () => ({
+  NewPaqueteModal: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="new-paquete-modal" /> : null,
+}))
+
 vi.mock('@/components/agenda/AgendaFilters', () => ({
   AgendaFilters: ({ showFilters }: { showFilters: boolean }) =>
     showFilters ? <div data-testid="agenda-filters" /> : null,
@@ -246,6 +252,29 @@ describe('AgendaPage', () => {
     mockSearchParamsData = { vista: 'mes' }
     render(<AgendaPage />)
     expect(screen.queryByRole('button', { name: /nuevo turno/i })).not.toBeInTheDocument()
+  })
+
+  // ── CTA secundario "+ Nuevo paquete" (Story 13.5) ──────────────────────────
+  it('el CTA "+ Nuevo paquete" aparece para admin en vista día', () => {
+    vi.mocked(useUserRole).mockReturnValue('admin')
+    mockSearchParamsData = { vista: 'dia' }
+    render(<AgendaPage />)
+    expect(screen.getByRole('button', { name: /nuevo paquete/i })).toBeInTheDocument()
+  })
+
+  it('el CTA "+ Nuevo paquete" NO aparece cuando el rol no está cargado (null)', () => {
+    vi.mocked(useUserRole).mockReturnValue(null)
+    mockSearchParamsData = { vista: 'dia' }
+    render(<AgendaPage />)
+    expect(screen.queryByRole('button', { name: /nuevo paquete/i })).not.toBeInTheDocument()
+  })
+
+  it('al hacer click en "+ Nuevo paquete" abre el NewPaqueteModal (sin initialPatient)', () => {
+    vi.mocked(useUserRole).mockReturnValue('receptionist')
+    mockSearchParamsData = { vista: 'dia' }
+    render(<AgendaPage />)
+    fireEvent.click(screen.getByRole('button', { name: /nuevo paquete/i }))
+    expect(screen.getByTestId('new-paquete-modal')).toBeInTheDocument()
   })
 
   it('muestra AgendaFilters cuando el rol es admin', () => {
