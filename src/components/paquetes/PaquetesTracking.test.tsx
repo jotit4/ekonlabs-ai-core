@@ -25,6 +25,11 @@ vi.mock('./TreatmentPlanPanel', () => ({
   TreatmentPlanPanel: () => null,
 }))
 
+// SessionNotePanel (Story 14.3) — mismo recurso: se testea en su propio archivo.
+vi.mock('./SessionNotePanel', () => ({
+  SessionNotePanel: () => null,
+}))
+
 import { PaquetesTracking } from './PaquetesTracking'
 
 function makeWrapper() {

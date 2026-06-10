@@ -64,6 +64,23 @@ export interface TreatmentPlan {
   updated_at: string
 }
 
+// Contrato de la fila `session_notes` (Story 14.3 — Epic 14 HCE).
+// Columnas EXACTAS de la migración 041 (supabase/migrations/...041_session_notes_table.sql).
+// 1 evolución por turno (UNIQUE appointment_id). `treatment_id` NULLABLE:
+// un turno suelto sin paquete TAMBIÉN evoluciona (AC del epic).
+export interface SessionNote {
+  session_note_id: string
+  tenant_id: string
+  appointment_id: string
+  treatment_id: string | null
+  patient_id: string
+  worked_on: string | null
+  progress: string | null
+  author_id: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface TreatmentProgress {
   consumidas: number
   restantes: number

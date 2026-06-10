@@ -30,6 +30,8 @@ export type AuditAction =
   | 'treatment_session_justified'
   // Story 14.2 — upsert del plan de tratamiento (HCE) ligado al paquete.
   | 'treatment_plan_updated'
+  // Story 14.3 — upsert de la evolución por sesión (HCE) ligada al turno.
+  | 'session_note_updated'
 
 export type AuditEntityType =
   | 'patient'

@@ -37,6 +37,13 @@ vi.mock('date-fns/locale', async (importOriginal) => {
   return actual
 })
 
+// SessionNotePanel (Story 14.3) se testea en su propio archivo; acá se mockea
+// para no arrastrar useCurrentTenant/auth al test del modal (mismo recurso que
+// PaquetesTracking.test con TreatmentPlanPanel en 14.2).
+vi.mock('@/components/paquetes/SessionNotePanel', () => ({
+  SessionNotePanel: () => null,
+}))
+
 import { TurnoDetailModal } from './TurnoDetailModal'
 
 const BASE_APPOINTMENT: Appointment = {

@@ -5,6 +5,7 @@ import { format, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { type Appointment, STATUS_LABELS } from '@/types/appointments'
 import { ReminderBadge } from './ReminderBadge'
+import { SessionNotePanel } from '@/components/paquetes/SessionNotePanel'
 
 interface TurnoDetailModalProps {
   open: boolean
@@ -68,6 +69,17 @@ export function TurnoDetailModal({
                 />
               )}
             </div>
+
+            {/* Evolución de la sesión (Story 14.3 — HCE): el panel se auto-gatea
+                por rol (null si no doctor/admin) — sin lógica de rol acá.
+                Cubre turnos de serie (badge Sesión X/N) y turnos sueltos. */}
+            {appointment && (
+              <SessionNotePanel
+                appointmentId={appointment.appointment_id}
+                sessionIndex={appointment.session_index}
+                totalSessions={appointment.treatments?.total_sessions}
+              />
+            )}
 
             <div className="flex justify-end gap-3 pt-2">
               <Dialog.Close

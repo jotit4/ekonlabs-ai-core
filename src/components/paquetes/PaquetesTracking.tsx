@@ -12,6 +12,7 @@ import {
 } from '@/types/treatments'
 import { STATUS_LABELS, type AppointmentStatus } from '@/types/appointments'
 import { TreatmentPlanPanel } from './TreatmentPlanPanel'
+import { SessionNotePanel } from './SessionNotePanel'
 
 interface PaquetesTrackingProps {
   patientId: string
@@ -141,6 +142,16 @@ export function PaquetesTracking({ patientId }: PaquetesTrackingProps) {
                       <span className="text-[var(--color-text-secondary)]">
                         {sessionStatusLabel(s.status)}
                       </span>
+                      {/* Evolución de la sesión (Story 14.3 — HCE): auto-gateado
+                          por rol (null si no doctor/admin) — vista por tratamiento
+                          de la ficha: cada sesión expande su evolución in situ. */}
+                      <div className="w-full">
+                        <SessionNotePanel
+                          appointmentId={s.appointment_id}
+                          sessionIndex={s.session_index}
+                          totalSessions={t.total_sessions}
+                        />
+                      </div>
                     </li>
                   ))}
                 </ul>
