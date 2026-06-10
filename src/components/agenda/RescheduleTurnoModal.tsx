@@ -10,6 +10,11 @@ import { rescheduleSchema, type RescheduleFormValues } from '@/lib/schemas/resch
 import { generateTimeSlots } from '@/lib/utils/time-slots'
 import type { Appointment } from '@/types/appointments'
 
+interface ProfessionalOption {
+  professional_id: string
+  name: string
+}
+
 interface RescheduleTurnoModalProps {
   open: boolean
   onClose: () => void
@@ -26,6 +31,41 @@ export function RescheduleTurnoModal({
   const queryClient = useQueryClient()
   const [slotConflictError, setSlotConflictError] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  // Story 13.4 (corrección Medium): el selector lista SOLO los profesionales que
+  // atienden el servicio del turno (vía /api/services/[serviceId]/profesionales),
+  // NO todos los del tenant. Evita reasignar a un profesional que no da el servicio.
+  const [profesionales, setProfesionales] = useState<ProfessionalOption[]>([])
+
+  const serviceId = appointment?.service_id ?? null
+
+  useEffect(() => {
+    let cancelled = false
+    // setState dentro del async IIFE para no disparar cascading renders síncronos
+    // (regla react-hooks/set-state-in-effect — mismo patrón que NewTurnoModal).
+    void (async () => {
+      if (!open || !serviceId) {
+        if (!cancelled) setProfesionales([])
+        return
+      }
+      try {
+        const res = await fetch(
+          `/api/services/${encodeURIComponent(serviceId)}/profesionales`,
+        )
+        if (cancelled) return
+        if (!res.ok) {
+          setProfesionales([])
+          return
+        }
+        const body = (await res.json()) as { data?: ProfessionalOption[] }
+        if (!cancelled) setProfesionales(body.data ?? [])
+      } catch {
+        if (!cancelled) setProfesionales([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [open, serviceId])
 
   const durationMinutes = appointment?.services?.duration_minutes ?? 60
   const timeSlots = generateTimeSlots(durationMinutes)
@@ -38,12 +78,15 @@ export function RescheduleTurnoModal({
   const defaultTime = appointment?.start_at
     ? format(parseISO(appointment.start_at), 'HH:mm')
     : ''
+  // Story 13.4 — profesional actual del turno como default del selector (opcional).
+  const defaultProfessional = appointment?.professional_id ?? ''
 
   const form = useForm<RescheduleFormValues>({
     resolver: standardSchemaResolver(rescheduleSchema),
     defaultValues: {
       appointment_date: defaultDate,
       appointment_time_hhmm: defaultTime,
+      professional_id: defaultProfessional,
     },
   })
 
@@ -59,9 +102,23 @@ export function RescheduleTurnoModal({
     form.reset({
       appointment_date: newDefaultDate,
       appointment_time_hhmm: newDefaultTime,
+      professional_id: appointment.professional_id ?? '',
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appointment?.appointment_id])
+
+  // Story 13.4 (corrección Medium): el <select> de profesional se puebla async.
+  // Cuando la lista del servicio llega y contiene al profesional actual del turno,
+  // re-aplicar el valor para que quede pre-seleccionado (el reset corre antes de
+  // que existan las <option>, por lo que el DOM caería a "Mantener profesional actual").
+  useEffect(() => {
+    const current = appointment?.professional_id
+    if (!current) return
+    if (profesionales.some((p) => p.professional_id === current)) {
+      form.setValue('professional_id', current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profesionales, appointment?.professional_id])
 
   const handleClose = () => {
     setSlotConflictError(null)
@@ -80,14 +137,23 @@ export function RescheduleTurnoModal({
     const startAt = new Date(startAtStr)
     const endAt = new Date(startAt.getTime() + durationMinutes * 60 * 1000)
 
+    // Story 13.4 — incluir professional_id en el body SOLO si el usuario lo cambió
+    // respecto del actual (y no es vacío). Sin cambio → body idéntico al reschedule
+    // actual (sin regresión para turnos sueltos).
+    const body: { start_at: string; end_at: string; professional_id?: string } = {
+      start_at: startAtStr,
+      end_at: endAt.toISOString(),
+    }
+    const selectedProfessional = values.professional_id ?? ''
+    if (selectedProfessional && selectedProfessional !== (appointment.professional_id ?? '')) {
+      body.professional_id = selectedProfessional
+    }
+
     try {
       const response = await fetch(`/api/appointments/${appointment.appointment_id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          start_at: startAtStr,
-          end_at: endAt.toISOString(),
-        }),
+        body: JSON.stringify(body),
       })
 
       if (response.status === 409) {
@@ -96,14 +162,23 @@ export function RescheduleTurnoModal({
       }
 
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}))
-        setSubmitError((body as { error?: string }).error ?? 'Error al reprogramar el turno')
+        const errorBody = await response.json().catch(() => ({}))
+        setSubmitError((errorBody as { error?: string }).error ?? 'Error al reprogramar el turno')
         return
       }
 
       // Éxito — invalidar query del día nuevo y del día actual
       queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
       queryClient.invalidateQueries({ queryKey: ['agenda', 'day', values.appointment_date] })
+
+      // Story 13.4 — si el turno pertenece a una serie/paquete, invalidar el tracking
+      // de tratamientos para refrescar la sección "Paquetes" de la ficha (§13.5) y el
+      // badge "Sesión X/N" del Calendario. Condicional para no invalidar de más en
+      // turnos sueltos (package_id == null).
+      if (appointment.package_id != null) {
+        queryClient.invalidateQueries({ queryKey: ['treatments'] })
+      }
+
       handleClose()
     } catch {
       setSubmitError('Error de red. Verificá tu conexión e intentá de nuevo.')
@@ -214,6 +289,43 @@ export function RescheduleTurnoModal({
                 {slotConflictError && (
                   <p id="reschedule-slot-error" role="alert" className="mt-1 text-xs text-red-600">
                     {slotConflictError}
+                  </p>
+                )}
+              </div>
+
+              {/* Profesional (Story 13.4 — reasignación opcional de la sesión) */}
+              <div>
+                <label
+                  htmlFor="reschedule-professional"
+                  className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
+                >
+                  Profesional
+                </label>
+                <select
+                  id="reschedule-professional"
+                  {...form.register('professional_id')}
+                  className={inputClass(!!form.formState.errors.professional_id)}
+                  aria-invalid={!!form.formState.errors.professional_id}
+                  aria-describedby={
+                    form.formState.errors.professional_id
+                      ? 'reschedule-professional-error'
+                      : undefined
+                  }
+                >
+                  <option value="">Mantener profesional actual</option>
+                  {profesionales.map((p) => (
+                    <option key={p.professional_id} value={p.professional_id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+                {form.formState.errors.professional_id && (
+                  <p
+                    id="reschedule-professional-error"
+                    role="alert"
+                    className="mt-1 text-xs text-red-600"
+                  >
+                    {form.formState.errors.professional_id.message}
                   </p>
                 )}
               </div>

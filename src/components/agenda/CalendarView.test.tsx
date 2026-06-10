@@ -651,4 +651,144 @@ describe('CalendarView', () => {
       expect(screen.getByText('Sesión 2')).toBeInTheDocument()
     })
   })
+
+  // ── Story 13.6 — diálogo de decisión manual para turnos de serie ────────────
+  describe('Story 13.6 — decisión manual (turnos de serie)', () => {
+    const SERIE_APPOINTMENT: Appointment = {
+      ...BASE_APPOINTMENT,
+      package_id: 'trt-1',
+      session_index: 3,
+      treatments: { total_sessions: 10, status: 'active' },
+    }
+
+    it('no-show de un turno de SERIE abre el diálogo de decisión (no PATCH directo)', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[SERIE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      await user.click(screen.getByLabelText(/marcar asistencia de juan garcía/i))
+      await user.click(screen.getByRole('menuitem', { name: /marcar no-show/i }))
+
+      // Aparece el diálogo de decisión con las 3 opciones.
+      expect(screen.getByText(/¿qué pasa con esta sesión\?/i)).toBeInTheDocument()
+      expect(screen.getByRole('radio', { name: /recuperar/i })).toBeInTheDocument()
+      // NO se hizo el PATCH directo todavía.
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+
+    it('cancelar un turno de SERIE abre el diálogo de decisión tras confirmar', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[SERIE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      await user.click(screen.getByLabelText(/cancelar turno de juan garcía/i))
+      await user.click(screen.getByRole('button', { name: /sí, cancelar turno/i }))
+
+      expect(screen.getByText(/¿qué pasa con esta sesión\?/i)).toBeInTheDocument()
+      // Aún sin PATCH: la recepcionista debe elegir una opción primero.
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+
+    it('confirmar "Consumir" en el diálogo hace PATCH con decision y invalida treatments', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[SERIE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      await user.click(screen.getByLabelText(/marcar asistencia de juan garcía/i))
+      await user.click(screen.getByRole('menuitem', { name: /marcar no-show/i }))
+      await user.click(screen.getByRole('radio', { name: /consumir/i }))
+      await user.click(screen.getByRole('button', { name: /confirmar/i }))
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          '/api/appointments/apt-1/status',
+          expect.objectContaining({
+            method: 'PATCH',
+            body: JSON.stringify({ status: 'no_show', decision: 'consume' }),
+          })
+        )
+      })
+      // Invalida la agenda + el tracking de 13.5.
+      await waitFor(() => {
+        expect(mockInvalidateQueries).toHaveBeenCalledWith(
+          expect.objectContaining({ queryKey: ['treatments'], exact: false })
+        )
+        expect(mockInvalidateQueries).toHaveBeenCalledWith(
+          expect.objectContaining({ queryKey: ['treatments', 'by-patient', 'pat-1'] })
+        )
+      })
+    })
+
+    it('no-show de un turno SUELTO NO abre el diálogo (PATCH directo, no regresión)', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      await user.click(screen.getByLabelText(/marcar asistencia de juan garcía/i))
+      await user.click(screen.getByRole('menuitem', { name: /marcar no-show/i }))
+
+      // No aparece el diálogo de decisión.
+      expect(screen.queryByText(/¿qué pasa con esta sesión\?/i)).not.toBeInTheDocument()
+      // Se hace el PATCH directo SIN decision.
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          '/api/appointments/apt-1/status',
+          expect.objectContaining({
+            method: 'PATCH',
+            body: JSON.stringify({ status: 'no_show' }),
+          })
+        )
+      })
+    })
+
+    it('"Confirmar asistencia" (completed) NUNCA abre el diálogo, incluso en serie', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[SERIE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      await user.click(screen.getByLabelText(/marcar asistencia de juan garcía/i))
+      await user.click(screen.getByRole('menuitem', { name: /confirmar asistencia/i }))
+
+      expect(screen.queryByText(/¿qué pasa con esta sesión\?/i)).not.toBeInTheDocument()
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          '/api/appointments/apt-1/status',
+          expect.objectContaining({
+            method: 'PATCH',
+            body: JSON.stringify({ status: 'completed' }),
+          })
+        )
+      })
+    })
+  })
 })

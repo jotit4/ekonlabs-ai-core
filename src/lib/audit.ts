@@ -24,6 +24,10 @@ export type AuditAction =
   | 'kb_topic_deleted'
   | 'treatment_created'
   | 'treatment_generated'
+  // Story 13.6 — decisión manual de la recepcionista al ausentarse una sesión de serie.
+  | 'treatment_session_consumed'
+  | 'treatment_session_recoverable'
+  | 'treatment_session_justified'
 
 export type AuditEntityType =
   | 'patient'

@@ -15,6 +15,8 @@ import type { AvailabilityShift } from '@/types/availability'
 import { AgendaDayViewSkeleton } from './AgendaDayView'
 import { ReminderBadge } from './ReminderBadge'
 import { SesionSerieBadge } from './SesionSerieBadge'
+import { AbsenceDecisionDialog } from './AbsenceDecisionDialog'
+import type { AbsenceDecision } from '@/lib/schemas/absence-decision.schema'
 
 function getEventColor(status: AppointmentStatus): string {
   switch (status) {
@@ -311,14 +313,27 @@ function DayListView({
   const [attendanceOpenId, setAttendanceOpenId] = useState<string | null>(null)
   const [attendanceLoading, setAttendanceLoading] = useState(false)
 
+  // Story 13.6 — diálogo de decisión manual para turnos de serie (no_show / cancelled).
+  const [absenceTarget, setAbsenceTarget] = useState<
+    { appointment: Appointment; action: 'no_show' | 'cancelled' } | null
+  >(null)
+  const [absenceLoading, setAbsenceLoading] = useState(false)
+  const [absenceError, setAbsenceError] = useState<string | null>(null)
+
   async function handleUpdateStatus(
     appointmentId: string,
-    status: 'cancelled' | 'completed' | 'no_show'
+    status: 'cancelled' | 'completed' | 'no_show',
+    extra?: { decision: AbsenceDecision; note?: string }
   ) {
+    const payload: { status: typeof status; decision?: AbsenceDecision; note?: string } = { status }
+    if (extra) {
+      payload.decision = extra.decision
+      if (extra.note !== undefined) payload.note = extra.note
+    }
     const response = await fetch(`/api/appointments/${appointmentId}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify(payload),
     })
     if (!response.ok) {
       const body = await response.json().catch(() => ({}))
@@ -326,8 +341,25 @@ function DayListView({
     }
   }
 
+  // Tras una decisión de serie, además de la agenda hay que refrescar el tracking
+  // de la story 13.5 (contador de sesiones en la ficha del paciente).
+  function invalidateTrackingQueries(patientId: string | null) {
+    queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
+    queryClient.invalidateQueries({ queryKey: ['treatments'], exact: false })
+    if (patientId) {
+      queryClient.invalidateQueries({ queryKey: ['treatments', 'by-patient', patientId] })
+    }
+  }
+
   async function handleCancelConfirm() {
     if (!cancelTarget) return
+    // Turno de serie → abrir el diálogo de decisión en lugar de cancelar directo.
+    if (cancelTarget.package_id) {
+      setAbsenceError(null)
+      setAbsenceTarget({ appointment: cancelTarget, action: 'cancelled' })
+      setCancelTarget(null)
+      return
+    }
     setCancelLoading(true)
     setCancelError(null)
     try {
@@ -345,6 +377,14 @@ function DayListView({
     appointment: Appointment,
     status: 'completed' | 'no_show'
   ) {
+    // Story 13.6 — no_show de un turno de serie → diálogo de decisión manual.
+    // 'completed' (confirmar asistencia) NUNCA dispara el diálogo.
+    if (status === 'no_show' && appointment.package_id) {
+      setAbsenceError(null)
+      setAbsenceTarget({ appointment, action: 'no_show' })
+      setAttendanceOpenId(null)
+      return
+    }
     setAttendanceLoading(true)
     try {
       await handleUpdateStatus(appointment.appointment_id, status)
@@ -355,6 +395,24 @@ function DayListView({
       setAttendanceOpenId(null)
     } finally {
       setAttendanceLoading(false)
+    }
+  }
+
+  async function handleAbsenceConfirm(decision: AbsenceDecision, note?: string) {
+    if (!absenceTarget) return
+    setAbsenceLoading(true)
+    setAbsenceError(null)
+    try {
+      await handleUpdateStatus(absenceTarget.appointment.appointment_id, absenceTarget.action, {
+        decision,
+        note,
+      })
+      invalidateTrackingQueries(absenceTarget.appointment.patient_id)
+      setAbsenceTarget(null)
+    } catch (err) {
+      setAbsenceError(err instanceof Error ? err.message : 'Error al aplicar la decisión')
+    } finally {
+      setAbsenceLoading(false)
     }
   }
 
@@ -661,6 +719,18 @@ function DayListView({
         <p role="alert" style={{ fontSize: 13, color: '#ef4444', marginTop: 8, textAlign: 'center' }}>
           {cancelError}
         </p>
+      )}
+
+      {/* Story 13.6 — diálogo de decisión manual para turnos de serie */}
+      {absenceTarget && (
+        <AbsenceDecisionDialog
+          appointment={absenceTarget.appointment}
+          action={absenceTarget.action}
+          onConfirm={handleAbsenceConfirm}
+          onClose={() => { setAbsenceTarget(null); setAbsenceError(null) }}
+          isLoading={absenceLoading}
+          error={absenceError}
+        />
       )}
     </>
   )
