@@ -19,6 +19,12 @@ vi.mock('@/lib/supabase/client', () => ({
   }),
 }))
 
+// TreatmentPlanPanel (Story 14.2) se testea en su propio archivo; acá se mockea
+// para no arrastrar useCurrentTenant/auth al test de tracking (13.5).
+vi.mock('./TreatmentPlanPanel', () => ({
+  TreatmentPlanPanel: () => null,
+}))
+
 import { PaquetesTracking } from './PaquetesTracking'
 
 function makeWrapper() {

@@ -44,6 +44,26 @@ export interface TreatmentWithSessions extends Treatment {
   appointments: TreatmentSession[] | null
 }
 
+// Contrato de la fila `treatment_plans` (Story 14.2 — Epic 14 HCE).
+// Columnas EXACTAS de la migración 040 (supabase/migrations/...040_treatment_plans_table.sql).
+// 1:1 lógico con `treatments` (UNIQUE treatment_id). discharge_* son scope de 14.6
+// (existen en la tabla, viajan como null — esta story NO los escribe).
+export interface TreatmentPlan {
+  plan_id: string
+  tenant_id: string
+  treatment_id: string
+  patient_id: string
+  motivo_consulta: string | null
+  objetivo: string | null
+  cie10_code: string | null
+  indicated_sessions: number | null
+  discharge_at: string | null
+  discharge_report: string | null
+  author_id: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface TreatmentProgress {
   consumidas: number
   restantes: number

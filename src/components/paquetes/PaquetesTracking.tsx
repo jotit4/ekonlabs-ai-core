@@ -11,6 +11,7 @@ import {
   type TreatmentWithSessions,
 } from '@/types/treatments'
 import { STATUS_LABELS, type AppointmentStatus } from '@/types/appointments'
+import { TreatmentPlanPanel } from './TreatmentPlanPanel'
 
 interface PaquetesTrackingProps {
   patientId: string
@@ -145,6 +146,10 @@ export function PaquetesTracking({ patientId }: PaquetesTrackingProps) {
                 </ul>
               </div>
             )}
+
+            {/* Plan de tratamiento (Story 14.2 — HCE): el panel se auto-gatea
+                por rol (null si no doctor/admin) — sin lógica de rol acá. */}
+            <TreatmentPlanPanel treatmentId={t.treatment_id} />
           </li>
         )
       })}
