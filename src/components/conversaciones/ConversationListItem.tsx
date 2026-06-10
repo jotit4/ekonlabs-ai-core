@@ -8,18 +8,24 @@ import type { ConversationSummary, ConversationStatus, ConfidenceLevel } from '@
 
 // ─── Helpers de mapeo estado → StatusDot ─────────────────────────────────────
 
+// Semáforo de la bandeja (decisión de negocio 2026-06):
+// 🟡 warning  = "atendé, te necesita" (accionable / needs_intervention)
+// 🟢 active   = el agente la maneja solo (incluye confianza media)
+// 🔵 human    = humano en control (takeover)
+// ⚪ inactive = cerrada
 function statusToVariant(status: ConversationStatus, confidenceLevel: ConfidenceLevel): StatusDotVariant {
   switch (status) {
     case 'needs_intervention':
-      return 'alert'
+      return 'warning'
     case 'human_takeover':
       return 'human'
     case 'resolved':
       return 'inactive'
     case 'ai_active':
-      if (confidenceLevel === 'high') return 'active'
-      if (confidenceLevel === 'medium') return 'warning'
-      return 'alert' // low confidence
+      // Verde mientras el agente la maneja — confianza media incluida.
+      // Confianza baja es accionable → amarillo.
+      if (confidenceLevel === 'low') return 'warning'
+      return 'active'
   }
 }
 

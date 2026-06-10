@@ -29,14 +29,16 @@ describe('ConversationListItem', () => {
     vi.clearAllMocks()
   })
 
-  it('needs_intervention → StatusDot alert, label "Necesita intervención"', () => {
+  it('needs_intervention → StatusDot AMARILLO (warning, "atendé, te necesita"), label "Necesita intervención"', () => {
     render(
       <ConversationListItem
         conversation={makeConversation({ status: 'needs_intervention', confidence_level: 'low' })}
         onSelect={onSelect}
       />
     )
-    expect(screen.getByRole('img', { name: /necesita intervención/i })).toBeInTheDocument()
+    const dot = screen.getByRole('img', { name: /necesita intervención/i })
+    expect(dot).toBeInTheDocument()
+    expect(dot).toHaveStyle({ backgroundColor: '#ff9f0a' }) // amarillo = accionable
   })
 
   it('needs_intervention → muestra texto "Requiere atención"', () => {
@@ -59,24 +61,40 @@ describe('ConversationListItem', () => {
     expect(screen.getByText('Requiere atención')).toBeInTheDocument()
   })
 
-  it('ai_active + confidence_level high → StatusDot active, label "IA activa"', () => {
+  it('ai_active + confidence_level high → StatusDot VERDE (active), label "IA activa"', () => {
     render(
       <ConversationListItem
         conversation={makeConversation({ status: 'ai_active', confidence_level: 'high' })}
         onSelect={onSelect}
       />
     )
-    expect(screen.getByRole('img', { name: /IA activa/i })).toBeInTheDocument()
+    const dot = screen.getByRole('img', { name: /IA activa/i })
+    expect(dot).toBeInTheDocument()
+    expect(dot).toHaveStyle({ backgroundColor: '#34c759' }) // verde = el agente la maneja
   })
 
-  it('ai_active + confidence_level medium → StatusDot warning, label "Confianza media"', () => {
+  it('ai_active + confidence_level medium → StatusDot VERDE (el agente la maneja), label "Confianza media"', () => {
     render(
       <ConversationListItem
         conversation={makeConversation({ status: 'ai_active', confidence_level: 'medium' })}
         onSelect={onSelect}
       />
     )
-    expect(screen.getByRole('img', { name: /confianza media/i })).toBeInTheDocument()
+    const dot = screen.getByRole('img', { name: /confianza media/i })
+    expect(dot).toBeInTheDocument()
+    expect(dot).toHaveStyle({ backgroundColor: '#34c759' }) // verde — confianza media incluida
+  })
+
+  it('human_takeover → StatusDot AZUL (human), label "Humano en control"', () => {
+    render(
+      <ConversationListItem
+        conversation={makeConversation({ status: 'human_takeover', confidence_level: 'medium' })}
+        onSelect={onSelect}
+      />
+    )
+    const dot = screen.getByRole('img', { name: /humano en control/i })
+    expect(dot).toBeInTheDocument()
+    expect(dot).toHaveStyle({ backgroundColor: '#0071e3' }) // azul = humano en control
   })
 
   it('resolved → StatusDot inactive, label "Resuelta"', () => {

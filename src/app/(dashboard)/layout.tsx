@@ -4,6 +4,7 @@ import { parseJwtPayload } from '@/lib/utils/jwt'
 import { AppSidebar } from '@/components/AppSidebar'
 import { DashboardProviders } from './providers'
 import { ShadowModeBanner } from '@/components/ShadowModeBanner'
+import { OnboardingProvider } from '@/components/onboarding/OnboardingProvider'
 import type { UserRole } from '@/types/index'
 
 export const dynamic = 'force-dynamic'
@@ -32,6 +33,7 @@ export default async function DashboardLayout({
 
   return (
     <DashboardProviders>
+      <OnboardingProvider role={role}>
       <div className="flex h-screen overflow-hidden bg-[var(--color-bg)]">
         <a href="#main-content" className="sr-only focus:not-sr-only">
           Ir al contenido principal
@@ -47,6 +49,7 @@ export default async function DashboardLayout({
           </main>
         </div>
       </div>
+      </OnboardingProvider>
     </DashboardProviders>
   )
 }

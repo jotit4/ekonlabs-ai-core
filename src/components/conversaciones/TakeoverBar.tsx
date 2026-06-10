@@ -103,6 +103,7 @@ export function TakeoverBar({
           {/* "Liberar al agente" — ghost button, activado en Story 4.7 */}
           <button
             aria-label="Liberar al agente"
+            data-tour="release-btn"
             onClick={() => release()}
             disabled={isPendingRelease}
             style={{
@@ -129,6 +130,7 @@ export function TakeoverBar({
               onKeyDown={handleKeyDown}
               placeholder="Escribí un mensaje..."
               aria-label="Escribí tu mensaje"
+              data-tour="reply-input"
               disabled={isPendingSend}
               rows={1}
               style={{
@@ -219,6 +221,7 @@ export function TakeoverBar({
         onClick={() => takeover(phone)}
         disabled={isPending}
         aria-label="Asumir control de la conversación"
+        data-tour="takeover-btn"
         style={{
           background: 'var(--color-interactive)',
           color: 'white',

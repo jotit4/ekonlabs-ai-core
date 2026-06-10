@@ -37,7 +37,7 @@ export function UserManagementView() {
   return (
     <div className="space-y-8">
       {/* Formulario de creación */}
-      <div className="bg-[var(--color-surface)] rounded-[12px] p-6 border border-[var(--color-border)]">
+      <div data-tour="create-user-btn" className="bg-[var(--color-surface)] rounded-[12px] p-6 border border-[var(--color-border)]">
         <h2 className="text-[16px] font-semibold text-[var(--color-text-primary)] mb-4">
           Invitar nuevo usuario
         </h2>

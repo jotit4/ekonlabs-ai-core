@@ -293,6 +293,7 @@ export function AgendaView() {
                 onClick={() => { setNewTurnoPrefill(null); setShowNewTurnoModal(true) }}
                 className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-[var(--radius-sm)] px-4 text-sm text-white bg-[var(--color-interactive)] hover:opacity-90 transition-opacity"
                 aria-label="Nuevo turno"
+                data-tour="new-appointment-btn"
               >
                 + Nuevo turno
               </button>

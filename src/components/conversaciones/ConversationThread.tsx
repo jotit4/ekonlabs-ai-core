@@ -135,6 +135,7 @@ function MessageBubble({
           type="button"
           onClick={onCorrect}
           aria-label="Corregir esta respuesta del agente"
+          data-tour="correct-kb-btn"
           style={{
             marginTop: 2,
             background: 'none',

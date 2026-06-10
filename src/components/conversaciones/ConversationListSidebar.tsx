@@ -88,6 +88,7 @@ export function ConversationListSidebar() {
   return (
     <section
       aria-label="Lista de conversaciones"
+      data-tour="conversation-list"
       style={{ borderRight: '1px solid var(--color-border)', overflowY: 'auto', height: '100%' }}
     >
       {!isConnected && <RealtimeDegradationBanner />}
@@ -124,6 +125,7 @@ export function ConversationListSidebar() {
         </button>
         <button
           type="button"
+          data-tour="filter-attention"
           aria-pressed={filterMode === 'attention'}
           onClick={() => setFilterMode('attention')}
           style={{
