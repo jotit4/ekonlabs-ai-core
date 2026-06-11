@@ -95,7 +95,13 @@ export async function PATCH(request: Request, context: RouteContext) {
     // NO actualizar tenant_id — siempre omitirlo del UPDATE
   }
 
-  // 8. UPDATE en patients — NO actualizar tenant_id
+  // 8. UPDATE en patients — NO actualizar tenant_id.
+  //    SELLADO (Story 14.4): select de retorno EXPLÍCITO de columnas administrativas
+  //    (= interface Patient) — un .select() pelado devolvería la fila completa, que
+  //    tras la migración 042 incluye antecedentes/alergias/medicacion (HCE, Ley
+  //    25.326, solo doctor/admin vía /clinical-data). Neutro en comportamiento:
+  //    PatientForm no consume el body de la respuesta (solo invalida queries).
+  //    Columnas futuras de patients deben agregarse acá a mano (default-deny).
   const { data: updated, error: updateError } = await supabase
     .from('patients')
     .update({
@@ -103,7 +109,9 @@ export async function PATCH(request: Request, context: RouteContext) {
       updated_at: new Date().toISOString(),
     })
     .eq('patient_id', id)
-    .select()
+    .select(
+      'patient_id, tenant_id, phone_number, full_name, dni, date_of_birth, email, obra_social, obra_social_number, notes, reason_for_visit, alternative_phone, address, created_at, updated_at, deletion_requested_at, deletion_effective_at'
+    )
     .single()
 
   if (updateError) {

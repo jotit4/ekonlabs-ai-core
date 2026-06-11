@@ -14,6 +14,7 @@ import { AppointmentHistory, type AppointmentForHistory } from '@/components/pac
 import { WhatsAppHistory } from '@/components/pacientes/WhatsAppHistory'
 import { PatientStatusBadge } from '@/components/pacientes/PatientStatusBadge'
 import { ClinicalNoteEditor } from '@/components/pacientes/ClinicalNoteEditor'
+import { PatientClinicalDataPanel } from '@/components/pacientes/PatientClinicalDataPanel'
 import { ClinicalNotesHistory } from '@/components/pacientes/ClinicalNotesHistory'
 import { PatientDocuments } from '@/components/pacientes/PatientDocuments'
 import { PatientDeletionRequest } from '@/components/pacientes/PatientDeletionRequest'
@@ -126,10 +127,16 @@ export default function PacienteFichaPage() {
   } = useQuery<PatientWithHistory | null>({
     queryKey: ['patients', 'one', patientId],
     queryFn: async () => {
+      // SELLADO (Story 14.4): select EXPLÍCITO de columnas administrativas — NUNCA '*'.
+      // Tras la migración 042, `patients` tiene antecedentes/alergias/medicacion (HCE,
+      // Ley 25.326) y la RLS NO distingue rol: un '*' acá los traería al browser de
+      // receptionist. La lista = interface Patient completa; columnas futuras de
+      // patients deben agregarse acá a mano (default-deny por columna). Los campos
+      // clínicos viajan SOLO por GET /api/patients/[id]/clinical-data (doctor/admin).
       const { data, error } = await supabase
         .from('patients')
         .select(
-          '*, appointments(appointment_id, start_at, end_at, status, reminder_sent_at, attendance_confirmed, services(name, professional_name))'
+          'patient_id, tenant_id, phone_number, full_name, dni, date_of_birth, email, obra_social, obra_social_number, notes, reason_for_visit, alternative_phone, address, created_at, updated_at, deletion_requested_at, deletion_effective_at, appointments(appointment_id, start_at, end_at, status, reminder_sent_at, attendance_confirmed, services(name, professional_name))'
         )
         .eq('patient_id', patientId)
         .maybeSingle()
@@ -464,6 +471,11 @@ export default function PacienteFichaPage() {
       {activeTab === 'notas' && (role === 'doctor' || role === 'admin') && (
         <section aria-label="Notas clínicas" role="tabpanel">
           <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Notas clínicas</h2>
+
+          {/* Contexto clínico de base (Story 14.4 — HCE): antecedentes/alergias/medicación.
+              Auto-gateado por rol por dentro (doble defensa; el tab ya es doctor/admin).
+              readOnly si hay eliminación pendiente: consultar sí, editar no. */}
+          <PatientClinicalDataPanel patientId={patientId} readOnly={hasDeletionPending} />
 
           {/* Nueva nota — solo si no hay eliminación pendiente */}
           {!hasDeletionPending && (
