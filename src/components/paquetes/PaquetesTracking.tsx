@@ -159,8 +159,13 @@ export function PaquetesTracking({ patientId }: PaquetesTrackingProps) {
             )}
 
             {/* Plan de tratamiento (Story 14.2 — HCE): el panel se auto-gatea
-                por rol (null si no doctor/admin) — sin lógica de rol acá. */}
-            <TreatmentPlanPanel treatmentId={t.treatment_id} />
+                por rol (null si no doctor/admin) — sin lógica de rol acá.
+                sessionsRemaining (Story 14.6): la confirmación del alta advierte
+                si quedan sesiones restantes en el paquete. */}
+            <TreatmentPlanPanel
+              treatmentId={t.treatment_id}
+              sessionsRemaining={t.sessions_remaining}
+            />
           </li>
         )
       })}

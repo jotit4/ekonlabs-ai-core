@@ -34,6 +34,8 @@ export type AuditAction =
   | 'session_note_updated'
   // Story 14.4 — update de antecedentes/alergias/medicación del paciente (HCE).
   | 'patient_clinical_data_updated'
+  // Story 14.6 — alta / informe final del tratamiento (HCE).
+  | 'treatment_discharged'
 
 export type AuditEntityType =
   | 'patient'

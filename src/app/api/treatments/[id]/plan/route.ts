@@ -124,6 +124,26 @@ export async function PUT(request: Request, context: RouteContext): Promise<Resp
     return Response.json({ error: 'Tratamiento no encontrado' }, { status: 404 })
   }
 
+  // 4b. Plan de SOLO LECTURA tras el alta (Story 14.6 — defensa en capas, no solo
+  //     cosmética de UI): si el plan ya tiene discharge_at, no se edita más.
+  //     Sin plan (maybeSingle → null) NO bloquea: sigue al upsert de creación.
+  const { data: existingPlan, error: existingPlanError } = await supabase
+    .from('treatment_plans')
+    .select('discharge_at')
+    .eq('treatment_id', id)
+    .maybeSingle()
+
+  if (existingPlanError) {
+    console.error('[treatments/plan/PUT] treatment_plans query error:', existingPlanError)
+    return Response.json({ error: 'Error al obtener el plan' }, { status: 500 })
+  }
+  if (existingPlan?.discharge_at != null) {
+    return Response.json(
+      { error: 'El tratamiento fue dado de alta — el plan es de solo lectura' },
+      { status: 409 },
+    )
+  }
+
   // 5. Upsert — UNIQUE(treatment_id) de la migración 040 habilita ON CONFLICT.
   //    author_id = último editor (la trazabilidad histórica la da el audit log).
   //    NO escribe discharge_at/discharge_report (scope 14.6).

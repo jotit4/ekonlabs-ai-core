@@ -4,6 +4,8 @@ import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { format, parseISO, isValid } from 'date-fns'
+import { es } from 'date-fns/locale'
 import { useCurrentTenant } from '@/hooks/use-current-tenant'
 import {
   treatmentPlanInputSchema,
@@ -13,10 +15,13 @@ import type { TreatmentPlan } from '@/types/treatments'
 
 interface TreatmentPlanPanelProps {
   treatmentId: string
+  /** Sesiones restantes del paquete — la confirmación del alta advierte si > 0 (Story 14.6). */
+  sessionsRemaining: number
 }
 
 /**
- * Plan de tratamiento 1:1 con el paquete (Story 14.2 — Epic 14 HCE).
+ * Plan de tratamiento 1:1 con el paquete (Story 14.2 — Epic 14 HCE)
+ * + alta / informe final (Story 14.6).
  *
  * AUTO-GATEADO POR ROL: HCE (Ley 25.326) → SOLO doctor/admin. Para receptionist
  * (o mientras carga el rol) devuelve null: ni botón ni sección. PaquetesTracking
@@ -24,19 +29,28 @@ interface TreatmentPlanPanelProps {
  *
  * Colapsado por defecto; al expandir carga el plan vía GET /api/treatments/[id]/plan
  * (API Route — el guard 403 vive en el server; la RLS 040 es la segunda capa).
- * Guardado EXPLÍCITO con botón (PUT = upsert) — el autosave es patrón de 14.3, no acá.
+ *
+ * Tres estados según el plan (Story 14.6):
+ * - `plan === null` → solo el form de creación de 14.2 (sin sección de alta:
+ *   el server respondería 409 "registrá el plan antes").
+ * - plan sin alta → form de edición + sección "Alta / informe final" con
+ *   confirmación inline en dos pasos (advierte si quedan sesiones restantes).
+ * - `plan.discharge_at != null` → SOLO LECTURA: campos como texto + informe
+ *   final + fecha del alta (el PUT del server también responde 409).
  */
-export function TreatmentPlanPanel({ treatmentId }: TreatmentPlanPanelProps) {
+export function TreatmentPlanPanel({ treatmentId, sessionsRemaining }: TreatmentPlanPanelProps) {
   const { role, loading } = useCurrentTenant()
 
   // Gate de rol ANTES de montar el contenido (componente aparte para no
   // condicionar hooks): receptionist / rol desconocido / cargando → nada.
   if (loading || !['doctor', 'admin'].includes(role ?? '')) return null
 
-  return <TreatmentPlanPanelContent treatmentId={treatmentId} />
+  return (
+    <TreatmentPlanPanelContent treatmentId={treatmentId} sessionsRemaining={sessionsRemaining} />
+  )
 }
 
-function TreatmentPlanPanelContent({ treatmentId }: TreatmentPlanPanelProps) {
+function TreatmentPlanPanelContent({ treatmentId, sessionsRemaining }: TreatmentPlanPanelProps) {
   const [expanded, setExpanded] = useState(false)
 
   const { data, isPending, isError } = useQuery<{ plan: TreatmentPlan | null }>({
@@ -77,9 +91,188 @@ function TreatmentPlanPanelContent({ treatmentId }: TreatmentPlanPanelProps) {
           )}
 
           {!isPending && !isError && data && (
-            <TreatmentPlanForm treatmentId={treatmentId} plan={data.plan} />
+            data.plan?.discharge_at != null ? (
+              <TreatmentPlanReadOnly plan={data.plan} />
+            ) : (
+              <>
+                <TreatmentPlanForm treatmentId={treatmentId} plan={data.plan} />
+                {/* Sección de alta SOLO con plan registrado (sin plan el server
+                    devolvería 409 — la UI ni la ofrece). */}
+                {data.plan !== null && (
+                  <DischargeSection
+                    treatmentId={treatmentId}
+                    sessionsRemaining={sessionsRemaining}
+                  />
+                )}
+              </>
+            )
           )}
         </div>
+      )}
+    </div>
+  )
+}
+
+// Fecha es-AR con guarda de invalidez (mismo criterio que fmtDate de PaquetesTracking).
+function fmtFechaAlta(iso: string): string {
+  const parsed = parseISO(iso)
+  if (!isValid(parsed)) return '—'
+  return format(parsed, "d 'de' MMMM 'de' yyyy", { locale: es })
+}
+
+// ─── Branch SOLO LECTURA post-alta (Story 14.6) ────────────────────────────────
+function TreatmentPlanReadOnly({ plan }: { plan: TreatmentPlan }) {
+  const fields: Array<{ label: string; value: string }> = [
+    { label: 'Motivo de consulta / diagnóstico', value: plan.motivo_consulta ?? '—' },
+    { label: 'Objetivo del tratamiento', value: plan.objetivo ?? '—' },
+    { label: 'Código CIE-10', value: plan.cie10_code ?? '—' },
+    {
+      label: 'Sesiones indicadas',
+      value: plan.indicated_sessions != null ? String(plan.indicated_sessions) : '—',
+    },
+  ]
+
+  return (
+    <div className="space-y-3">
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-[var(--color-text-secondary)]">
+        {fields.map((f) => (
+          <div key={f.label} className="contents">
+            <dt>{f.label}</dt>
+            <dd className="text-[var(--color-text-primary)]">{f.value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <div className="rounded-[6px] border border-[var(--color-border)] bg-[#f5f5f7] p-3">
+        <p className="mb-1 text-xs font-medium text-[var(--color-text-secondary)]">
+          Informe final
+        </p>
+        <p className="whitespace-pre-wrap text-xs text-[var(--color-text-primary)]">
+          {plan.discharge_report ?? '—'}
+        </p>
+        <p className="mt-2 text-xs text-[var(--color-text-secondary)]">
+          Alta: {plan.discharge_at ? fmtFechaAlta(plan.discharge_at) : '—'}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// ─── Sección "Alta / informe final" (Story 14.6) ───────────────────────────────
+// Confirmación INLINE en dos pasos (NO window.confirm): "Dar el alta…" abre el
+// bloque de confirmación, que advierte si quedan sesiones restantes pero permite
+// confirmar igual (decisión clínica — AC del epic).
+interface DischargeSectionProps {
+  treatmentId: string
+  sessionsRemaining: number
+}
+
+function DischargeSection({ treatmentId, sessionsRemaining }: DischargeSectionProps) {
+  const queryClient = useQueryClient()
+  const [report, setReport] = useState('')
+  const [confirming, setConfirming] = useState(false)
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/treatments/${treatmentId}/discharge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ discharge_report: report }),
+      })
+      if (!res.ok) {
+        let message = 'No se pudo dar el alta. Intentá de nuevo.'
+        try {
+          const data = await res.json()
+          if (typeof data?.error === 'string' && data.error) message = data.error
+        } catch {
+          // sin body JSON → mensaje genérico
+        }
+        throw new Error(message)
+      }
+      return res.json() as Promise<{ plan: TreatmentPlan }>
+    },
+    onSuccess: () => {
+      setConfirming(false)
+      // Doble invalidación: el plan (re-render read-only con el informe) y el
+      // tracking de paquetes (key parcial → la card pasa a "Completado" gratis
+      // vía TREATMENT_STATUS_LABELS).
+      queryClient.invalidateQueries({ queryKey: ['treatment-plan', treatmentId] })
+      queryClient.invalidateQueries({ queryKey: ['treatments', 'by-patient'] })
+    },
+  })
+
+  return (
+    <div className="mt-4 border-t border-[var(--color-border)] pt-3">
+      <p className="mb-1 text-xs font-medium text-[var(--color-text-secondary)]">
+        Alta / informe final
+      </p>
+
+      <label htmlFor={`discharge-report-${treatmentId}`} className="sr-only">
+        Informe final del tratamiento
+      </label>
+      <textarea
+        id={`discharge-report-${treatmentId}`}
+        rows={3}
+        value={report}
+        onChange={(e) => setReport(e.target.value)}
+        disabled={mutation.isPending}
+        placeholder="Informe final del tratamiento (obligatorio para dar el alta)"
+        className="w-full rounded-[6px] border border-[var(--color-border)] px-2 py-1.5 text-xs text-[var(--color-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-interactive)]"
+      />
+
+      {!confirming && (
+        <button
+          type="button"
+          onClick={() => setConfirming(true)}
+          disabled={report.trim().length === 0 || mutation.isPending}
+          className="mt-2 min-h-[44px] rounded-[6px] border border-[var(--color-border)] px-4 text-xs font-medium text-[var(--color-text-primary)] disabled:opacity-50"
+        >
+          Dar el alta…
+        </button>
+      )}
+
+      {confirming && (
+        <div
+          role="alertdialog"
+          aria-label="Confirmar alta del tratamiento"
+          className="mt-2 space-y-2 rounded-[6px] border border-[var(--color-border)] bg-[#fff8f0] p-3"
+        >
+          <p className="text-xs text-[var(--color-text-primary)]">
+            El alta cierra la historia clínica del paquete y marca el tratamiento como
+            completado. Esta acción no se puede deshacer.
+          </p>
+          {sessionsRemaining > 0 && (
+            <p className="text-xs font-medium text-amber-700">
+              Quedan {sessionsRemaining} sesiones restantes en el paquete.
+            </p>
+          )}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending}
+              className="min-h-[44px] rounded-[6px] bg-[var(--color-interactive)] px-4 text-xs font-medium text-white disabled:opacity-50"
+            >
+              {mutation.isPending ? 'Dando el alta…' : 'Confirmar alta'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              disabled={mutation.isPending}
+              className="min-h-[44px] rounded-[6px] border border-[var(--color-border)] px-4 text-xs font-medium text-[var(--color-text-primary)] disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {mutation.isError && (
+        <p role="alert" className="mt-2 text-xs text-red-600">
+          {mutation.error instanceof Error
+            ? mutation.error.message
+            : 'No se pudo dar el alta. Intentá de nuevo.'}
+        </p>
       )}
     </div>
   )

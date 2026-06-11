@@ -48,3 +48,24 @@ export const treatmentPlanInputSchema = z.strictObject({
 export type TreatmentPlanInput = z.output<typeof treatmentPlanInputSchema>
 // Input del formulario (react-hook-form + standardSchemaResolver).
 export type TreatmentPlanFormValues = z.input<typeof treatmentPlanInputSchema>
+
+// ─── Alta / informe final (Story 14.6 — Epic 14 HCE) ──────────────────────────
+// Body del POST /api/treatments/[id]/discharge. El alta es un EVENTO, no una
+// edición de campos: el ÚNICO dato que viaja es el informe final (requerido —
+// el alta sin informe no cierra formalmente la HCE).
+//
+// ESTRICTO (z.strictObject): rechaza claves desconocidas — en particular
+// `discharge_at` (lo setea el SERVER con new Date().toISOString(); aceptarlo
+// del body habilitaría backdating), `tenant_id`/`patient_id`/`author_id`
+// (nunca del body) y los 4 campos del plan (se editan por el PUT de 14.2).
+
+export const treatmentDischargeInputSchema = z.strictObject({
+  discharge_report: z
+    .string({ error: 'El informe final debe ser texto' })
+    .transform((v) => v.trim())
+    .refine((v) => v.length > 0, {
+      error: 'El informe final es obligatorio para dar el alta',
+    }),
+})
+
+export type TreatmentDischargeInput = z.output<typeof treatmentDischargeInputSchema>

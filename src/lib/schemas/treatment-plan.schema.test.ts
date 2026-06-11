@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { treatmentPlanInputSchema } from './treatment-plan.schema'
+import { treatmentDischargeInputSchema, treatmentPlanInputSchema } from './treatment-plan.schema'
 
 describe('treatmentPlanInputSchema', () => {
   describe('cie10_code', () => {
@@ -128,5 +128,85 @@ describe('treatmentPlanInputSchema', () => {
       cie10_code: 'M54.5',
       indicated_sessions: 10,
     })
+  })
+})
+
+describe('treatmentDischargeInputSchema (Story 14.6 — alta / informe final)', () => {
+  it('acepta un informe válido y lo trimmea', () => {
+    const parsed = treatmentDischargeInputSchema.parse({
+      discharge_report: '  Paciente evolucionó favorablemente. Alta médica.  ',
+    })
+    expect(parsed).toEqual({
+      discharge_report: 'Paciente evolucionó favorablemente. Alta médica.',
+    })
+  })
+
+  it("rechaza informe vacío ('')", () => {
+    expect(treatmentDischargeInputSchema.safeParse({ discharge_report: '' }).success).toBe(false)
+  })
+
+  it("rechaza informe de solo espacios ('   ')", () => {
+    expect(treatmentDischargeInputSchema.safeParse({ discharge_report: '   ' }).success).toBe(
+      false,
+    )
+  })
+
+  it('rechaza body sin discharge_report (el alta ES el informe final)', () => {
+    expect(treatmentDischargeInputSchema.safeParse({}).success).toBe(false)
+  })
+
+  it('rechaza discharge_report no-string (null / número)', () => {
+    expect(treatmentDischargeInputSchema.safeParse({ discharge_report: null }).success).toBe(false)
+    expect(treatmentDischargeInputSchema.safeParse({ discharge_report: 42 }).success).toBe(false)
+  })
+
+  it('rechaza discharge_at del body (server time — anti-backdating)', () => {
+    expect(
+      treatmentDischargeInputSchema.safeParse({
+        discharge_report: 'Alta',
+        discharge_at: '2020-01-01T00:00:00Z',
+      }).success,
+    ).toBe(false)
+  })
+
+  it('rechaza tenant_id / patient_id / author_id (nunca del body)', () => {
+    expect(
+      treatmentDischargeInputSchema.safeParse({ discharge_report: 'Alta', tenant_id: 't-1' })
+        .success,
+    ).toBe(false)
+    expect(
+      treatmentDischargeInputSchema.safeParse({ discharge_report: 'Alta', patient_id: 'p-1' })
+        .success,
+    ).toBe(false)
+    expect(
+      treatmentDischargeInputSchema.safeParse({ discharge_report: 'Alta', author_id: 'u-1' })
+        .success,
+    ).toBe(false)
+  })
+
+  it('rechaza los campos del plan (motivo_consulta etc. — se editan por el PUT de 14.2)', () => {
+    expect(
+      treatmentDischargeInputSchema.safeParse({
+        discharge_report: 'Alta',
+        motivo_consulta: 'Lumbalgia',
+      }).success,
+    ).toBe(false)
+    expect(
+      treatmentDischargeInputSchema.safeParse({ discharge_report: 'Alta', objetivo: 'x' }).success,
+    ).toBe(false)
+    expect(
+      treatmentDischargeInputSchema.safeParse({ discharge_report: 'Alta', cie10_code: 'M54.5' })
+        .success,
+    ).toBe(false)
+    expect(
+      treatmentDischargeInputSchema.safeParse({ discharge_report: 'Alta', indicated_sessions: 5 })
+        .success,
+    ).toBe(false)
+  })
+
+  it('rechaza cualquier clave arbitraria (strictObject)', () => {
+    expect(
+      treatmentDischargeInputSchema.safeParse({ discharge_report: 'Alta', foo: 'bar' }).success,
+    ).toBe(false)
   })
 })

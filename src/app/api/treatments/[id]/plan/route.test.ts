@@ -356,4 +356,43 @@ describe('PUT /api/treatments/[id]/plan', () => {
     await PUT(makePutRequest(validBody()), context)
     expect(mockLogAudit).not.toHaveBeenCalled()
   })
+
+  // ── Hardening Story 14.6: plan de SOLO LECTURA tras el alta ─────────────────
+  describe('post-alta (Story 14.6 — read-only server-side)', () => {
+    it('409 si el plan ya tiene discharge_at (tratamiento dado de alta), sin upsert ni audit', async () => {
+      configureFrom({
+        planSelectData: makePlanRow({
+          discharge_at: '2026-06-11T12:00:00Z',
+          discharge_report: 'Alta médica.',
+        }),
+      })
+      const res = await PUT(makePutRequest(validBody()), context)
+      expect(res.status).toBe(409)
+      const body = await res.json()
+      expect(body.error).toMatch(/dado de alta.*solo lectura/i)
+      expect(lastUpsertPayload).toBeNull()
+      expect(mockLogAudit).not.toHaveBeenCalled()
+    })
+
+    it('200 si el plan existe SIN alta (discharge_at null) — regresión', async () => {
+      configureFrom({ planSelectData: makePlanRow({ discharge_at: null }) })
+      const res = await PUT(makePutRequest(validBody()), context)
+      expect(res.status).toBe(200)
+      expect(lastUpsertPayload).not.toBeNull()
+    })
+
+    it('200 si NO hay plan todavía (maybeSingle null) — sigue al upsert de creación', async () => {
+      configureFrom({ planSelectData: null })
+      const res = await PUT(makePutRequest(validBody()), context)
+      expect(res.status).toBe(200)
+      expect(lastUpsertPayload).not.toBeNull()
+    })
+
+    it('500 si la pre-lectura del plan falla', async () => {
+      configureFrom({ planSelectError: { message: 'boom' } })
+      const res = await PUT(makePutRequest(validBody()), context)
+      expect(res.status).toBe(500)
+      expect(lastUpsertPayload).toBeNull()
+    })
+  })
 })
