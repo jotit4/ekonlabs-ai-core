@@ -15,6 +15,7 @@ import { WhatsAppHistory } from '@/components/pacientes/WhatsAppHistory'
 import { PatientStatusBadge } from '@/components/pacientes/PatientStatusBadge'
 import { ClinicalNoteEditor } from '@/components/pacientes/ClinicalNoteEditor'
 import { PatientClinicalDataPanel } from '@/components/pacientes/PatientClinicalDataPanel'
+import { HceEstudiosPanel } from '@/components/pacientes/HceEstudiosPanel'
 import { ClinicalNotesHistory } from '@/components/pacientes/ClinicalNotesHistory'
 import { PatientDocuments } from '@/components/pacientes/PatientDocuments'
 import { PatientDeletionRequest } from '@/components/pacientes/PatientDeletionRequest'
@@ -476,6 +477,11 @@ export default function PacienteFichaPage() {
               Auto-gateado por rol por dentro (doble defensa; el tab ya es doctor/admin).
               readOnly si hay eliminación pendiente: consultar sí, editar no. */}
           <PatientClinicalDataPanel patientId={patientId} readOnly={hasDeletionPending} />
+
+          {/* Estudios y documentos en contexto HCE (Story 14.5): reuso del repositorio
+              de Epic 11 — colapsado por defecto (cero fetch), sin gate interno (los
+              documentos son visibles a los 3 roles por la 028; el tab ya gatea). */}
+          <HceEstudiosPanel patientId={patientId} readOnly={hasDeletionPending} />
 
           {/* Nueva nota — solo si no hay eliminación pendiente */}
           {!hasDeletionPending && (
