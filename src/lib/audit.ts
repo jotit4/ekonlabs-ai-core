@@ -24,6 +24,8 @@ export type AuditAction =
   | 'kb_topic_deleted'
   | 'treatment_created'
   | 'treatment_generated'
+  // Reclamo ISADI — agendar sesiones del bono MANUAL Y FLEXIBLE (1 o varias).
+  | 'treatment_sessions_scheduled'
   // Story 13.6 — decisión manual de la recepcionista al ausentarse una sesión de serie.
   | 'treatment_session_consumed'
   | 'treatment_session_recoverable'

@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -28,6 +29,13 @@ vi.mock('./TreatmentPlanPanel', () => ({
 // SessionNotePanel (Story 14.3) — mismo recurso: se testea en su propio archivo.
 vi.mock('./SessionNotePanel', () => ({
   SessionNotePanel: () => null,
+}))
+
+// AgendarSesionModal (reclamo ISADI) — se testea en su propio archivo; acá se
+// mockea para asilar el tracking. Renderiza un sentinel solo cuando open=true.
+vi.mock('./AgendarSesionModal', () => ({
+  AgendarSesionModal: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="agendar-sesion-modal" /> : null,
 }))
 
 import { PaquetesTracking } from './PaquetesTracking'
@@ -166,6 +174,40 @@ describe('PaquetesTracking', () => {
       expect(screen.getByRole('alert')).toBeInTheDocument()
     })
     expect(screen.getByText(/error al cargar los paquetes/i)).toBeInTheDocument()
+  })
+
+  it('muestra "Agendar sesión" cuando faltan sesiones por agendar y abre el modal', async () => {
+    // makeTreatment: total=10, agendadas=2 → por_agendar=8, status active → botón visible.
+    mockOrder.mockResolvedValue({ data: [makeTreatment()], error: null })
+    const user = userEvent.setup()
+
+    render(<PaquetesTracking patientId={PATIENT_ID} />, { wrapper: makeWrapper() })
+
+    const btn = await screen.findByRole('button', { name: /agendar sesión/i })
+    expect(btn).toBeInTheDocument()
+
+    await user.click(btn)
+    await waitFor(() => {
+      expect(screen.getByTestId('agendar-sesion-modal')).toBeInTheDocument()
+    })
+  })
+
+  it('NO muestra "Agendar sesión" cuando todas las sesiones están agendadas', async () => {
+    const t = makeTreatment()
+    t.total_sessions = 2
+    // 2 turnos agendados (confirmed) = total → por_agendar = 0.
+    t.appointments = [
+      { appointment_id: 'a1', session_index: 1, start_at: '2026-06-10T10:00:00Z', end_at: '2026-06-10T11:00:00Z', status: 'confirmed' },
+      { appointment_id: 'a2', session_index: 2, start_at: '2026-06-17T10:00:00Z', end_at: '2026-06-17T11:00:00Z', status: 'confirmed' },
+    ]
+    mockOrder.mockResolvedValue({ data: [t], error: null })
+
+    render(<PaquetesTracking patientId={PATIENT_ID} />, { wrapper: makeWrapper() })
+
+    await waitFor(() => {
+      expect(screen.getByText(/2 agendadas · todas agendadas/)).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('button', { name: /agendar sesión/i })).not.toBeInTheDocument()
   })
 
   it('paquete sin vencimiento muestra "Sin vencimiento"', async () => {

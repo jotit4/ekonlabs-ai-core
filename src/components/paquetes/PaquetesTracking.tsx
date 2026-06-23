@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { format, parseISO, isValid } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -13,6 +14,7 @@ import {
 import { STATUS_LABELS, type AppointmentStatus } from '@/types/appointments'
 import { TreatmentPlanPanel } from './TreatmentPlanPanel'
 import { SessionNotePanel } from './SessionNotePanel'
+import { AgendarSesionModal } from './AgendarSesionModal'
 
 interface PaquetesTrackingProps {
   patientId: string
@@ -43,6 +45,9 @@ function sessionStatusLabel(status: string): string {
  */
 export function PaquetesTracking({ patientId }: PaquetesTrackingProps) {
   const supabase = createSupabaseBrowserClient()
+
+  // Paquete cuyo modal "Agendar sesión" está abierto (null = ninguno).
+  const [agendarFor, setAgendarFor] = useState<string | null>(null)
 
   const { data, isPending, isError } = useQuery<TreatmentWithSessions[]>({
     queryKey: ['treatments', 'by-patient', patientId],
@@ -116,6 +121,33 @@ export function PaquetesTracking({ patientId }: PaquetesTrackingProps) {
               {agendadas} agendadas
               {por_agendar > 0 ? ` · faltan agendar ${por_agendar}` : ' · todas agendadas'}
             </p>
+
+            {/* Agendar sesión (MANUAL Y FLEXIBLE — reclamo ISADI): solo si el bono
+                está activo y le faltan sesiones por agendar. Abre el modal que
+                muestra la disponibilidad REAL del profesional+servicio del paquete. */}
+            {t.status === 'active' && por_agendar > 0 && t.professional_id && (
+              <button
+                type="button"
+                onClick={() => setAgendarFor(t.treatment_id)}
+                className="mt-3 inline-flex items-center px-3 py-2 rounded-[8px] text-sm font-medium min-h-[40px] bg-[var(--color-interactive)] text-white hover:opacity-90 transition-opacity"
+              >
+                Agendar sesión
+              </button>
+            )}
+
+            {agendarFor === t.treatment_id && t.professional_id && (
+              <AgendarSesionModal
+                open
+                onClose={() => setAgendarFor(null)}
+                treatmentId={t.treatment_id}
+                serviceId={t.service_id}
+                professionalId={t.professional_id}
+                serviceName={t.services?.name ?? null}
+                professionalName={t.professionals?.name ?? null}
+                porAgendar={por_agendar}
+                patientId={patientId}
+              />
+            )}
 
             <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-[var(--color-text-secondary)]">
               <dt>Servicio</dt>

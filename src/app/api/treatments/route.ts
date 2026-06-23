@@ -5,9 +5,12 @@ import { logAudit } from '@/lib/audit'
 import { newTreatmentApiSchema } from '@/lib/schemas/treatment.schema'
 
 // POST /api/treatments
-// Crea EXACTAMENTE UNA fila en `treatments` (Story 13.2 — "paquete" de sesiones).
-// NO genera los N turnos (eso es la Story 13.3). NO valida disponibilidad del slot.
-// Solo valida la FORMA del `pattern` (Zod) y que cada profesional atienda el servicio.
+// Crea EXACTAMENTE UNA fila en `treatments` = el BONO de N sesiones, con 0 sesiones
+// agendadas. NO genera turnos (las sesiones se agendan después, MANUAL Y FLEXIBLE,
+// vía POST /api/treatments/[id]/sessions). Valida solo que el profesional del bono
+// atienda el servicio. `start_date` se setea = hoy y `pattern` se persiste vacío
+// (`{ slots: [] }`) solo para satisfacer los NOT NULL de la columna (sin patrón
+// semanal — el patrón confundía a la clínica, reclamo ISADI).
 export async function POST(request: Request): Promise<Response> {
   // 1. Validar sesión
   const supabase = await createSupabaseServerClient()
@@ -49,10 +52,13 @@ export async function POST(request: Request): Promise<Response> {
     service_id,
     professional_id,
     total_sessions,
-    start_date,
     expires_at,
-    pattern,
   } = parsed.data
+
+  // start_date = hoy (el bono "arranca" al crearse). pattern vacío: ya no hay
+  // patrón semanal, pero la columna es NOT NULL → persistimos { slots: [] }.
+  const startDate = new Date().toLocaleDateString('en-CA') // 'YYYY-MM-DD'
+  const emptyPattern = { slots: [] as unknown[] }
 
   // 4. Validar que el ÚNICO profesional del paquete atienda el servicio.
   //    (Antes se validaba uno por slot; ahora hay un solo profesional para toda la
@@ -88,8 +94,8 @@ export async function POST(request: Request): Promise<Response> {
       professional_id,
       total_sessions,
       sessions_remaining: total_sessions,
-      start_date,
-      pattern,
+      start_date: startDate,
+      pattern: emptyPattern,
       status: 'active',
       expires_at: expires_at ?? null,
       created_by: user.id,

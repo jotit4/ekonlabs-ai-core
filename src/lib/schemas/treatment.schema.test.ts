@@ -8,23 +8,17 @@ import {
 } from './treatment.schema'
 
 const PROF_A = '98c80b43-3f4a-4aa0-84ba-02be20fe6bcd'
-const PROF_B = '413d20a3-5684-4781-a79a-734770c26dc3'
 const PATIENT = 'f0ae17b1-3c90-401c-93ce-32e6118f29e3'
 const SERVICE = 'f38f1191-3e0d-4f60-bcd2-e647c2b899da'
 
+// El body del bono YA NO lleva pattern ni start_date (las sesiones se agendan
+// manual y flexible aparte). El server setea start_date y persiste pattern vacío.
 function validApiBody(overrides: Record<string, unknown> = {}) {
   return {
     patient_id: PATIENT,
     service_id: SERVICE,
     professional_id: PROF_A,
     total_sessions: 10,
-    start_date: '2026-06-10',
-    pattern: {
-      slots: [
-        { day_of_week: 1, time: '10:00' },
-        { day_of_week: 4, time: '16:00' },
-      ],
-    },
     ...overrides,
   }
 }
@@ -78,8 +72,8 @@ describe('patternSchema', () => {
   })
 })
 
-describe('newTreatmentApiSchema', () => {
-  it('acepta un body válido (2 slots)', () => {
+describe('newTreatmentApiSchema (bono — sin pattern ni start_date)', () => {
+  it('acepta un body válido (paciente, servicio, profesional, total)', () => {
     expect(newTreatmentApiSchema.safeParse(validApiBody()).success).toBe(true)
   })
 
@@ -87,6 +81,16 @@ describe('newTreatmentApiSchema', () => {
     expect(newTreatmentApiSchema.safeParse(validApiBody({ expires_at: '2026-12-31' })).success).toBe(
       true,
     )
+  })
+
+  it('ignora pattern / start_date si vienen (ya no forman parte del contrato)', () => {
+    const parsed = newTreatmentApiSchema.safeParse(
+      validApiBody({ pattern: { slots: [] }, start_date: '2026-06-10' }),
+    )
+    expect(parsed.success).toBe(true)
+    // Campos descartados: no aparecen en el output del schema.
+    expect(parsed.success && 'pattern' in parsed.data).toBe(false)
+    expect(parsed.success && 'start_date' in parsed.data).toBe(false)
   })
 
   it('rechaza total_sessions 0 o negativo', () => {
@@ -98,26 +102,10 @@ describe('newTreatmentApiSchema', () => {
     expect(newTreatmentApiSchema.safeParse(validApiBody({ total_sessions: 2.5 })).success).toBe(false)
   })
 
-  it('rechaza pattern con slots vacío', () => {
-    expect(newTreatmentApiSchema.safeParse(validApiBody({ pattern: { slots: [] } })).success).toBe(
-      false,
-    )
-  })
-
-  it('rechaza day_of_week fuera de rango dentro del pattern', () => {
+  it('rechaza expires_at mal formado', () => {
     expect(
-      newTreatmentApiSchema.safeParse(
-        validApiBody({
-          pattern: { slots: [{ day_of_week: 7, time: '10:00', professional_id: PROF_A }] },
-        }),
-      ).success,
+      newTreatmentApiSchema.safeParse(validApiBody({ expires_at: '31-12-2026' })).success,
     ).toBe(false)
-  })
-
-  it('rechaza start_date mal formado', () => {
-    expect(newTreatmentApiSchema.safeParse(validApiBody({ start_date: '10-06-2026' })).success).toBe(
-      false,
-    )
   })
 
   it('rechaza uuid inválido en patient_id', () => {
@@ -125,28 +113,25 @@ describe('newTreatmentApiSchema', () => {
   })
 })
 
-describe('newTreatmentFormSchema', () => {
+describe('newTreatmentFormSchema (bono — sin slots ni start_date)', () => {
   it('acepta un form válido', () => {
     const ok = newTreatmentFormSchema.safeParse({
       patient_id: PATIENT,
       service_id: SERVICE,
       professional_id: PROF_A,
       total_sessions: 8,
-      start_date: '2026-06-10',
       expires_at: '',
-      slots: [{ day_of_week: 1, time: '10:00', professional_id: PROF_B }],
     })
     expect(ok.success).toBe(true)
   })
 
-  it('rechaza form sin slots', () => {
+  it('rechaza form sin profesional', () => {
     const bad = newTreatmentFormSchema.safeParse({
       patient_id: PATIENT,
       service_id: SERVICE,
-      professional_id: PROF_A,
+      professional_id: '',
       total_sessions: 8,
-      start_date: '2026-06-10',
-      slots: [],
+      expires_at: '',
     })
     expect(bad.success).toBe(false)
   })
@@ -157,8 +142,7 @@ describe('newTreatmentFormSchema', () => {
       service_id: SERVICE,
       professional_id: PROF_A,
       total_sessions: 0,
-      start_date: '2026-06-10',
-      slots: [{ day_of_week: 1, time: '10:00', professional_id: PROF_A }],
+      expires_at: '',
     })
     expect(bad.success).toBe(false)
   })

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { useForm, useWatch, useFieldArray } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
 import { useQueryClient } from '@tanstack/react-query'
 import { useList } from '@refinedev/core'
@@ -12,12 +12,8 @@ import {
 } from '@/lib/schemas/appointment.schema'
 import {
   newTreatmentFormSchema,
-  DAY_OF_WEEK_LABELS,
   type NewTreatmentFormValues,
 } from '@/lib/schemas/treatment.schema'
-import { occurrenceDate } from '@/lib/treatments/generate-series'
-import { format, parseISO, isValid } from 'date-fns'
-import { es } from 'date-fns/locale'
 
 interface PatientResult {
   patient_id: string
@@ -46,118 +42,10 @@ interface NewPaqueteModalProps {
   initialPatient?: PatientResult
 }
 
-// Resumen de la generación de la serie (paso 2 — contrato de POST /api/treatments/[id]/generate).
-interface GenerateSummary {
-  creados: number
-  salteados: number
-  no_colocados: number
-  // Cobertura de la serie (paquetes-simplificados): cuántas se pidieron vs cuántas
-  // entraron, y si el vencimiento las recortó.
-  requested: number
-  placed: number
-  blocked_by_expiry: boolean
-}
-
-// Mensaje legible del resultado de la generación (ej. "9 turnos creados, 1 salteado por conflicto").
-function formatGenerateSummary(s: GenerateSummary): string {
-  const parts: string[] = [`${s.creados} ${s.creados === 1 ? 'turno creado' : 'turnos creados'}`]
-  if (s.salteados > 0) {
-    parts.push(`${s.salteados} ${s.salteados === 1 ? 'salteado' : 'salteados'} por conflicto`)
-  }
-  if (s.no_colocados > 0) {
-    parts.push(
-      `${s.no_colocados} ${s.no_colocados === 1 ? 'no se pudo agendar' : 'no se pudieron agendar'} por vencimiento`,
-    )
-  }
-  return parts.join(', ')
-}
-
-// ── Preview de la serie (antes de crear) ─────────────────────────────────────
-// Slot del form (día + hora, SIN profesional — uno solo para todo el paquete).
-interface PreviewSlot {
-  day_of_week: number
-  time: string
-}
-
-const DOW_LABEL = (dow: number) =>
-  DAY_OF_WEEK_LABELS.find((d) => d.value === dow)?.label ?? '—'
-
-// Fines de semana se excluyen al generar (sábado=5, domingo=6 en 0=lunes..6=domingo).
-const isWeekendDow = (dow: number) => dow === 5 || dow === 6
-
-interface SeriesPreview {
-  // "Martes 10:00, Jueves 16:00"
-  diasHoras: string
-  // Fecha estimada de la última sesión (YYYY-MM-DD) — null si no se puede estimar.
-  lastDate: string | null
-  // true si algún slot del patrón cae en fin de semana (no se agendará).
-  hasWeekend: boolean
-}
-
-// Estima la cobertura de la serie SIN llamar al backend: repite el patrón (sin
-// fines de semana) semana a semana desde start_date hasta colocar total_sessions,
-// asumiendo disponibilidad (es una estimación optimista para mostrar al usuario).
-function buildPreview(
-  slots: PreviewSlot[],
-  startDate: string,
-  totalSessions: number,
-): SeriesPreview | null {
-  const validSlots = slots.filter((s) => s.time)
-  if (validSlots.length === 0 || !startDate || !isValid(parseISO(startDate)) || totalSessions < 1) {
-    return null
-  }
-
-  const ordered = [...validSlots].sort((a, b) =>
-    a.day_of_week !== b.day_of_week ? a.day_of_week - b.day_of_week : a.time.localeCompare(b.time),
-  )
-  const hasWeekend = ordered.some((s) => isWeekendDow(s.day_of_week))
-  const weekdaySlots = ordered.filter((s) => !isWeekendDow(s.day_of_week))
-
-  const diasHoras = ordered.map((s) => `${DOW_LABEL(s.day_of_week)} ${s.time}`).join(', ')
-
-  // Si todos los slots caen en fin de semana no se coloca nada → sin estimación.
-  if (weekdaySlots.length === 0) {
-    return { diasHoras, lastDate: null, hasWeekend }
-  }
-
-  // Recorre semanas colocando hasta N para estimar la fecha de la última.
-  let placed = 0
-  let lastDate: string | null = null
-  const MAX = 104
-  for (let week = 0; week < MAX && placed < totalSessions; week++) {
-    for (const slot of weekdaySlots) {
-      if (placed >= totalSessions) break
-      lastDate = occurrenceDate(startDate, slot.day_of_week, week)
-      placed += 1
-    }
-  }
-
-  return { diasHoras, lastDate, hasWeekend }
-}
-
-function fmtPreviewDate(iso: string | null): string {
-  if (!iso) return '—'
-  const parsed = parseISO(iso)
-  if (!isValid(parsed)) return '—'
-  return format(parsed, "EEEE d 'de' MMMM 'de' yyyy", { locale: es })
-}
-
-// Genera slots de tiempo 08:00–20:00 según la duración del servicio (reusado de NewTurnoModal).
-function generateTimeSlots(durationMinutes: number): string[] {
-  const slots: string[] = []
-  const startHour = 8
-  const endHour = 20
-  let current = startHour * 60
-
-  while (current + durationMinutes <= endHour * 60) {
-    const hh = Math.floor(current / 60).toString().padStart(2, '0')
-    const mm = (current % 60).toString().padStart(2, '0')
-    slots.push(`${hh}:${mm}`)
-    current += durationMinutes
-  }
-  return slots
-}
-
+// Crea SOLO el BONO de N sesiones (paciente + servicio + profesional + total +
+// vencimiento opcional). NO genera turnos ni pide patrón semanal: las sesiones se
+// agendan después, MANUAL Y FLEXIBLE, desde el tracking del paquete ("Agendar
+// sesión"). Reclamo ISADI: el patrón semanal confundía a la clínica.
 export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteModalProps) {
   const queryClient = useQueryClient()
   const searchInputRef = useRef<HTMLInputElement | null>(null)
@@ -172,14 +60,6 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitSuccess, setSubmitSuccess] = useState(false)
 
-  // Flujo de 2 pasos (Story 13.5): tras crear el treatment (paso 1) se dispara la
-  // generación de la serie (paso 2). Guardamos el treatment_id ya creado para poder
-  // REINTENTAR la generación sin re-crear el paquete (idempotente — 13.3 AC7).
-  const [createdTreatmentId, setCreatedTreatmentId] = useState<string | null>(null)
-  const [generateResult, setGenerateResult] = useState<GenerateSummary | null>(null)
-  const [generateError, setGenerateError] = useState<string | null>(null)
-  const [isGenerating, setIsGenerating] = useState(false)
-
   // Profesionales del servicio elegido
   const [professionals, setProfessionals] = useState<ProfessionalOption[]>([])
   const [isLoadingProfessionals, setIsLoadingProfessionals] = useState(false)
@@ -191,7 +71,7 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
     defaultValues: { query: '' },
   })
 
-  // Treatment (paquete) form
+  // Treatment (bono) form — sin patrón semanal ni fecha de inicio.
   const treatmentForm = useForm<NewTreatmentFormValues>({
     resolver: standardSchemaResolver(newTreatmentFormSchema),
     defaultValues: {
@@ -199,15 +79,8 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
       service_id: '',
       professional_id: '',
       total_sessions: 1,
-      start_date: '',
       expires_at: '',
-      slots: [{ day_of_week: 0, time: '' }],
     },
-  })
-
-  const { fields, append, remove } = useFieldArray({
-    control: treatmentForm.control,
-    name: 'slots',
   })
 
   // Services list (solo activos)
@@ -221,23 +94,8 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
   })
   const services = (servicesResult?.data ?? []) as ServiceOption[]
 
-  // Servicio elegido → duración para los slots de hora
+  // Servicio elegido → para cargar sus profesionales
   const selectedServiceId = useWatch({ control: treatmentForm.control, name: 'service_id' })
-  const selectedService = services.find((s) => s.service_id === selectedServiceId)
-  const durationMinutes = selectedService?.duration_minutes ?? 60
-  const timeSlots = generateTimeSlots(durationMinutes)
-
-  // Preview en vivo de la serie (antes de crear): "Se generan N sesiones: <días y
-  // horas>, desde <inicio>" + fecha estimada de la última. Estimación optimista
-  // (asume disponibilidad); el resultado real lo confirma el backend.
-  const watchedSlots = useWatch({ control: treatmentForm.control, name: 'slots' })
-  const watchedStartDate = useWatch({ control: treatmentForm.control, name: 'start_date' })
-  const watchedTotalSessions = useWatch({ control: treatmentForm.control, name: 'total_sessions' })
-  const preview = buildPreview(
-    (watchedSlots ?? []).map((s) => ({ day_of_week: s.day_of_week, time: s.time })),
-    watchedStartDate ?? '',
-    Number(watchedTotalSessions) || 0,
-  )
 
   // Cargar profesionales del servicio elegido (filtrado por servicio en el endpoint).
   useEffect(() => {
@@ -301,10 +159,6 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
     setIsSearching(false)
     setSubmitError(null)
     setSubmitSuccess(false)
-    setCreatedTreatmentId(null)
-    setGenerateResult(null)
-    setGenerateError(null)
-    setIsGenerating(false)
     setProfessionals([])
     setProfessionalsError(null)
     setIsLoadingProfessionals(false)
@@ -314,9 +168,7 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
       service_id: '',
       professional_id: '',
       total_sessions: 1,
-      start_date: '',
       expires_at: '',
-      slots: [{ day_of_week: 0, time: '' }],
     })
     onClose()
   }
@@ -373,82 +225,19 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
     treatmentForm.setValue('patient_id', selected.patient_id)
   }
 
-  // Invalida las queries que reflejan la serie recién creada: tracking de paquetes,
-  // ficha del paciente y agenda/appointments (calendario).
-  const invalidateAfterSeries = (patientId: string) => {
-    queryClient.invalidateQueries({ queryKey: ['treatments'], exact: false })
-    queryClient.invalidateQueries({ queryKey: ['patients', 'one', patientId] })
-    queryClient.invalidateQueries({ queryKey: ['agenda'], exact: false })
-    queryClient.invalidateQueries({ queryKey: ['appointments'], exact: false })
-  }
-
-  // Paso 2: dispara la generación de la serie sobre un treatment YA creado.
-  // Idempotente (13.3 AC7) → seguro de reintentar. NO re-crea el treatment.
-  const runGenerate = async (treatmentId: string, patientId: string) => {
-    setGenerateError(null)
-    setIsGenerating(true)
-    try {
-      const response = await fetch(
-        `/api/treatments/${encodeURIComponent(treatmentId)}/generate`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' } },
-      )
-
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}))
-        setGenerateError(
-          (body as { error?: string }).error ??
-            'El paquete se creó, pero no se pudieron generar los turnos. Reintentá la generación.',
-        )
-        return
-      }
-
-      const body = (await response.json()) as Partial<GenerateSummary>
-      const placed = body.placed ?? body.creados ?? 0
-      const summary: GenerateSummary = {
-        creados: body.creados ?? 0,
-        salteados: body.salteados ?? 0,
-        no_colocados: body.no_colocados ?? 0,
-        requested: body.requested ?? placed,
-        placed,
-        blocked_by_expiry: body.blocked_by_expiry ?? false,
-      }
-      setGenerateResult(summary)
-      setSubmitSuccess(true)
-      invalidateAfterSeries(patientId)
-    } catch {
-      setGenerateError(
-        'El paquete se creó, pero hubo un error de red al generar los turnos. Reintentá la generación.',
-      )
-    } finally {
-      setIsGenerating(false)
-    }
-  }
-
   const handleSubmitTreatment = async (values: NewTreatmentFormValues) => {
     setSubmitError(null)
     setSubmitSuccess(false)
-    setGenerateError(null)
-    setGenerateResult(null)
 
-    // Construir el body que matchea newTreatmentApiSchema (pattern: { slots }).
-    // Los slots sólo llevan día + hora: el profesional es ÚNICO para todo el paquete.
+    // Body del bono: el server setea start_date (= hoy) y pattern vacío.
     const apiBody = {
       patient_id: values.patient_id,
       service_id: values.service_id,
       professional_id: values.professional_id,
       total_sessions: values.total_sessions,
-      start_date: values.start_date,
       ...(values.expires_at ? { expires_at: values.expires_at } : {}),
-      pattern: {
-        slots: values.slots.map((s) => ({
-          day_of_week: s.day_of_week,
-          time: s.time,
-        })),
-      },
     }
 
-    // ── Paso 1: crear el treatment ──────────────────────────────────────────────
-    let treatmentId: string
     try {
       const response = await fetch('/api/treatments', {
         method: 'POST',
@@ -459,7 +248,7 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
       if (!response.ok) {
         const body = await response.json().catch(() => ({}))
         setSubmitError((body as { error?: string }).error ?? 'Error al crear el paquete')
-        return // AC4: NO se dispara la generación si falla la creación.
+        return
       }
 
       const body = (await response.json()) as { treatment_id?: string }
@@ -467,18 +256,14 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
         setSubmitError('Error al crear el paquete')
         return
       }
-      treatmentId = body.treatment_id
-      setCreatedTreatmentId(treatmentId)
-      // Invalida ya el tracking — el paquete existe aunque la generación falle.
+
+      setSubmitSuccess(true)
+      // El contador deriva de los appointments (0 al crear) — invalidar tracking + ficha.
       queryClient.invalidateQueries({ queryKey: ['treatments'], exact: false })
       queryClient.invalidateQueries({ queryKey: ['patients', 'one', values.patient_id] })
     } catch {
       setSubmitError('Error de red. Verificá tu conexión e intentá de nuevo.')
-      return
     }
-
-    // ── Paso 2: generar la serie (encadenado, sin segundo click) ─────────────────
-    await runGenerate(treatmentId, values.patient_id)
   }
 
   const inputClass = (hasError: boolean) =>
@@ -515,56 +300,14 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
 
             {/* Body */}
             <div className="px-6 py-4 space-y-5">
-              {/* Mensaje de éxito — incluye el resumen de la generación (paso 2) */}
+              {/* Mensaje de éxito */}
               {submitSuccess && (
                 <div
                   role="status"
                   className="rounded-[8px] border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-800"
                 >
-                  {generateResult
-                    ? `Paquete creado. ${formatGenerateSummary(generateResult)}.`
-                    : 'Paquete creado correctamente.'}
-                </div>
-              )}
-
-              {/* Aviso accionable cuando NO entraron todas por el vencimiento.
-                  No es un error técnico: el paquete y los turnos que sí entraron
-                  ya existen — sólo se informa cómo cubrir las que faltan. */}
-              {submitSuccess && generateResult?.blocked_by_expiry && (
-                <div
-                  role="alert"
-                  className="rounded-[8px] border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
-                >
-                  Se agendaron {generateResult.placed} de {generateResult.requested} sesiones: el
-                  resto no entra antes del vencimiento. Para agendar las{' '}
-                  {generateResult.requested - generateResult.placed} restantes, extendé la fecha de
-                  vencimiento o reducí el total de sesiones.
-                </div>
-              )}
-
-              {/* Error del paso 2: el paquete se creó pero la generación falló (AC4).
-                  Ofrece reintentar la generación (idempotente) — NO re-crea el treatment. */}
-              {generateError && createdTreatmentId && (
-                <div
-                  role="alert"
-                  className="rounded-[8px] border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 space-y-2"
-                >
-                  <p>{generateError}</p>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void runGenerate(createdTreatmentId, treatmentForm.getValues('patient_id'))
-                    }
-                    disabled={isGenerating}
-                    className={[
-                      'px-3 py-1.5 rounded-[8px] text-sm font-medium min-h-[36px]',
-                      'bg-[var(--color-interactive)] text-white',
-                      'hover:opacity-90 transition-opacity',
-                      isGenerating ? 'opacity-50 cursor-not-allowed' : '',
-                    ].join(' ')}
-                  >
-                    {isGenerating ? 'Generando turnos...' : 'Generar turnos'}
-                  </button>
+                  Paquete creado. Ahora agendá las sesiones desde la ficha del paciente con
+                  &quot;Agendar sesión&quot;.
                 </div>
               )}
 
@@ -665,8 +408,8 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
                 </div>
               )}
 
-              {/* Paso 2: Datos del paquete — solo visible si hay paciente */}
-              {patient && (
+              {/* Paso 2: Datos del bono — solo visible si hay paciente y no se creó aún */}
+              {patient && !submitSuccess && (
                 <form
                   id="paquete-form"
                   onSubmit={treatmentForm.handleSubmit(handleSubmitTreatment)}
@@ -771,29 +514,6 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
                     )}
                   </div>
 
-                  {/* Fecha de inicio */}
-                  <div>
-                    <label
-                      htmlFor="paquete-start-date"
-                      className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
-                    >
-                      Fecha de inicio
-                    </label>
-                    <input
-                      id="paquete-start-date"
-                      type="date"
-                      min={today}
-                      {...treatmentForm.register('start_date')}
-                      className={inputClass(!!treatmentForm.formState.errors.start_date)}
-                      aria-invalid={!!treatmentForm.formState.errors.start_date}
-                    />
-                    {treatmentForm.formState.errors.start_date && (
-                      <p role="alert" className="mt-1 text-xs text-red-600">
-                        {treatmentForm.formState.errors.start_date.message}
-                      </p>
-                    )}
-                  </div>
-
                   {/* Vencimiento (opcional) */}
                   <div>
                     <label
@@ -817,133 +537,10 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
                     )}
                   </div>
 
-                  {/* Días y horas por semana (1..n). El profesional es único (arriba). */}
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="block text-sm font-medium text-[var(--color-text-primary)]">
-                        Días y horas por semana
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => append({ day_of_week: 0, time: '' })}
-                        className="text-sm font-medium text-[var(--color-interactive)] hover:opacity-80"
-                      >
-                        + Agregar día
-                      </button>
-                    </div>
-                    <p className="text-xs text-[var(--color-text-secondary)]">
-                      Los sábados y domingos no se agendan.
-                    </p>
-
-                    {treatmentForm.formState.errors.slots?.message && (
-                      <p role="alert" className="text-xs text-red-600">
-                        {treatmentForm.formState.errors.slots.message}
-                      </p>
-                    )}
-
-                    {fields.map((field, index) => (
-                      <div
-                        key={field.id}
-                        className="rounded-[8px] border border-[var(--color-border)] p-3 space-y-3"
-                        data-testid={`slot-row-${index}`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-medium text-[var(--color-text-secondary)]">
-                            Día {index + 1}
-                          </span>
-                          {fields.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => remove(index)}
-                              aria-label={`Quitar slot ${index + 1}`}
-                              className="text-xs font-medium text-red-600 hover:opacity-80"
-                            >
-                              Quitar
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Día de la semana (0=lunes..6=domingo) */}
-                        <div>
-                          <label
-                            htmlFor={`slot-${index}-day`}
-                            className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1"
-                          >
-                            Día
-                          </label>
-                          <select
-                            id={`slot-${index}-day`}
-                            {...treatmentForm.register(`slots.${index}.day_of_week`, {
-                              valueAsNumber: true,
-                            })}
-                            className={inputClass(
-                              !!treatmentForm.formState.errors.slots?.[index]?.day_of_week,
-                            )}
-                          >
-                            {DAY_OF_WEEK_LABELS.map((d) => (
-                              <option key={d.value} value={d.value}>
-                                {d.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        {/* Hora */}
-                        <div>
-                          <label
-                            htmlFor={`slot-${index}-time`}
-                            className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1"
-                          >
-                            Horario
-                          </label>
-                          <select
-                            id={`slot-${index}-time`}
-                            {...treatmentForm.register(`slots.${index}.time`)}
-                            className={inputClass(
-                              !!treatmentForm.formState.errors.slots?.[index]?.time,
-                            )}
-                          >
-                            <option value="">Seleccioná un horario</option>
-                            {timeSlots.map((slot) => (
-                              <option key={slot} value={slot}>
-                                {slot}
-                              </option>
-                            ))}
-                          </select>
-                          {treatmentForm.formState.errors.slots?.[index]?.time && (
-                            <p role="alert" className="mt-1 text-xs text-red-600">
-                              {treatmentForm.formState.errors.slots[index]?.time?.message}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Preview de la serie antes de crear (estimación optimista). */}
-                  {preview && (
-                    <div
-                      data-testid="paquete-preview"
-                      className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm text-[var(--color-text-primary)] space-y-1"
-                    >
-                      <p>
-                        Se generan {watchedTotalSessions}{' '}
-                        {Number(watchedTotalSessions) === 1 ? 'sesión' : 'sesiones'}:{' '}
-                        {preview.diasHoras}, desde el{' '}
-                        {fmtPreviewDate(watchedStartDate ?? null)}.
-                      </p>
-                      {preview.lastDate && (
-                        <p className="text-[var(--color-text-secondary)]">
-                          Última sesión estimada: {fmtPreviewDate(preview.lastDate)}.
-                        </p>
-                      )}
-                      {preview.hasWeekend && (
-                        <p className="text-amber-700">
-                          Los días de fin de semana del patrón no se agendarán.
-                        </p>
-                      )}
-                    </div>
-                  )}
+                  <p className="text-xs text-[var(--color-text-secondary)]">
+                    El paquete se crea sin sesiones agendadas. Después agendás cada sesión eligiendo
+                    fecha y horario de la disponibilidad del profesional.
+                  </p>
 
                   {submitError && (
                     <p role="alert" className="text-xs text-red-600">
@@ -965,25 +562,19 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
               >
                 {submitSuccess ? 'Cerrar' : 'Cancelar'}
               </Dialog.Close>
-              {patient && !submitSuccess && !createdTreatmentId && (
+              {patient && !submitSuccess && (
                 <button
                   type="submit"
                   form="paquete-form"
-                  disabled={treatmentForm.formState.isSubmitting || isGenerating}
+                  disabled={treatmentForm.formState.isSubmitting}
                   className={[
                     'px-4 py-2 rounded-[8px] text-sm font-medium min-h-[44px]',
                     'bg-[var(--color-interactive)] text-white',
                     'hover:opacity-90 transition-opacity',
-                    treatmentForm.formState.isSubmitting || isGenerating
-                      ? 'opacity-50 cursor-not-allowed'
-                      : '',
+                    treatmentForm.formState.isSubmitting ? 'opacity-50 cursor-not-allowed' : '',
                   ].join(' ')}
                 >
-                  {isGenerating
-                    ? 'Generando turnos...'
-                    : treatmentForm.formState.isSubmitting
-                      ? 'Guardando...'
-                      : 'Crear paquete'}
+                  {treatmentForm.formState.isSubmitting ? 'Guardando...' : 'Crear paquete'}
                 </button>
               )}
             </div>

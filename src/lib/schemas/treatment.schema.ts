@@ -35,7 +35,11 @@ export const patternSchema = z.object({
 export type TreatmentPattern = z.infer<typeof patternSchema>
 
 // ─── Schema para la API Route (body del POST /api/treatments) ─────────────────
-// Crea SOLO la fila `treatments` (Story 13.2). La generación de turnos es 13.3.
+// Crea SOLO el BONO (fila `treatments`) con 0 sesiones agendadas. Las sesiones se
+// agendan después, MANUAL Y FLEXIBLE, eligiendo de la disponibilidad real (reclamo
+// ISADI). YA NO se genera la serie por patrón semanal: el body no lleva `pattern`
+// ni `start_date` (la fecha de inicio del bono la setea el server = hoy; el patrón
+// persistido es vacío para satisfacer el NOT NULL de la columna `pattern`).
 export const newTreatmentApiSchema = z.object({
   patient_id: z.string().uuid({ error: 'patient_id inválido' }),
   service_id: z.string().uuid({ error: 'service_id inválido' }),
@@ -45,19 +49,19 @@ export const newTreatmentApiSchema = z.object({
     .number({ error: 'total_sessions requerido' })
     .int({ error: 'total_sessions debe ser entero' })
     .positive({ error: 'total_sessions debe ser mayor a 0' }),
-  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, { error: 'start_date inválido' }),
   expires_at: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, { error: 'expires_at inválido' })
     .optional(),
-  pattern: patternSchema,
 })
 
 export type NewTreatmentApiBody = z.infer<typeof newTreatmentApiSchema>
 
 // ─── Schema para el formulario (client-side, react-hook-form) ─────────────────
-// Mensajes en español, estilo de newAppointmentSchema. Cada slot del form usa el
-// mismo contrato que la API (day_of_week 0=lunes..6=domingo, time HH:MM, professional_id uuid).
+// El form crea SOLO el BONO: paciente, servicio, profesional, total de sesiones y
+// vencimiento (opcional). NO pide patrón semanal (días/horas) ni fecha de inicio:
+// las sesiones se agendan después, una a una o varias, eligiendo de la
+// disponibilidad real (reclamo ISADI — el patrón semanal confundía a la clínica).
 export const newTreatmentFormSchema = z.object({
   patient_id: z.string().min(1, { error: 'Seleccioná un paciente' }),
   service_id: z.string().min(1, { error: 'Seleccioná un servicio' }),
@@ -66,26 +70,11 @@ export const newTreatmentFormSchema = z.object({
     .number({ error: 'Ingresá el total de sesiones' })
     .int({ error: 'El total de sesiones debe ser un número entero' })
     .positive({ error: 'El total de sesiones debe ser mayor a 0' }),
-  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, { error: 'Fecha de inicio inválida' }),
   expires_at: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, { error: 'Fecha de vencimiento inválida' })
     .optional()
     .or(z.literal('')),
-  // Los slots del form sólo definen día + hora. El profesional es ÚNICO para todo
-  // el paquete (campo `professional_id` de arriba) — ya no se elige por slot.
-  slots: z
-    .array(
-      z.object({
-        day_of_week: z
-          .number({ error: 'Seleccioná un día' })
-          .int({ error: 'Día inválido' })
-          .min(0, { error: 'Día inválido' })
-          .max(6, { error: 'Día inválido' }),
-        time: z.string().regex(/^\d{2}:\d{2}$/, { error: 'Seleccioná un horario' }),
-      }),
-    )
-    .min(1, { error: 'Agregá al menos un horario' }),
 })
 
 export type NewTreatmentFormValues = z.infer<typeof newTreatmentFormSchema>

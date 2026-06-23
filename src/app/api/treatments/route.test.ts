@@ -91,19 +91,15 @@ function configureFrom(cfg: FromConfig) {
   })
 }
 
+// El body del bono YA NO lleva pattern ni start_date: solo paciente/servicio/
+// profesional/total + vencimiento opcional. El server setea start_date (= hoy) y
+// persiste pattern vacío.
 function validBody(overrides: Record<string, unknown> = {}) {
   return {
     patient_id: PATIENT,
     service_id: SERVICE,
     professional_id: PROF_A,
     total_sessions: 10,
-    start_date: '2026-06-10',
-    pattern: {
-      slots: [
-        { day_of_week: 1, time: '10:00' },
-        { day_of_week: 4, time: '16:00' },
-      ],
-    },
     ...overrides,
   }
 }
@@ -167,27 +163,14 @@ describe('POST /api/treatments', () => {
     expect(res.status).toBe(400)
   })
 
-  it('400 si el pattern está vacío', async () => {
-    const res = await POST(makeRequest(validBody({ pattern: { slots: [] } })))
-    expect(res.status).toBe(400)
-  })
-
-  it('400 si day_of_week está fuera de 0..6', async () => {
+  it('ignora pattern/start_date si llegan en el body (ya no son del contrato)', async () => {
     const res = await POST(
-      makeRequest(
-        validBody({ pattern: { slots: [{ day_of_week: 7, time: '10:00', professional_id: PROF_A }] } }),
-      ),
+      makeRequest(validBody({ pattern: { slots: [] }, start_date: '2026-06-10' })),
     )
-    expect(res.status).toBe(400)
-  })
-
-  it('400 si time está mal formado', async () => {
-    const res = await POST(
-      makeRequest(
-        validBody({ pattern: { slots: [{ day_of_week: 1, time: '9:00', professional_id: PROF_A }] } }),
-      ),
-    )
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(201)
+    // El server persiste su propio start_date (hoy) y un pattern vacío.
+    expect((lastInsertPayload?.pattern as { slots: unknown[] }).slots).toHaveLength(0)
+    expect(lastInsertPayload?.start_date).not.toBe('2026-06-10')
   })
 
   it('400 si total_sessions <= 0', async () => {
@@ -198,14 +181,7 @@ describe('POST /api/treatments', () => {
   it('400 si el profesional del paquete no atiende el servicio', async () => {
     // El profesional (único) es PROF_A pero service_professionals no lo devuelve.
     configureFrom({ spRows: [] })
-    const res = await POST(
-      makeRequest(
-        validBody({
-          professional_id: PROF_A,
-          pattern: { slots: [{ day_of_week: 1, time: '10:00' }] },
-        }),
-      ),
-    )
+    const res = await POST(makeRequest(validBody({ professional_id: PROF_A })))
     expect(res.status).toBe(400)
     const body = await res.json()
     expect(body.error).toContain(PROF_A)
@@ -223,7 +199,7 @@ describe('POST /api/treatments', () => {
     expect(res.status).toBe(500)
   })
 
-  it('201 + inserta sessions_remaining = total_sessions y status active', async () => {
+  it('201 + inserta sessions_remaining = total_sessions, status active y pattern vacío', async () => {
     const res = await POST(makeRequest(validBody({ total_sessions: 10 })))
     expect(res.status).toBe(201)
     const body = await res.json()
@@ -237,13 +213,13 @@ describe('POST /api/treatments', () => {
       professional_id: PROF_A,
       total_sessions: 10,
       sessions_remaining: 10,
-      start_date: '2026-06-10',
       status: 'active',
       expires_at: null,
       created_by: 'user-1',
     })
-    // pattern persistido tal cual (2 slots)
-    expect((lastInsertPayload?.pattern as { slots: unknown[] }).slots).toHaveLength(2)
+    // start_date lo setea el server (formato YYYY-MM-DD) y el pattern se persiste vacío.
+    expect(lastInsertPayload?.start_date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect((lastInsertPayload?.pattern as { slots: unknown[] }).slots).toHaveLength(0)
   })
 
   it('tenant_id insertado proviene del JWT, no del body', async () => {
