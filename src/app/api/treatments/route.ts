@@ -54,29 +54,24 @@ export async function POST(request: Request): Promise<Response> {
     pattern,
   } = parsed.data
 
-  // 4. Validar que TODOS los profesionales (principal + cada slot) atiendan el servicio.
-  //    RLS de service_professionals filtra por tenant via JOIN a professionals,
+  // 4. Validar que el ÚNICO profesional del paquete atienda el servicio.
+  //    (Antes se validaba uno por slot; ahora hay un solo profesional para toda la
+  //    serie.) RLS de service_professionals filtra por tenant via JOIN a professionals,
   //    así que esta consulta sólo ve filas del tenant del usuario (AR14 — NO .eq('tenant_id')).
-  const uniqueProfIds = Array.from(
-    new Set<string>([professional_id, ...pattern.slots.map((s) => s.professional_id)]),
-  )
-
   const { data: spRows, error: spError } = await supabase
     .from('service_professionals')
     .select('professional_id')
     .eq('service_id', service_id)
-    .in('professional_id', uniqueProfIds)
+    .eq('professional_id', professional_id)
 
   if (spError) {
     console.error('[treatments/POST] service_professionals check error:', spError)
     return Response.json({ error: 'Error al validar el profesional' }, { status: 500 })
   }
 
-  const allowedProfIds = new Set<string>((spRows ?? []).map((r) => r.professional_id as string))
-  const missing = uniqueProfIds.filter((id) => !allowedProfIds.has(id))
-  if (missing.length > 0) {
+  if (!spRows || spRows.length === 0) {
     return Response.json(
-      { error: `El profesional ${missing[0]} no atiende ese servicio` },
+      { error: `El profesional ${professional_id} no atiende ese servicio` },
       { status: 400 },
     )
   }

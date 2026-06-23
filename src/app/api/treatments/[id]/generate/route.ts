@@ -75,7 +75,7 @@ export async function POST(
   // 5. Cargar el treatment (RLS 038 filtra por tenant — NO .eq('tenant_id'), AR14)
   const { data: treatment, error: treatmentError } = await supabase
     .from('treatments')
-    .select('treatment_id, patient_id, service_id, total_sessions, pattern, start_date, expires_at, status')
+    .select('treatment_id, patient_id, service_id, professional_id, total_sessions, pattern, start_date, expires_at, status')
     .eq('treatment_id', treatmentId)
     .maybeSingle()
 
@@ -90,13 +90,27 @@ export async function POST(
     return Response.json({ error: 'El paquete no está activo' }, { status: 409 })
   }
 
-  // 6. Validar la FORMA del pattern leído de DB (defensa ante datos corruptos)
+  // 6. Validar la FORMA del pattern leído de DB (defensa ante datos corruptos).
+  //    El pattern ya NO trae profesional por slot: UN solo profesional atiende todo
+  //    el paquete (`treatment.professional_id`) y se inyecta a cada slot acá, porque
+  //    la RPC de disponibilidad/candado (029) es POR PROFESIONAL.
   const patternParsed = patternSchema.safeParse(treatment.pattern)
   if (!patternParsed.success) {
     console.error('[treatments/generate] pattern inválido:', patternParsed.error.issues)
     return Response.json({ error: 'El patrón del paquete es inválido' }, { status: 422 })
   }
-  const slots: WeeklySlot[] = patternParsed.data.slots
+
+  const professionalId = treatment.professional_id as string | null
+  if (!professionalId) {
+    return Response.json({ error: 'El paquete no tiene profesional asignado' }, { status: 422 })
+  }
+
+  // Inyectar el profesional único del paquete a cada slot (día + hora + profesional).
+  const slots: WeeklySlot[] = patternParsed.data.slots.map((s) => ({
+    day_of_week: s.day_of_week,
+    time: s.time,
+    professional_id: professionalId,
+  }))
 
   const patientId = treatment.patient_id as string
   const serviceId = treatment.service_id as string
@@ -155,7 +169,12 @@ export async function POST(
     )
   }
 
-  const orderedSlots = orderSlots(slots)
+  // Excluir slots de fin de semana (sábado=5, domingo=6 en 0=lunes..6=domingo) ANTES
+  // de pre-resolver: refleja exactamente la misma regla que el helper puro, así no
+  // se gasta una RPC de disponibilidad en una ocurrencia que nunca se va a colocar.
+  const orderedSlots = orderSlots(slots).filter(
+    (s) => s.day_of_week !== 5 && s.day_of_week !== 6,
+  )
   // Pre-resolución: recorrer semana a semana resolviendo disponibilidad hasta
   // colocar N o agotar cortes (N / expires_at / MAX_WEEKS). Se cuenta "colocadas"
   // según la disponibilidad REAL para no resolver de más.
@@ -233,24 +252,18 @@ export async function POST(
     if (!apptRow.duplicate) creados += 1
   }
 
-  // 10. Recalcular sessions_remaining con un COUNT REAL de los turnos del paquete
-  //     (robusto ante re-ejecución idempotente — AC7). NO contador local.
-  const { count: packageCount, error: countError } = await supabase
-    .from('appointments')
-    .select('appointment_id', { count: 'exact', head: true })
-    .eq('package_id', treatmentId)
-    .in('status', ['confirmed', 'pending_calendar'])
-
-  if (countError) {
-    console.error('[treatments/generate] count error:', countError)
-  } else {
-    const { error: trUpdateError } = await supabase
-      .from('treatments')
-      .update({ sessions_remaining: packageCount ?? 0 })
-      .eq('treatment_id', treatmentId)
-    if (trUpdateError) {
-      console.error('[treatments/generate] update sessions_remaining error:', trUpdateError)
-    }
+  // 10. sessions_remaining = N (total_sessions): al GENERAR (= crear la serie) ninguna
+  //     sesión está consumida todavía. El contador honesto de la ficha ya NO deriva de
+  //     este campo (lee los appointments reales), pero lo dejamos consistente: "N
+  //     disponibles al crear". El decremento al consumir lo hace la Story 13.6.
+  //     Antes se seteaba al COUNT de turnos creados → si la serie quedaba corta (ej.
+  //     2 de 10) mostraba "8 consumidas". Ese era el bug raíz del contador.
+  const { error: trUpdateError } = await supabase
+    .from('treatments')
+    .update({ sessions_remaining: totalSessions })
+    .eq('treatment_id', treatmentId)
+  if (trUpdateError) {
+    console.error('[treatments/generate] update sessions_remaining error:', trUpdateError)
   }
 
   // 11. Audit log
@@ -261,7 +274,10 @@ export async function POST(
     supabase,
   })
 
-  // 12. Respuesta con el resumen
+  // 12. Respuesta con el resumen. `requested` vs `placed` permite a la UI informar
+  //     con claridad cuántas entraron, y `blocked_by_expiry` si el vencimiento las
+  //     recortó (en vez de truncar en silencio).
+  const placed = plan.placements.length
   return Response.json(
     {
       success: true,
@@ -269,6 +285,10 @@ export async function POST(
       creados,
       salteados: plan.salteados,
       no_colocados: plan.no_colocados,
+      // Contrato explícito de cobertura de la serie.
+      requested: totalSessions,
+      placed,
+      blocked_by_expiry: plan.blocked_by_expiry,
     },
     { status: 200 },
   )

@@ -21,50 +21,41 @@ function validApiBody(overrides: Record<string, unknown> = {}) {
     start_date: '2026-06-10',
     pattern: {
       slots: [
-        { day_of_week: 1, time: '10:00', professional_id: PROF_A },
-        { day_of_week: 4, time: '16:00', professional_id: PROF_A },
+        { day_of_week: 1, time: '10:00' },
+        { day_of_week: 4, time: '16:00' },
       ],
     },
     ...overrides,
   }
 }
 
-describe('weeklySlotSchema', () => {
-  it('acepta un slot válido (day 0..6, time HH:MM, uuid)', () => {
-    expect(
-      weeklySlotSchema.safeParse({ day_of_week: 0, time: '08:00', professional_id: PROF_A }).success,
-    ).toBe(true)
-    expect(
-      weeklySlotSchema.safeParse({ day_of_week: 6, time: '23:30', professional_id: PROF_A }).success,
-    ).toBe(true)
+describe('weeklySlotSchema (sólo día + hora — el profesional es único del paquete)', () => {
+  it('acepta un slot válido (day 0..6, time HH:MM)', () => {
+    expect(weeklySlotSchema.safeParse({ day_of_week: 0, time: '08:00' }).success).toBe(true)
+    expect(weeklySlotSchema.safeParse({ day_of_week: 6, time: '23:30' }).success).toBe(true)
   })
 
   it('rechaza day_of_week fuera de 0..6', () => {
-    expect(
-      weeklySlotSchema.safeParse({ day_of_week: 7, time: '10:00', professional_id: PROF_A }).success,
-    ).toBe(false)
-    expect(
-      weeklySlotSchema.safeParse({ day_of_week: -1, time: '10:00', professional_id: PROF_A }).success,
-    ).toBe(false)
+    expect(weeklySlotSchema.safeParse({ day_of_week: 7, time: '10:00' }).success).toBe(false)
+    expect(weeklySlotSchema.safeParse({ day_of_week: -1, time: '10:00' }).success).toBe(false)
   })
 
   it('rechaza time mal formado', () => {
-    expect(
-      weeklySlotSchema.safeParse({ day_of_week: 1, time: '9:00', professional_id: PROF_A }).success,
-    ).toBe(false)
-    expect(
-      weeklySlotSchema.safeParse({ day_of_week: 1, time: '25:00', professional_id: PROF_A }).success,
-    ).toBe(true) // regex sólo valida formato \d{2}:\d{2}; el rango de hora no es responsabilidad del schema
-    expect(
-      weeklySlotSchema.safeParse({ day_of_week: 1, time: 'aa:bb', professional_id: PROF_A }).success,
-    ).toBe(false)
+    expect(weeklySlotSchema.safeParse({ day_of_week: 1, time: '9:00' }).success).toBe(false)
+    expect(weeklySlotSchema.safeParse({ day_of_week: 1, time: '25:00' }).success).toBe(true) // regex sólo valida formato \d{2}:\d{2}
+    expect(weeklySlotSchema.safeParse({ day_of_week: 1, time: 'aa:bb' }).success).toBe(false)
   })
 
-  it('rechaza professional_id no-uuid', () => {
-    expect(
-      weeklySlotSchema.safeParse({ day_of_week: 1, time: '10:00', professional_id: 'not-a-uuid' })
-        .success,
-    ).toBe(false)
+  it('ya NO exige professional_id por slot (lo ignora si viene)', () => {
+    // Un profesional por slot dejó de ser parte del contrato del slot.
+    const parsed = weeklySlotSchema.safeParse({
+      day_of_week: 1,
+      time: '10:00',
+      professional_id: 'not-a-uuid',
+    })
+    expect(parsed.success).toBe(true)
+    // El campo se descarta (no forma parte del slot).
+    expect(parsed.success && 'professional_id' in parsed.data).toBe(false)
   })
 })
 

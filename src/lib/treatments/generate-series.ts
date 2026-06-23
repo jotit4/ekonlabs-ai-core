@@ -44,6 +44,20 @@ export interface GenerateSeriesResult {
   placements: Placement[]
   salteados: number
   no_colocados: number
+  /** true si NO se colocaron las N porque `expires_at` cortó la serie (las
+   *  ocurrencias restantes caían después del vencimiento). Permite a la UI
+   *  avisar "no entran todas, extendé el vencimiento o reducí sesiones". */
+  blocked_by_expiry: boolean
+}
+
+// day_of_week del patrón: 5=sábado, 6=domingo (0=lunes..6=domingo). Los fines de
+// semana NO se agendan aunque el patrón los incluyera (regla de negocio ISADI).
+const WEEKEND_PATTERN_DOWS = new Set([5, 6])
+
+/** true si la fecha YYYY-MM-DD cae sábado o domingo (independiente del patrón). */
+function isWeekend(date: string): boolean {
+  const jsDay = parseISO(date).getDay() // 0=domingo, 6=sábado
+  return jsDay === 0 || jsDay === 6
 }
 
 // day_of_week del patrón: 0=lunes … 6=domingo (ISODOW-1, misma convención que
@@ -108,10 +122,15 @@ export function generateSeries(input: GenerateSeriesInput): GenerateSeriesResult
   } = input
 
   // Orden cronológico estable dentro de la semana: por day_of_week, luego time.
-  const orderedSlots = orderSlots(slots)
+  // Se EXCLUYEN de entrada los slots de fin de semana (sábado=5, domingo=6 en la
+  // convención 0=lunes..6=domingo): nunca se agendan, aunque el patrón los traiga.
+  const orderedSlots = orderSlots(slots).filter((s) => !WEEKEND_PATTERN_DOWS.has(s.day_of_week))
 
   const placements: Placement[] = []
   let salteados = 0
+  // Marca que el corte se debió a expires_at (faltaron sesiones por vencimiento),
+  // para distinguirlo de "no entró por MAX_WEEKS" o "sin slots útiles".
+  let cutByExpiry = false
 
   for (let week = 0; week < maxWeeks; week++) {
     if (placements.length >= total_sessions) break
@@ -123,9 +142,14 @@ export function generateSeries(input: GenerateSeriesInput): GenerateSeriesResult
 
       const date = occurrenceDate(start_date, slot.day_of_week, week)
 
+      // Defensa extra: si la ocurrencia calculada cae en fin de semana, saltarla
+      // (no debería pasar tras filtrar slots, pero el patrón podría venir corrupto).
+      if (isWeekend(date)) continue
+
       // Corte por expires_at: comparación lexicográfica de YYYY-MM-DD (válida para fechas ISO).
       if (expires_at != null && date > expires_at) {
         // esta ocurrencia ya venció; no la intentamos, pero seguimos con otros slots
+        cutByExpiry = true
         continue
       }
       allSlotsExpired = false
@@ -152,6 +176,9 @@ export function generateSeries(input: GenerateSeriesInput): GenerateSeriesResult
 
   const creados = placements.length
   const no_colocados = Math.max(0, total_sessions - creados)
+  // Sólo es bloqueo-por-vencimiento si efectivamente faltaron sesiones Y el corte
+  // tocó el vencimiento (no si se colocaron todas, o si faltaron por conflicto puro).
+  const blocked_by_expiry = no_colocados > 0 && cutByExpiry
 
-  return { placements, salteados, no_colocados }
+  return { placements, salteados, no_colocados, blocked_by_expiry }
 }

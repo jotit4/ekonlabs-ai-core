@@ -15,6 +15,9 @@ import {
   DAY_OF_WEEK_LABELS,
   type NewTreatmentFormValues,
 } from '@/lib/schemas/treatment.schema'
+import { occurrenceDate } from '@/lib/treatments/generate-series'
+import { format, parseISO, isValid } from 'date-fns'
+import { es } from 'date-fns/locale'
 
 interface PatientResult {
   patient_id: string
@@ -48,6 +51,11 @@ interface GenerateSummary {
   creados: number
   salteados: number
   no_colocados: number
+  // Cobertura de la serie (paquetes-simplificados): cuántas se pidieron vs cuántas
+  // entraron, y si el vencimiento las recortó.
+  requested: number
+  placed: number
+  blocked_by_expiry: boolean
 }
 
 // Mensaje legible del resultado de la generación (ej. "9 turnos creados, 1 salteado por conflicto").
@@ -62,6 +70,76 @@ function formatGenerateSummary(s: GenerateSummary): string {
     )
   }
   return parts.join(', ')
+}
+
+// ── Preview de la serie (antes de crear) ─────────────────────────────────────
+// Slot del form (día + hora, SIN profesional — uno solo para todo el paquete).
+interface PreviewSlot {
+  day_of_week: number
+  time: string
+}
+
+const DOW_LABEL = (dow: number) =>
+  DAY_OF_WEEK_LABELS.find((d) => d.value === dow)?.label ?? '—'
+
+// Fines de semana se excluyen al generar (sábado=5, domingo=6 en 0=lunes..6=domingo).
+const isWeekendDow = (dow: number) => dow === 5 || dow === 6
+
+interface SeriesPreview {
+  // "Martes 10:00, Jueves 16:00"
+  diasHoras: string
+  // Fecha estimada de la última sesión (YYYY-MM-DD) — null si no se puede estimar.
+  lastDate: string | null
+  // true si algún slot del patrón cae en fin de semana (no se agendará).
+  hasWeekend: boolean
+}
+
+// Estima la cobertura de la serie SIN llamar al backend: repite el patrón (sin
+// fines de semana) semana a semana desde start_date hasta colocar total_sessions,
+// asumiendo disponibilidad (es una estimación optimista para mostrar al usuario).
+function buildPreview(
+  slots: PreviewSlot[],
+  startDate: string,
+  totalSessions: number,
+): SeriesPreview | null {
+  const validSlots = slots.filter((s) => s.time)
+  if (validSlots.length === 0 || !startDate || !isValid(parseISO(startDate)) || totalSessions < 1) {
+    return null
+  }
+
+  const ordered = [...validSlots].sort((a, b) =>
+    a.day_of_week !== b.day_of_week ? a.day_of_week - b.day_of_week : a.time.localeCompare(b.time),
+  )
+  const hasWeekend = ordered.some((s) => isWeekendDow(s.day_of_week))
+  const weekdaySlots = ordered.filter((s) => !isWeekendDow(s.day_of_week))
+
+  const diasHoras = ordered.map((s) => `${DOW_LABEL(s.day_of_week)} ${s.time}`).join(', ')
+
+  // Si todos los slots caen en fin de semana no se coloca nada → sin estimación.
+  if (weekdaySlots.length === 0) {
+    return { diasHoras, lastDate: null, hasWeekend }
+  }
+
+  // Recorre semanas colocando hasta N para estimar la fecha de la última.
+  let placed = 0
+  let lastDate: string | null = null
+  const MAX = 104
+  for (let week = 0; week < MAX && placed < totalSessions; week++) {
+    for (const slot of weekdaySlots) {
+      if (placed >= totalSessions) break
+      lastDate = occurrenceDate(startDate, slot.day_of_week, week)
+      placed += 1
+    }
+  }
+
+  return { diasHoras, lastDate, hasWeekend }
+}
+
+function fmtPreviewDate(iso: string | null): string {
+  if (!iso) return '—'
+  const parsed = parseISO(iso)
+  if (!isValid(parsed)) return '—'
+  return format(parsed, "EEEE d 'de' MMMM 'de' yyyy", { locale: es })
 }
 
 // Genera slots de tiempo 08:00–20:00 según la duración del servicio (reusado de NewTurnoModal).
@@ -123,7 +201,7 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
       total_sessions: 1,
       start_date: '',
       expires_at: '',
-      slots: [{ day_of_week: 0, time: '', professional_id: '' }],
+      slots: [{ day_of_week: 0, time: '' }],
     },
   })
 
@@ -148,6 +226,18 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
   const selectedService = services.find((s) => s.service_id === selectedServiceId)
   const durationMinutes = selectedService?.duration_minutes ?? 60
   const timeSlots = generateTimeSlots(durationMinutes)
+
+  // Preview en vivo de la serie (antes de crear): "Se generan N sesiones: <días y
+  // horas>, desde <inicio>" + fecha estimada de la última. Estimación optimista
+  // (asume disponibilidad); el resultado real lo confirma el backend.
+  const watchedSlots = useWatch({ control: treatmentForm.control, name: 'slots' })
+  const watchedStartDate = useWatch({ control: treatmentForm.control, name: 'start_date' })
+  const watchedTotalSessions = useWatch({ control: treatmentForm.control, name: 'total_sessions' })
+  const preview = buildPreview(
+    (watchedSlots ?? []).map((s) => ({ day_of_week: s.day_of_week, time: s.time })),
+    watchedStartDate ?? '',
+    Number(watchedTotalSessions) || 0,
+  )
 
   // Cargar profesionales del servicio elegido (filtrado por servicio en el endpoint).
   useEffect(() => {
@@ -226,7 +316,7 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
       total_sessions: 1,
       start_date: '',
       expires_at: '',
-      slots: [{ day_of_week: 0, time: '', professional_id: '' }],
+      slots: [{ day_of_week: 0, time: '' }],
     })
     onClose()
   }
@@ -313,10 +403,14 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
       }
 
       const body = (await response.json()) as Partial<GenerateSummary>
+      const placed = body.placed ?? body.creados ?? 0
       const summary: GenerateSummary = {
         creados: body.creados ?? 0,
         salteados: body.salteados ?? 0,
         no_colocados: body.no_colocados ?? 0,
+        requested: body.requested ?? placed,
+        placed,
+        blocked_by_expiry: body.blocked_by_expiry ?? false,
       }
       setGenerateResult(summary)
       setSubmitSuccess(true)
@@ -337,6 +431,7 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
     setGenerateResult(null)
 
     // Construir el body que matchea newTreatmentApiSchema (pattern: { slots }).
+    // Los slots sólo llevan día + hora: el profesional es ÚNICO para todo el paquete.
     const apiBody = {
       patient_id: values.patient_id,
       service_id: values.service_id,
@@ -348,7 +443,6 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
         slots: values.slots.map((s) => ({
           day_of_week: s.day_of_week,
           time: s.time,
-          professional_id: s.professional_id,
         })),
       },
     }
@@ -430,6 +524,21 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
                   {generateResult
                     ? `Paquete creado. ${formatGenerateSummary(generateResult)}.`
                     : 'Paquete creado correctamente.'}
+                </div>
+              )}
+
+              {/* Aviso accionable cuando NO entraron todas por el vencimiento.
+                  No es un error técnico: el paquete y los turnos que sí entraron
+                  ya existen — sólo se informa cómo cubrir las que faltan. */}
+              {submitSuccess && generateResult?.blocked_by_expiry && (
+                <div
+                  role="alert"
+                  className="rounded-[8px] border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+                >
+                  Se agendaron {generateResult.placed} de {generateResult.requested} sesiones: el
+                  resto no entra antes del vencimiento. Para agendar las{' '}
+                  {generateResult.requested - generateResult.placed} restantes, extendé la fecha de
+                  vencimiento o reducí el total de sesiones.
                 </div>
               )}
 
@@ -596,13 +705,13 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
                     )}
                   </div>
 
-                  {/* Profesional principal */}
+                  {/* Profesional (único para todo el paquete) */}
                   <div>
                     <label
                       htmlFor="paquete-professional-select"
                       className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
                     >
-                      Profesional principal
+                      Profesional
                     </label>
                     <select
                       id="paquete-professional-select"
@@ -708,20 +817,23 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
                     )}
                   </div>
 
-                  {/* Patrón multi-slot */}
+                  {/* Días y horas por semana (1..n). El profesional es único (arriba). */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="block text-sm font-medium text-[var(--color-text-primary)]">
-                        Patrón semanal
+                        Días y horas por semana
                       </span>
                       <button
                         type="button"
-                        onClick={() => append({ day_of_week: 0, time: '', professional_id: '' })}
+                        onClick={() => append({ day_of_week: 0, time: '' })}
                         className="text-sm font-medium text-[var(--color-interactive)] hover:opacity-80"
                       >
-                        + Agregar slot
+                        + Agregar día
                       </button>
                     </div>
+                    <p className="text-xs text-[var(--color-text-secondary)]">
+                      Los sábados y domingos no se agendan.
+                    </p>
 
                     {treatmentForm.formState.errors.slots?.message && (
                       <p role="alert" className="text-xs text-red-600">
@@ -737,7 +849,7 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
                       >
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-medium text-[var(--color-text-secondary)]">
-                            Slot {index + 1}
+                            Día {index + 1}
                           </span>
                           {fields.length > 1 && (
                             <button
@@ -746,7 +858,7 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
                               aria-label={`Quitar slot ${index + 1}`}
                               className="text-xs font-medium text-red-600 hover:opacity-80"
                             >
-                              Quitar slot
+                              Quitar
                             </button>
                           )}
                         </div>
@@ -804,43 +916,34 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
                             </p>
                           )}
                         </div>
-
-                        {/* Profesional del slot (lista filtrada por servicio) */}
-                        <div>
-                          <label
-                            htmlFor={`slot-${index}-professional`}
-                            className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1"
-                          >
-                            Profesional
-                          </label>
-                          <select
-                            id={`slot-${index}-professional`}
-                            {...treatmentForm.register(`slots.${index}.professional_id`)}
-                            disabled={professionalSelectDisabled}
-                            className={inputClass(
-                              !!treatmentForm.formState.errors.slots?.[index]?.professional_id,
-                            )}
-                          >
-                            <option value="">
-                              {professionalSelectDisabled
-                                ? 'Seleccioná un servicio primero'
-                                : 'Seleccioná un profesional'}
-                            </option>
-                            {professionals.map((prof) => (
-                              <option key={prof.professional_id} value={prof.professional_id}>
-                                {prof.name}
-                              </option>
-                            ))}
-                          </select>
-                          {treatmentForm.formState.errors.slots?.[index]?.professional_id && (
-                            <p role="alert" className="mt-1 text-xs text-red-600">
-                              {treatmentForm.formState.errors.slots[index]?.professional_id?.message}
-                            </p>
-                          )}
-                        </div>
                       </div>
                     ))}
                   </div>
+
+                  {/* Preview de la serie antes de crear (estimación optimista). */}
+                  {preview && (
+                    <div
+                      data-testid="paquete-preview"
+                      className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm text-[var(--color-text-primary)] space-y-1"
+                    >
+                      <p>
+                        Se generan {watchedTotalSessions}{' '}
+                        {Number(watchedTotalSessions) === 1 ? 'sesión' : 'sesiones'}:{' '}
+                        {preview.diasHoras}, desde el{' '}
+                        {fmtPreviewDate(watchedStartDate ?? null)}.
+                      </p>
+                      {preview.lastDate && (
+                        <p className="text-[var(--color-text-secondary)]">
+                          Última sesión estimada: {fmtPreviewDate(preview.lastDate)}.
+                        </p>
+                      )}
+                      {preview.hasWeekend && (
+                        <p className="text-amber-700">
+                          Los días de fin de semana del patrón no se agendarán.
+                        </p>
+                      )}
+                    </div>
+                  )}
 
                   {submitError && (
                     <p role="alert" className="text-xs text-red-600">

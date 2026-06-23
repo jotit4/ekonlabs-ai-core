@@ -5,34 +5,72 @@ import {
   type TreatmentStatus,
 } from './treatments'
 
-describe('treatmentProgress', () => {
-  it('caso del AC: total=10, sessions_remaining=7 → 3 consumidas, 7 restantes', () => {
-    const result = treatmentProgress({ total_sessions: 10, sessions_remaining: 7 })
-    expect(result).toEqual({ consumidas: 3, restantes: 7, total: 10 })
+// Helper: sesiones del paquete con un status dado.
+const sess = (statuses: string[]) => statuses.map((status) => ({ status }))
+
+describe('treatmentProgress (contador honesto desde sesiones reales)', () => {
+  it('el bug raíz: 2 sesiones, ninguna realizada → 0 realizadas, 2 agendadas (NO "8 consumidas")', () => {
+    // Antes: total=10, sessions_remaining=2 (= turnos creados) → "8 consumidas". FALSO.
+    // Ahora deriva de las sesiones reales: 0 realizadas, 2 agendadas, faltan 8.
+    const result = treatmentProgress({
+      total_sessions: 10,
+      appointments: sess(['confirmed', 'confirmed']),
+    })
+    expect(result).toEqual({ realizadas: 0, agendadas: 2, total: 10, por_agendar: 8 })
   })
 
-  it('paquete recién creado (ninguna consumida): total=10, remaining=10 → 0 consumidas', () => {
-    expect(treatmentProgress({ total_sessions: 10, sessions_remaining: 10 })).toEqual({
-      consumidas: 0,
-      restantes: 10,
+  it('mezcla de estados: completed cuenta como realizada y agendada; no_show solo agendada', () => {
+    const result = treatmentProgress({
+      total_sessions: 10,
+      appointments: sess(['completed', 'completed', 'confirmed', 'no_show', 'cancelled']),
+    })
+    // realizadas = 2 (completed); agendadas = 4 (2 completed + 1 confirmed + 1 no_show);
+    // cancelled NO cuenta como agendada → faltan 6.
+    expect(result).toEqual({ realizadas: 2, agendadas: 4, total: 10, por_agendar: 6 })
+  })
+
+  it('paquete recién creado, todas confirmadas → 0 realizadas, N agendadas, 0 por agendar', () => {
+    expect(
+      treatmentProgress({
+        total_sessions: 3,
+        appointments: sess(['confirmed', 'confirmed', 'confirmed']),
+      }),
+    ).toEqual({ realizadas: 0, agendadas: 3, total: 3, por_agendar: 0 })
+  })
+
+  it('paquete completado: todas completed → N realizadas, N agendadas, 0 por agendar', () => {
+    expect(
+      treatmentProgress({
+        total_sessions: 3,
+        appointments: sess(['completed', 'completed', 'completed']),
+      }),
+    ).toEqual({ realizadas: 3, agendadas: 3, total: 3, por_agendar: 0 })
+  })
+
+  it('sin appointments → 0 realizadas, 0 agendadas, todas por agendar', () => {
+    expect(treatmentProgress({ total_sessions: 10, appointments: [] })).toEqual({
+      realizadas: 0,
+      agendadas: 0,
       total: 10,
+      por_agendar: 10,
     })
-  })
-
-  it('paquete completado: total=10, remaining=0 → 10 consumidas, 0 restantes', () => {
-    expect(treatmentProgress({ total_sessions: 10, sessions_remaining: 0 })).toEqual({
-      consumidas: 10,
-      restantes: 0,
+    // null también es seguro
+    expect(treatmentProgress({ total_sessions: 10, appointments: null })).toEqual({
+      realizadas: 0,
+      agendadas: 0,
       total: 10,
+      por_agendar: 10,
     })
   })
 
-  it('guarda defensiva: remaining > total nunca produce consumidas negativas', () => {
-    expect(treatmentProgress({ total_sessions: 5, sessions_remaining: 8 })).toEqual({
-      consumidas: 0,
-      restantes: 8,
-      total: 5,
+  it('guarda defensiva: más agendadas que el total nunca produce negativos', () => {
+    const result = treatmentProgress({
+      total_sessions: 2,
+      appointments: sess(['confirmed', 'confirmed', 'confirmed']),
     })
+    expect(result.agendadas).toBe(2) // tope = total
+    expect(result.por_agendar).toBe(0)
+    expect(result.realizadas).toBeGreaterThanOrEqual(0)
   })
 })
 

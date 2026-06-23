@@ -2,7 +2,16 @@ import { z } from 'zod'
 
 // ─── Patrón de slots semanales (domain-tratamiento-clinico.md §3.2) ───────────
 // day_of_week: 0=lunes … 6=domingo (misma convención ISODOW-1 que professional_schedules / 029).
-// time: "HH:MM" 24h. professional_id: el profesional que atiende ese slot (puede variar por slot).
+// time: "HH:MM" 24h.
+//
+// SIMPLIFICACIÓN (paquetes-simplificados): el slot ya NO lleva profesional propio.
+// UN solo profesional atiende TODO el paquete (campo `professional_id` del treatment).
+// Los slots sólo definen día + hora. La generación/disponibilidad usa el profesional
+// del paquete. Sábados (5) y domingos (6) se EXCLUYEN al generar (no se agendan).
+//
+// El profesional se inyecta a cada slot en la API/generación (no viene del form),
+// por eso `professional_id` permanece en el TIPO `WeeklySlot` que consume la serie,
+// pero el SCHEMA del slot de entrada ya no lo exige.
 
 export const weeklySlotSchema = z.object({
   day_of_week: z
@@ -11,10 +20,12 @@ export const weeklySlotSchema = z.object({
     .min(0, { error: 'Día inválido' })
     .max(6, { error: 'Día inválido' }),
   time: z.string().regex(/^\d{2}:\d{2}$/, { error: 'Horario inválido' }),
-  professional_id: z.string().uuid({ error: 'professional_id inválido' }),
 })
 
-export type WeeklySlot = z.infer<typeof weeklySlotSchema>
+// El tipo que consume la generación de la serie SÍ necesita el profesional del slot
+// (la RPC de disponibilidad/candado es POR PROFESIONAL). Se deriva del profesional
+// único del paquete al construir el plan, no del input del formulario.
+export type WeeklySlot = z.infer<typeof weeklySlotSchema> & { professional_id: string }
 
 // El patrón debe tener AL MENOS 1 slot (soporta 1, 2 o 3+).
 export const patternSchema = z.object({
@@ -61,6 +72,8 @@ export const newTreatmentFormSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, { error: 'Fecha de vencimiento inválida' })
     .optional()
     .or(z.literal('')),
+  // Los slots del form sólo definen día + hora. El profesional es ÚNICO para todo
+  // el paquete (campo `professional_id` de arriba) — ya no se elige por slot.
   slots: z
     .array(
       z.object({
@@ -70,10 +83,9 @@ export const newTreatmentFormSchema = z.object({
           .min(0, { error: 'Día inválido' })
           .max(6, { error: 'Día inválido' }),
         time: z.string().regex(/^\d{2}:\d{2}$/, { error: 'Seleccioná un horario' }),
-        professional_id: z.string().min(1, { error: 'Seleccioná un profesional' }),
       }),
     )
-    .min(1, { error: 'Agregá al menos un slot' }),
+    .min(1, { error: 'Agregá al menos un horario' }),
 })
 
 export type NewTreatmentFormValues = z.infer<typeof newTreatmentFormSchema>

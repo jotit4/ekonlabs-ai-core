@@ -130,12 +130,13 @@ function defaultTreatment(): Record<string, unknown> {
     treatment_id: TREATMENT_ID,
     patient_id: PATIENT,
     service_id: SERVICE,
+    professional_id: PROF, // profesional ÚNICO del paquete (se inyecta a cada slot)
     total_sessions: 2,
     start_date: '2026-06-08', // lunes
     expires_at: null,
     status: 'active',
     pattern: {
-      slots: [{ day_of_week: 1, time: '10:00', professional_id: PROF }], // martes 10:00
+      slots: [{ day_of_week: 1, time: '10:00' }], // martes 10:00 (sin profesional por slot)
     },
   }
 }
@@ -283,8 +284,13 @@ describe('POST /api/treatments/[id]/generate', () => {
       }),
     )
 
-    // sessions_remaining recalculado con el count real (2)
+    // sessions_remaining = N (total_sessions=2): al generar nada está consumido
     expect(cfg.trUpdates).toContainEqual({ sessions_remaining: 2 })
+
+    // Contrato de cobertura: requested/placed/blocked_by_expiry
+    expect(body.requested).toBe(2)
+    expect(body.placed).toBe(2)
+    expect(body.blocked_by_expiry).toBe(false)
   })
 
   it('el UPDATE de package_id usa el appointment_id DEVUELTO por la RPC (no el generado)', async () => {
@@ -348,7 +354,8 @@ describe('POST /api/treatments/[id]/generate', () => {
     expect(body.creados).toBe(0) // ninguno nuevo
     // Igual asegura el UPDATE de package_id sobre el turno existente devuelto
     expect(cfg.updatedApptIds!.every((id) => id === 'EXISTING-ID')).toBe(true)
-    // sessions_remaining recalculado con count real (2), no con el contador local
+    // sessions_remaining = N (total_sessions=2): la generación NO lo deriva del
+    // count de turnos creados (ese era el bug del contador "8/10").
     expect(cfg.trUpdates).toContainEqual({ sessions_remaining: 2 })
   })
 
@@ -396,6 +403,49 @@ describe('POST /api/treatments/[id]/generate', () => {
     expect(body.creados).toBe(2) // no se perdió ninguna
     expect(body.salteados).toBeGreaterThanOrEqual(1)
     expect(body.no_colocados).toBe(0)
+  })
+
+  // ── Fin de semana / vencimiento ──────────────────────────────────────────────
+  it('422 si el treatment no tiene profesional asignado', async () => {
+    configureFrom({ treatment: { ...defaultTreatment(), professional_id: null } })
+    const res = await POST(makeRequest(), makeParams())
+    expect(res.status).toBe(422)
+  })
+
+  it('excluye fin de semana: un patrón de sábado no agenda nada (ni consulta disponibilidad)', async () => {
+    configureFrom({
+      treatment: {
+        ...defaultTreatment(),
+        total_sessions: 3,
+        pattern: { slots: [{ day_of_week: 5, time: '10:00' }] }, // sábado
+      },
+    })
+    const res = await POST(makeRequest(), makeParams())
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.creados).toBe(0)
+    expect(body.placed).toBe(0)
+    // No se consultó disponibilidad para fechas de sábado (slot filtrado de entrada)
+    const availCalls = mockRpc.mock.calls.filter((c) => c[0] === 'check_clinic_availability')
+    expect(availCalls.length).toBe(0)
+  })
+
+  it('blocked_by_expiry=true en la respuesta cuando el vencimiento recorta la serie', async () => {
+    configureFrom({
+      treatment: {
+        ...defaultTreatment(),
+        total_sessions: 10,
+        expires_at: '2026-06-16', // sólo martes 06-09 y 06-16 entran
+      },
+    })
+    configureRpc({ available: true })
+    const res = await POST(makeRequest(), makeParams())
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.placed).toBe(2)
+    expect(body.requested).toBe(10)
+    expect(body.no_colocados).toBe(8)
+    expect(body.blocked_by_expiry).toBe(true)
   })
 
   // ── Errores de la RPC ───────────────────────────────────────────────────────

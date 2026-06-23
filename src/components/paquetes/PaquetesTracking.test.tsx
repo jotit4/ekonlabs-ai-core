@@ -51,7 +51,7 @@ function makeTreatment() {
     service_id: 'svc-1',
     professional_id: 'prof-1',
     total_sessions: 10,
-    sessions_remaining: 7, // → 3 consumidas, 7 restantes
+    sessions_remaining: 10, // ya no alimenta el contador (se deriva de las sesiones reales)
     start_date: '2026-06-10',
     pattern: { slots: [] },
     status: 'active',
@@ -88,9 +88,12 @@ describe('PaquetesTracking', () => {
 
     render(<PaquetesTracking patientId={PATIENT_ID} />, { wrapper: makeWrapper() })
 
+    // Contador HONESTO desde las sesiones reales: 1 completed + 1 confirmed.
+    // realizadas=1, agendadas=2, total=10 → faltan agendar 8.
     await waitFor(() => {
-      expect(screen.getByText('3/10 consumidas, 7 restantes')).toBeInTheDocument()
+      expect(screen.getByText('1 de 10 sesiones realizadas')).toBeInTheDocument()
     })
+    expect(screen.getByText(/2 agendadas · faltan agendar 8/)).toBeInTheDocument()
     expect(screen.getByText('Kinesiología')).toBeInTheDocument()
     expect(screen.getByText('Patricia Pérez')).toBeInTheDocument()
     expect(screen.getByText('Activo')).toBeInTheDocument()
@@ -109,6 +112,39 @@ describe('PaquetesTracking', () => {
     // Labels de estado de las sesiones (STATUS_LABELS)
     expect(screen.getByText('Completado')).toBeInTheDocument()
     expect(screen.getByText('Confirmado')).toBeInTheDocument()
+  })
+
+  it('regresión: 2 turnos sin realizar y total=10 NO muestra "8 realizadas" (bug del contador)', async () => {
+    const t = makeTreatment()
+    t.total_sessions = 10
+    t.sessions_remaining = 2 // valor sobrecargado del bug viejo — el contador NO debe usarlo
+    t.appointments = [
+      {
+        appointment_id: 'a1',
+        session_index: 1,
+        start_at: '2026-06-10T10:00:00Z',
+        end_at: '2026-06-10T11:00:00Z',
+        status: 'confirmed',
+      },
+      {
+        appointment_id: 'a2',
+        session_index: 2,
+        start_at: '2026-06-17T10:00:00Z',
+        end_at: '2026-06-17T11:00:00Z',
+        status: 'confirmed',
+      },
+    ]
+    mockOrder.mockResolvedValue({ data: [t], error: null })
+
+    render(<PaquetesTracking patientId={PATIENT_ID} />, { wrapper: makeWrapper() })
+
+    await waitFor(() => {
+      expect(screen.getByText('0 de 10 sesiones realizadas')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/2 agendadas · faltan agendar 8/)).toBeInTheDocument()
+    // NO debe aparecer el texto falso del bug viejo
+    expect(screen.queryByText(/8 de 10/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/consumidas/)).not.toBeInTheDocument()
   })
 
   it('estado vacío: "Este paciente no tiene paquetes."', async () => {
