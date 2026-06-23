@@ -147,9 +147,10 @@ describe('generateSeries (helper puro)', () => {
     expect(MAX_WEEKS).toBe(104)
   })
 
-  it('convención day_of_week 0=lunes..6=domingo: la fecha calculada cae en el día correcto', () => {
-    // start_date 2026-06-08 = lunes. Probamos cada day_of_week 0..6.
-    for (let dow = 0; dow <= 6; dow++) {
+  it('convención day_of_week 0=lunes..4=viernes: la fecha calculada cae en el día correcto', () => {
+    // start_date 2026-06-08 = lunes. Probamos cada day_of_week de SEMANA (0..4).
+    // Sábado(5)/domingo(6) se excluyen — cubierto en su propio test.
+    for (let dow = 0; dow <= 4; dow++) {
       const res = generateSeries({
         slots: [{ day_of_week: dow, time: '10:00', professional_id: PROF }],
         start_date: '2026-06-08',
@@ -161,6 +162,81 @@ describe('generateSeries (helper puro)', () => {
       // getDay() del Date debe coincidir con la conversión esperada
       expect(placedDate.getDay()).toBe(expectedJsDay(dow))
     }
+  })
+
+  it('excluye fines de semana: slots sábado(5) y domingo(6) NO se colocan', () => {
+    const res = generateSeries({
+      slots: [
+        { day_of_week: 5, time: '10:00', professional_id: PROF }, // sábado
+        { day_of_week: 6, time: '11:00', professional_id: PROF }, // domingo
+      ],
+      start_date: '2026-06-08',
+      total_sessions: 5,
+      maxWeeks: 10,
+      isSlotAvailable: alwaysAvailable,
+    })
+    // Todos los slots son de fin de semana → no se coloca ninguno.
+    expect(res.placements).toHaveLength(0)
+    expect(res.no_colocados).toBe(5)
+  })
+
+  it('patrón mixto: sólo los slots de semana cuentan; el de sábado se ignora', () => {
+    const res = generateSeries({
+      slots: [
+        { day_of_week: 1, time: '10:00', professional_id: PROF }, // martes (cuenta)
+        { day_of_week: 5, time: '12:00', professional_id: PROF }, // sábado (excluido)
+      ],
+      start_date: '2026-06-08',
+      total_sessions: 3,
+      isSlotAvailable: alwaysAvailable,
+    })
+    expect(res.placements).toHaveLength(3)
+    // Ninguna colocada cae en sábado/domingo
+    expect(res.placements.every((p) => {
+      const day = parseISO(p.date).getDay()
+      return day !== 0 && day !== 6
+    })).toBe(true)
+    // Todas son martes (day_of_week=1)
+    expect(res.placements.every((p) => p.slot.day_of_week === 1)).toBe(true)
+  })
+
+  it('genera EXACTAMENTE N repitiendo semana a semana (no se queda en la primera semana)', () => {
+    const res = generateSeries({
+      slots: [{ day_of_week: 1, time: '10:00', professional_id: PROF }], // 1 slot/semana
+      start_date: '2026-06-08',
+      total_sessions: 6,
+      isSlotAvailable: alwaysAvailable,
+    })
+    expect(res.placements).toHaveLength(6) // 6 semanas, 1 por semana
+    expect(res.no_colocados).toBe(0)
+    expect(res.blocked_by_expiry).toBe(false)
+    // session_index 1..6 cronológico
+    expect(res.placements.map((p) => p.session_index)).toEqual([1, 2, 3, 4, 5, 6])
+  })
+
+  it('blocked_by_expiry=true cuando el vencimiento corta antes de las N', () => {
+    const res = generateSeries({
+      slots: [{ day_of_week: 1, time: '10:00', professional_id: PROF }],
+      start_date: '2026-06-08',
+      total_sessions: 10,
+      expires_at: '2026-06-16', // sólo 06-09 y 06-16 entran
+      isSlotAvailable: alwaysAvailable,
+    })
+    expect(res.placements).toHaveLength(2)
+    expect(res.no_colocados).toBe(8)
+    expect(res.blocked_by_expiry).toBe(true)
+  })
+
+  it('blocked_by_expiry=false cuando entran todas las N (con o sin vencimiento)', () => {
+    const res = generateSeries({
+      slots: [{ day_of_week: 1, time: '10:00', professional_id: PROF }],
+      start_date: '2026-06-08',
+      total_sessions: 2,
+      expires_at: '2026-12-31',
+      isSlotAvailable: alwaysAvailable,
+    })
+    expect(res.placements).toHaveLength(2)
+    expect(res.blocked_by_expiry).toBe(false)
   })
 
   it('day_of_week=1 produce un MARTES (caso explícito del story file)', () => {

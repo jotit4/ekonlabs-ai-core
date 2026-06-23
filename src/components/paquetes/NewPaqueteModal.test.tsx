@@ -97,30 +97,37 @@ function makeTreatmentResponse(ok = true, status = 201, error?: string) {
   }
 }
 
+type GenSummary = {
+  creados: number
+  salteados: number
+  no_colocados: number
+  requested?: number
+  placed?: number
+  blocked_by_expiry?: boolean
+}
+
 function makeGenerateResponse(
-  summary: { creados: number; salteados: number; no_colocados: number } = {
-    creados: 10,
-    salteados: 0,
-    no_colocados: 0,
-  },
+  summary: GenSummary = { creados: 10, salteados: 0, no_colocados: 0 },
   ok = true,
   status = 200,
   error?: string,
 ) {
+  const full = {
+    requested: summary.creados + summary.no_colocados,
+    placed: summary.creados,
+    blocked_by_expiry: summary.no_colocados > 0,
+    ...summary,
+  }
   return {
     ok,
     status,
     json: async () =>
-      ok ? { success: true, treatment_id: 'trt-new', ...summary } : { error: error ?? 'Error' },
+      ok ? { success: true, treatment_id: 'trt-new', ...full } : { error: error ?? 'Error' },
   }
 }
 
 // Despachador estándar para el flujo de 2 pasos en éxito completo.
-function routeTwoStep(generateSummary?: {
-  creados: number
-  salteados: number
-  no_colocados: number
-}) {
+function routeTwoStep(generateSummary?: GenSummary) {
   return (url: string) => {
     if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse())
     if (url === '/api/treatments') return Promise.resolve(makeTreatmentResponse())
@@ -131,22 +138,20 @@ function routeTwoStep(generateSummary?: {
 }
 
 // Rellena el form de paquete (con initialPatient) hasta dejarlo listo para enviar.
+// El profesional es ÚNICO (un solo select "Profesional"); los días/horas no lo piden.
 async function fillTreatmentForm(
   user: ReturnType<typeof userEvent.setup>,
   totalSessions = '10',
 ) {
   await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
   await waitFor(() => {
-    expect((screen.getByLabelText('Profesional principal') as HTMLSelectElement).value).toBe(
-      PROF_1,
-    )
+    expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe(PROF_1)
   })
   const totalInput = screen.getByLabelText('Total de sesiones')
   await user.clear(totalInput)
   await user.type(totalInput, totalSessions)
   await user.type(screen.getByLabelText('Fecha de inicio'), '2026-06-10')
   await user.selectOptions(screen.getByLabelText('Horario'), '10:00')
-  await user.selectOptions(screen.getAllByLabelText('Profesional')[0], PROF_1)
 }
 
 describe('NewPaqueteModal', () => {
@@ -196,28 +201,68 @@ describe('NewPaqueteModal', () => {
     })
   })
 
-  describe('patrón multi-slot', () => {
-    it('arranca con 1 slot y permite agregar y quitar slots', async () => {
+  describe('días y horas por semana', () => {
+    it('arranca con 1 día y permite agregar y quitar', async () => {
       const user = userEvent.setup()
       render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
 
-      // 1 slot inicial
+      // 1 día inicial
       expect(screen.getByTestId('slot-row-0')).toBeInTheDocument()
       expect(screen.queryByTestId('slot-row-1')).not.toBeInTheDocument()
 
-      // Agregar slot
-      await user.click(screen.getByRole('button', { name: /agregar slot/i }))
+      // Agregar día
+      await user.click(screen.getByRole('button', { name: /agregar día/i }))
       await waitFor(() => expect(screen.getByTestId('slot-row-1')).toBeInTheDocument())
 
-      // Quitar el segundo slot
+      // Quitar el segundo día (aria-label "Quitar slot 2")
       await user.click(screen.getByRole('button', { name: /quitar slot 2/i }))
       await waitFor(() => expect(screen.queryByTestId('slot-row-1')).not.toBeInTheDocument())
     })
 
-    it('con 1 solo slot no muestra botón "Quitar slot" (mínimo 1)', () => {
+    it('con 1 solo día no muestra botón de quitar (mínimo 1)', () => {
       render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
       expect(screen.getByTestId('slot-row-0')).toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: /quitar slot/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /quitar/i })).not.toBeInTheDocument()
+    })
+
+    it('NO hay selector de profesional por día (un solo profesional para el paquete)', () => {
+      render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
+      // Sólo existe UN select "Profesional" (el principal del paquete).
+      expect(screen.getAllByLabelText('Profesional')).toHaveLength(1)
+    })
+
+    it('muestra un PREVIEW de la serie al completar día/hora/total/inicio', async () => {
+      const user = userEvent.setup()
+      render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
+
+      const totalInput = screen.getByLabelText('Total de sesiones')
+      await user.clear(totalInput)
+      await user.type(totalInput, '4')
+      await user.type(screen.getByLabelText('Fecha de inicio'), '2026-06-08') // lunes
+      await user.selectOptions(screen.getByLabelText('Día'), '1') // martes
+      await user.selectOptions(screen.getByLabelText('Horario'), '10:00')
+
+      await waitFor(() => {
+        expect(screen.getByTestId('paquete-preview')).toBeInTheDocument()
+      })
+      expect(screen.getByText(/Se generan 4 sesiones: Martes 10:00/i)).toBeInTheDocument()
+      // Fecha estimada de la última sesión (4 martes: 06-09,16,23,30)
+      expect(screen.getByText(/Última sesión estimada:/i)).toBeInTheDocument()
+    })
+
+    it('el preview avisa que el fin de semana del patrón no se agendará', async () => {
+      const user = userEvent.setup()
+      render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
+
+      await user.type(screen.getByLabelText('Fecha de inicio'), '2026-06-08')
+      await user.selectOptions(screen.getByLabelText('Día'), '5') // sábado
+      await user.selectOptions(screen.getByLabelText('Horario'), '10:00')
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(/Los días de fin de semana del patrón no se agendarán/i),
+        ).toBeInTheDocument()
+      })
     })
 
     it('los días usan la convención 0=Lunes..6=Domingo', () => {
@@ -243,9 +288,7 @@ describe('NewPaqueteModal', () => {
       // Servicio → dispara carga de profesionales (único → se preselecciona)
       await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
       await waitFor(() => {
-        expect((screen.getByLabelText('Profesional principal') as HTMLSelectElement).value).toBe(
-          PROF_1,
-        )
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe(PROF_1)
       })
 
       // Total de sesiones
@@ -256,9 +299,8 @@ describe('NewPaqueteModal', () => {
       // Fecha de inicio
       await user.type(screen.getByLabelText('Fecha de inicio'), '2026-06-10')
 
-      // Slot 1: hora y profesional (el día arranca en Lunes=0 por default)
+      // Día 1: sólo hora (el día arranca en Lunes=0 por default; sin profesional por día)
       await user.selectOptions(screen.getByLabelText('Horario'), '10:00')
-      await user.selectOptions(screen.getAllByLabelText('Profesional')[0], PROF_1)
 
       await user.click(screen.getByRole('button', { name: /crear paquete/i }))
 
@@ -274,12 +316,12 @@ describe('NewPaqueteModal', () => {
       const sentBody = JSON.parse(call![1].body)
       expect(sentBody.total_sessions).toBe(10)
       expect(sentBody.start_date).toBe('2026-06-10')
+      // El profesional único viaja a nivel paquete, no por slot.
+      expect(sentBody.professional_id).toBe(PROF_1)
       expect(sentBody.pattern.slots).toHaveLength(1)
-      expect(sentBody.pattern.slots[0]).toMatchObject({
-        day_of_week: 0,
-        time: '10:00',
-        professional_id: PROF_1,
-      })
+      expect(sentBody.pattern.slots[0]).toEqual({ day_of_week: 0, time: '10:00' })
+      // Los slots NO llevan professional_id
+      expect(sentBody.pattern.slots[0].professional_id).toBeUndefined()
     })
 
     it('flujo de 2 pasos: tras 201 encadena /generate y muestra el resumen', async () => {
@@ -339,6 +381,32 @@ describe('NewPaqueteModal', () => {
       })
     })
 
+    it('aviso accionable cuando blocked_by_expiry: ofrece extender vencimiento o reducir sesiones', async () => {
+      mockFetch.mockImplementation(
+        routeTwoStep({
+          creados: 6,
+          salteados: 0,
+          no_colocados: 4,
+          requested: 10,
+          placed: 6,
+          blocked_by_expiry: true,
+        }),
+      )
+
+      const user = userEvent.setup()
+      render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
+
+      await fillTreatmentForm(user)
+      await user.click(screen.getByRole('button', { name: /crear paquete/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText(/Se agendaron 6 de 10 sesiones/i)).toBeInTheDocument()
+      })
+      expect(
+        screen.getByText(/extendé la fecha de vencimiento o reducí el total de sesiones/i),
+      ).toBeInTheDocument()
+    })
+
     it('si /generate falla: informa que el paquete se creó y permite reintentar (idempotente, sin re-crear)', async () => {
       // 1ª llamada a /generate falla (500); la 2ª (reintento) responde 200.
       let generateCalls = 0
@@ -394,16 +462,13 @@ describe('NewPaqueteModal', () => {
 
       await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
       await waitFor(() => {
-        expect((screen.getByLabelText('Profesional principal') as HTMLSelectElement).value).toBe(
-          PROF_1,
-        )
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe(PROF_1)
       })
       const totalInput = screen.getByLabelText('Total de sesiones')
       await user.clear(totalInput)
       await user.type(totalInput, '5')
       await user.type(screen.getByLabelText('Fecha de inicio'), '2026-06-10')
       await user.selectOptions(screen.getByLabelText('Horario'), '10:00')
-      await user.selectOptions(screen.getAllByLabelText('Profesional')[0], PROF_1)
 
       await user.click(screen.getByRole('button', { name: /crear paquete/i }))
 

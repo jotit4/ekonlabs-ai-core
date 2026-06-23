@@ -92,7 +92,9 @@ export function PaquetesTracking({ patientId }: PaquetesTrackingProps) {
   return (
     <ul role="list" className="space-y-4" aria-label="Paquetes del paciente">
       {treatments.map((t) => {
-        const { consumidas, restantes, total } = treatmentProgress(t)
+        // Contador HONESTO derivado de las sesiones reales del paquete (no de
+        // total_sessions − sessions_remaining, que estaba sobrecargado).
+        const { realizadas, agendadas, total, por_agendar } = treatmentProgress(t)
         const sessions = (t.appointments ?? [])
           .slice()
           .sort((a, b) => (a.session_index ?? 0) - (b.session_index ?? 0))
@@ -104,12 +106,16 @@ export function PaquetesTracking({ patientId }: PaquetesTrackingProps) {
           >
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <span className="text-sm font-semibold text-[var(--color-text-primary)]">
-                {consumidas}/{total} consumidas, {restantes} restantes
+                {realizadas} de {total} sesiones realizadas
               </span>
               <span className="text-xs text-[var(--color-text-secondary)]">
                 {statusLabel(t.status)}
               </span>
             </div>
+            <p className="mt-0.5 text-xs text-[var(--color-text-secondary)]">
+              {agendadas} agendadas
+              {por_agendar > 0 ? ` · faltan agendar ${por_agendar}` : ' · todas agendadas'}
+            </p>
 
             <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-[var(--color-text-secondary)]">
               <dt>Servicio</dt>

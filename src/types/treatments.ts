@@ -82,23 +82,54 @@ export interface SessionNote {
 }
 
 export interface TreatmentProgress {
-  consumidas: number
-  restantes: number
+  /** Sesiones efectivamente REALIZADAS (turno con status 'completed'). */
+  realizadas: number
+  /** Turnos AGENDADOS (no cancelados): confirmed + completed + no_show + pending_calendar. */
+  agendadas: number
+  /** Total contratado del paquete (`total_sessions`). */
   total: number
+  /** Sesiones que FALTA agendar: max(0, total − agendadas). */
+  por_agendar: number
 }
 
+// Status de appointment que cuentan como "agendado" (ocupa un cupo del paquete).
+// Un turno cancelado/rescheduled NO ocupa cupo → vuelve a "por agendar".
+const SCHEDULED_STATUSES = new Set(['confirmed', 'completed', 'no_show', 'pending_calendar'])
+// Status que cuenta como "realizado".
+const DONE_STATUS = 'completed'
+
 /**
- * Progreso de tracking de un paquete (solo lectura).
- * `consumidas = total_sessions − sessions_remaining` (NO al revés).
- * Caso del AC: total=10, sessions_remaining=7 → consumidas=3, restantes=7.
- * La lógica de decremento la implementa 13.6; acá sólo se LEE el contador vivo.
+ * Progreso HONESTO de un paquete, derivado de las SESIONES REALES (los
+ * `appointments` ligados por `package_id`), NO de `total_sessions − sessions_remaining`
+ * (ese campo está sobrecargado: la generación lo setea = turnos que LLEGÓ a crear,
+ * lo que producía "8/10 consumidas" cuando sólo había 2 sesiones sin realizar).
+ *
+ * - `realizadas` = sesiones con status 'completed'.
+ * - `agendadas`  = turnos NO cancelados (confirmed + completed + no_show + pending_calendar).
+ * - `total`      = total_sessions contratado.
+ * - `por_agendar`= max(0, total − agendadas).
+ *
+ * Guarda defensiva: nunca negativos aunque los datos vengan inconsistentes.
  */
 export function treatmentProgress(
-  treatment: Pick<Treatment, 'total_sessions' | 'sessions_remaining'>,
+  treatment: Pick<Treatment, 'total_sessions'> & {
+    appointments?: Pick<TreatmentSession, 'status'>[] | null
+  },
 ): TreatmentProgress {
-  const total = treatment.total_sessions
-  const restantes = treatment.sessions_remaining
-  // Guarda defensiva: nunca consumidas negativas si los datos vienen inconsistentes.
-  const consumidas = Math.max(0, total - restantes)
-  return { consumidas, restantes, total }
+  const total = Math.max(0, treatment.total_sessions)
+  const sessions = treatment.appointments ?? []
+
+  let realizadas = 0
+  let agendadas = 0
+  for (const s of sessions) {
+    if (s.status === DONE_STATUS) realizadas += 1
+    if (SCHEDULED_STATUSES.has(s.status)) agendadas += 1
+  }
+
+  // Las agendadas nunca pueden superar el total contratado a efectos del contador.
+  agendadas = Math.min(agendadas, total)
+  realizadas = Math.min(realizadas, total)
+  const por_agendar = Math.max(0, total - agendadas)
+
+  return { realizadas, agendadas, total, por_agendar }
 }

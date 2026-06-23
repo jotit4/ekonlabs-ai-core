@@ -34,17 +34,22 @@ vi.mock('@/lib/audit', () => ({
 import { POST } from './route'
 
 const PROF_A = '98c80b43-3f4a-4aa0-84ba-02be20fe6bcd'
-const PROF_B = '413d20a3-5684-4781-a79a-734770c26dc3'
 const PATIENT = 'f0ae17b1-3c90-401c-93ce-32e6118f29e3'
 const SERVICE = 'f38f1191-3e0d-4f60-bcd2-e647c2b899da'
 const NEW_TREATMENT_ID = 'b98932dc-949b-4dff-9aca-c86031a5f4a5'
 
-// Builder de service_professionals: .select().eq().in() resuelve a { data, error }
+// Builder de service_professionals: .select().eq('service_id').eq('professional_id')
+// resuelve a { data, error }. El profesional es ÚNICO (un solo .eq por profesional,
+// ya no .in() de varios slots).
 function makeServiceProfBuilder(rows: { professional_id: string }[], error: unknown = null) {
+  let eqCount = 0
   const builder = {
     select: vi.fn(() => builder),
-    eq: vi.fn(() => builder),
-    in: vi.fn(() => Promise.resolve({ data: rows, error })),
+    // El 2º .eq (professional_id) es terminal y resuelve la promesa.
+    eq: vi.fn(() => {
+      eqCount += 1
+      return eqCount >= 2 ? Promise.resolve({ data: rows, error }) : builder
+    }),
   }
   return builder
 }
@@ -95,8 +100,8 @@ function validBody(overrides: Record<string, unknown> = {}) {
     start_date: '2026-06-10',
     pattern: {
       slots: [
-        { day_of_week: 1, time: '10:00', professional_id: PROF_A },
-        { day_of_week: 4, time: '16:00', professional_id: PROF_A },
+        { day_of_week: 1, time: '10:00' },
+        { day_of_week: 4, time: '16:00' },
       ],
     },
     ...overrides,
@@ -190,38 +195,20 @@ describe('POST /api/treatments', () => {
     expect(res.status).toBe(400)
   })
 
-  it('400 si un profesional del patrón no atiende el servicio', async () => {
-    // El patrón incluye PROF_B, pero service_professionals sólo devuelve PROF_A
-    configureFrom({ spRows: [{ professional_id: PROF_A }] })
+  it('400 si el profesional del paquete no atiende el servicio', async () => {
+    // El profesional (único) es PROF_A pero service_professionals no lo devuelve.
+    configureFrom({ spRows: [] })
     const res = await POST(
       makeRequest(
         validBody({
-          pattern: {
-            slots: [
-              { day_of_week: 1, time: '10:00', professional_id: PROF_A },
-              { day_of_week: 4, time: '16:00', professional_id: PROF_B },
-            ],
-          },
+          professional_id: PROF_A,
+          pattern: { slots: [{ day_of_week: 1, time: '10:00' }] },
         }),
       ),
     )
     expect(res.status).toBe(400)
     const body = await res.json()
-    expect(body.error).toContain(PROF_B)
-  })
-
-  it('400 si el profesional principal no atiende el servicio', async () => {
-    // El principal es PROF_A pero el servicio sólo devuelve PROF_B
-    configureFrom({ spRows: [{ professional_id: PROF_B }] })
-    const res = await POST(
-      makeRequest(
-        validBody({
-          professional_id: PROF_A,
-          pattern: { slots: [{ day_of_week: 1, time: '10:00', professional_id: PROF_B }] },
-        }),
-      ),
-    )
-    expect(res.status).toBe(400)
+    expect(body.error).toContain(PROF_A)
   })
 
   it('500 si el check de service_professionals falla', async () => {
