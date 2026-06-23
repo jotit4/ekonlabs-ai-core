@@ -16,7 +16,8 @@ import { KPIStrip } from '@/components/agenda/KPIStrip'
 import { NewTurnoModal } from '@/components/agenda/NewTurnoModal'
 import { NewPaqueteModal } from '@/components/paquetes/NewPaqueteModal'
 import { RescheduleTurnoModal } from '@/components/agenda/RescheduleTurnoModal'
-import { AgendaFilters, type AvailabilityMode } from '@/components/agenda/AgendaFilters'
+import { AgendaFilters, type AvailabilityMode, type AreaFocus } from '@/components/agenda/AgendaFilters'
+import { isRehabService } from '@/lib/agenda/service-visuals'
 import { SyncStatusBanner } from '@/components/agenda/SyncStatusBanner'
 import { GCalDegradationBanner } from '@/components/agenda/GCalDegradationBanner'
 import { useAgendaRealtime } from '@/hooks/use-agenda-realtime'
@@ -45,6 +46,13 @@ export function AgendaView() {
 
   const professionalId = searchParams.get('professional_id') ?? null
   const serviceId = searchParams.get('service_id') ?? null
+
+  // Foco de área (rediseño foco rehabilitación). Default = 'rehab': la agenda
+  // arranca mostrando solo los servicios de rehabilitación. Estado local (no
+  // URL) — es una preferencia de vista, no un filtro persistible/compartible.
+  // Cuando el usuario elige un servicio puntual (serviceId), ese filtro manda y
+  // el foco de área no recorta nada adicional.
+  const [areaFocus, setAreaFocus] = useState<AreaFocus>('rehab')
 
   // Determinar vista activa desde query param.
   // AC6 (Story 10.7): vista default = Semana. Sin ?vista → 'semana'.
@@ -123,6 +131,30 @@ export function AgendaView() {
       shiftDateIndex.set(`${s.slot_start_iso}|${s.professional_id}`, iso)
     }
   }
+
+  // ── Foco de área: recorte a rehabilitación ─────────────────────────────────
+  // Cuando areaFocus='rehab' y NO hay un servicio puntual elegido, recortamos los
+  // turnos y huecos a los servicios de rehabilitación (heurística por nombre,
+  // centralizada en service-visuals). Si el usuario eligió un service_id puntual,
+  // ese filtro ya es más específico y el foco no recorta nada extra.
+  const applyRehabFocus = areaFocus === 'rehab' && !serviceId
+  const isRehabAppointment = (apt: Appointment): boolean => isRehabService(apt.services?.name)
+  const isRehabShift = (shift: AvailabilityShift): boolean => isRehabService(shift.service_name)
+
+  const focusedAppointments = applyRehabFocus
+    ? appointments.filter(isRehabAppointment)
+    : appointments
+  const focusedRangeAppointments = applyRehabFocus
+    ? rangeAppointments.filter(isRehabAppointment)
+    : rangeAppointments
+  const focusedDayFreeShifts = applyRehabFocus
+    ? dayFreeShifts.filter(isRehabShift)
+    : dayFreeShifts
+  const focusedFreeShiftsByDate = applyRehabFocus
+    ? Object.fromEntries(
+        Object.entries(freeShiftsByDate).map(([iso, shifts]) => [iso, shifts.filter(isRehabShift)]),
+      )
+    : freeShiftsByDate
 
   const { usesNativeCalendar, isPending: tenantConfigPending } = useTenantConfig()
   const { status: gcalStatus } = useGCalChannelStatus(!tenantConfigPending && !usesNativeCalendar)
@@ -232,6 +264,13 @@ export function AgendaView() {
     params.delete('professional_id')
     params.delete('service_id')
     router.push(`/agenda?${params.toString()}`)
+  }
+
+  // Cambiar el foco de área (Rehabilitación ↔ Ver todo). Si había un service_id
+  // puntual elegido que ya no pertenece al nuevo foco, lo limpiamos para no
+  // mostrar una agenda vacía con un filtro fuera de foco.
+  function handleAreaFocusChange(focus: AreaFocus) {
+    setAreaFocus(focus)
   }
 
   // Modo de disponibilidad — exclusión mutua entre professional_id y service_id.
@@ -350,27 +389,29 @@ export function AgendaView() {
             showFilters={showFilters}
             availabilityMode={availabilityMode}
             onAvailabilityModeChange={handleAvailabilityModeChange}
+            areaFocus={areaFocus}
+            onAreaFocusChange={handleAreaFocusChange}
           />
         </div>
       )}
 
       {vistaActiva === 'dia' ? (
         <>
-          <KPIStrip appointments={appointments} isLoading={isLoading} isError={isError} />
+          <KPIStrip appointments={focusedAppointments} isLoading={isLoading} isError={isError} />
           {!tenantConfigPending && !usesNativeCalendar && (
             <>
-              <SyncStatusBanner appointments={appointments} date={isoDate} />
+              <SyncStatusBanner appointments={focusedAppointments} date={isoDate} />
               <GCalDegradationBanner status={gcalStatus} />
             </>
           )}
           <CalendarView
             date={isoDate}
-            appointments={appointments}
+            appointments={focusedAppointments}
             isLoading={isLoading}
             isError={isError}
             onRefetch={refetch}
             onReschedule={handleOpenReschedule}
-            freeShifts={dayFreeShifts}
+            freeShifts={focusedDayFreeShifts}
             showProfessionalName={showProfessionalName}
             onFreeSlotClick={handleFreeSlotClick}
           />
@@ -380,12 +421,12 @@ export function AgendaView() {
           <CalendarViewRangeReadOnly
             view={vistaActiva === 'semana' ? 'week' : 'month'}
             date={isoDate}
-            appointments={rangeAppointments}
+            appointments={focusedRangeAppointments}
             isLoading={rangeLoading}
             isError={rangeError}
             onRefetch={rangeRefetch}
             onAppointmentClick={handleAppointmentClick}
-            freeShiftsByDate={vistaActiva === 'semana' ? freeShiftsByDate : undefined}
+            freeShiftsByDate={vistaActiva === 'semana' ? focusedFreeShiftsByDate : undefined}
             availabilitySummary={isMonth ? daysSummary : undefined}
             showProfessionalName={showProfessionalName}
             onFreeSlotClick={handleFreeSlotClick}

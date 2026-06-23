@@ -2,9 +2,14 @@
 
 import { useList } from '@refinedev/core'
 import { useProfesionales } from '@/hooks/use-profesionales'
+import { isRehabService } from '@/lib/agenda/service-visuals'
 import type { Service } from '@/types/servicios'
 
 export type AvailabilityMode = 'ninguno' | 'profesional' | 'servicio'
+
+// Foco del área visible en la agenda. Default = 'rehab' (rediseño foco
+// rehabilitación): la clínica de rehab arranca viendo SOLO sus servicios.
+export type AreaFocus = 'rehab' | 'todos'
 
 interface AgendaFiltersProps {
   professionalId: string | null
@@ -16,6 +21,10 @@ interface AgendaFiltersProps {
   // Story 10.7 — modo de disponibilidad "Ver disponibilidad de" (opcional)
   availabilityMode?: AvailabilityMode
   onAvailabilityModeChange?: (mode: AvailabilityMode) => void
+  // Rediseño foco rehabilitación — control "Rehabilitación | Ver todo" (opcional).
+  // Default = 'rehab'. Solo afecta los servicios listados en el dropdown.
+  areaFocus?: AreaFocus
+  onAreaFocusChange?: (focus: AreaFocus) => void
 }
 
 export function AgendaFilters({
@@ -27,6 +36,8 @@ export function AgendaFilters({
   showFilters,
   availabilityMode = 'ninguno',
   onAvailabilityModeChange,
+  areaFocus = 'rehab',
+  onAreaFocusChange,
 }: AgendaFiltersProps) {
   const { profesionales } = useProfesionales()
 
@@ -38,7 +49,12 @@ export function AgendaFilters({
     filters: [{ field: 'active', operator: 'eq', value: true }],
   })
 
-  const servicios = serviciosResult?.data ?? []
+  const allServicios = serviciosResult?.data ?? []
+  // Foco rehabilitación: cuando areaFocus='rehab' solo se ofrecen los servicios
+  // del área de rehabilitación (heurística por nombre centralizada en
+  // service-visuals). 'todos' muestra el catálogo completo.
+  const servicios =
+    areaFocus === 'rehab' ? allServicios.filter((s) => isRehabService(s.name)) : allServicios
 
   const hasFilters = professionalId !== null || serviceId !== null
 
@@ -59,9 +75,45 @@ export function AgendaFilters({
   if (!showFilters) return null
 
   const showAvailabilityMode = !!onAvailabilityModeChange
+  const showAreaFocus = !!onAreaFocusChange
 
   return (
     <div className="flex flex-col gap-3" role="group" aria-label="Filtros de agenda">
+      {showAreaFocus && (
+        <div
+          role="radiogroup"
+          aria-label="Área de la agenda"
+          className="flex items-center gap-2 flex-wrap"
+        >
+          <span className="text-sm text-[var(--color-text-secondary)] whitespace-nowrap">
+            Área
+          </span>
+          {([
+            { value: 'rehab', label: 'Rehabilitación' },
+            { value: 'todos', label: 'Ver todo' },
+          ] as const).map((opt) => {
+            const selected = areaFocus === opt.value
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                onClick={() => onAreaFocusChange?.(opt.value)}
+                className={[
+                  'min-h-[36px] px-3 text-sm rounded-[var(--radius-sm)] border transition-colors',
+                  selected
+                    ? 'border-[var(--color-interactive)] bg-[var(--color-interactive)] text-white'
+                    : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)]',
+                ].join(' ')}
+              >
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       {showAvailabilityMode && (
         <div
           role="radiogroup"

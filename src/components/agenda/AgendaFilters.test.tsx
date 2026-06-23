@@ -161,4 +161,52 @@ describe('AgendaFilters', () => {
       expect(screen.getByRole('radio', { name: /por profesional/i })).toHaveAttribute('aria-checked', 'true')
     })
   })
+
+  describe('Foco de área (rehabilitación)', () => {
+    it('NO renderiza el control de área si no se pasa onAreaFocusChange', () => {
+      render(<AgendaFilters {...defaultProps} />)
+      expect(screen.queryByRole('radiogroup', { name: /área de la agenda/i })).not.toBeInTheDocument()
+    })
+
+    it('renderiza el control "Rehabilitación | Ver todo" cuando se pasa onAreaFocusChange', () => {
+      render(<AgendaFilters {...defaultProps} areaFocus="rehab" onAreaFocusChange={vi.fn()} />)
+      expect(screen.getByRole('radiogroup', { name: /área de la agenda/i })).toBeInTheDocument()
+      expect(screen.getByRole('radio', { name: /rehabilitación/i })).toBeInTheDocument()
+      expect(screen.getByRole('radio', { name: /ver todo/i })).toBeInTheDocument()
+    })
+
+    it('con areaFocus="rehab" el dropdown de servicio solo lista servicios de rehab', () => {
+      // El mock de useList devuelve Kinesiología (rehab) + Pediatría (no rehab).
+      render(<AgendaFilters {...defaultProps} areaFocus="rehab" onAreaFocusChange={vi.fn()} />)
+      const select = screen.getByLabelText('Filtrar por servicio')
+      expect(select).toHaveTextContent('Kinesiología')
+      expect(select).not.toHaveTextContent('Pediatría')
+    })
+
+    it('con areaFocus="todos" el dropdown lista todos los servicios', () => {
+      render(<AgendaFilters {...defaultProps} areaFocus="todos" onAreaFocusChange={vi.fn()} />)
+      const select = screen.getByLabelText('Filtrar por servicio')
+      expect(select).toHaveTextContent('Kinesiología')
+      expect(select).toHaveTextContent('Pediatría')
+    })
+
+    it('default (sin areaFocus) recorta a rehab', () => {
+      render(<AgendaFilters {...defaultProps} onAreaFocusChange={vi.fn()} />)
+      const select = screen.getByLabelText('Filtrar por servicio')
+      expect(select).not.toHaveTextContent('Pediatría')
+    })
+
+    it('click en "Ver todo" notifica onAreaFocusChange("todos")', () => {
+      const onAreaFocusChange = vi.fn()
+      render(<AgendaFilters {...defaultProps} areaFocus="rehab" onAreaFocusChange={onAreaFocusChange} />)
+      fireEvent.click(screen.getByRole('radio', { name: /ver todo/i }))
+      expect(onAreaFocusChange).toHaveBeenCalledWith('todos')
+    })
+
+    it('el radio activo refleja areaFocus', () => {
+      render(<AgendaFilters {...defaultProps} areaFocus="todos" onAreaFocusChange={vi.fn()} />)
+      expect(screen.getByRole('radio', { name: /ver todo/i })).toHaveAttribute('aria-checked', 'true')
+      expect(screen.getByRole('radio', { name: /rehabilitación/i })).toHaveAttribute('aria-checked', 'false')
+    })
+  })
 })

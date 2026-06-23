@@ -27,6 +27,7 @@ import {
   appointmentToCalendarEvent,
 } from '@/types/appointments'
 import type { AvailabilityShift, DaySummary } from '@/types/availability'
+import { getServiceColor } from '@/lib/agenda/service-visuals'
 import { AgendaDayViewSkeleton } from './AgendaDayView'
 import { SesionSerieBadge } from './SesionSerieBadge'
 
@@ -40,6 +41,9 @@ const localizer = dateFnsLocalizer({
   locales,
 })
 
+// Color de estado SOLO para la vista Mes (chips de RBC sobre fondo de color
+// sólido con texto blanco, donde la identidad por servicio no se usa). La vista
+// Semana usa color por servicio (getServiceColor) — ver WeekColumnsView.
 // Hex codes so they compose cleanly with alpha suffix in JS (e.g. `${color}18`)
 function getEventColor(status: AppointmentStatus): string {
   switch (status) {
@@ -58,6 +62,17 @@ function getEventColor(status: AppointmentStatus): string {
   }
 }
 
+// Nombre de profesional para agrupar dentro de una columna-día.
+const NO_PROFESSIONAL_LABEL = 'Sin profesional'
+
+function eventProfessionalName(event: CalendarEvent): string {
+  return (
+    event.resource.professionals?.name ??
+    event.resource.services?.professional_name ??
+    NO_PROFESSIONAL_LABEL
+  )
+}
+
 // ─── Vista Semana custom ──────────────────────────────────────────────────────
 // Reemplaza el time-grid de react-big-calendar, que colapsa cuando hay
 // múltiples profesionales con turnos en el mismo horario (columnas angostas
@@ -74,14 +89,12 @@ function WeekColumnsView({
   events,
   onEventClick,
   freeShiftsByDate,
-  showProfessionalName,
   onFreeSlotClick,
 }: {
   weekDate: Date
   events: CalendarEvent[]
   onEventClick?: (appointment: Appointment) => void
   freeShiftsByDate?: Record<string, AvailabilityShift[]>
-  showProfessionalName?: boolean
   onFreeSlotClick?: (shift: AvailabilityShift) => void
 }) {
   const weekStart = startOfWeek(weekDate, { weekStartsOn: 1 })
@@ -123,6 +136,23 @@ function WeekColumnsView({
             shift,
           })),
         ].sort((a, b) => a.sortKey - b.sortKey)
+
+        // Agrupar por profesional dentro de la columna-día (cambio "agrupar por
+        // profesional"). Orden cronológico preservado dentro de cada grupo;
+        // grupos ordenados alfabéticamente por nombre.
+        const dayGroupsMap = new Map<string, WeekItem[]>()
+        for (const item of dayItems) {
+          const name =
+            item.kind === 'event'
+              ? eventProfessionalName(item.event)
+              : item.shift.professional_name || NO_PROFESSIONAL_LABEL
+          const bucket = dayGroupsMap.get(name)
+          if (bucket) bucket.push(item)
+          else dayGroupsMap.set(name, [item])
+        }
+        const dayGroups = Array.from(dayGroupsMap.entries()).sort((a, b) =>
+          a[0].localeCompare(b[0], 'es'),
+        )
 
         return (
           <div
@@ -187,7 +217,7 @@ function WeekColumnsView({
               )}
             </div>
 
-            {/* Lista de turnos (scrollable) */}
+            {/* Lista de turnos (scrollable), agrupada por profesional */}
             <div
               style={{
                 flex: 1,
@@ -195,123 +225,154 @@ function WeekColumnsView({
                 padding: 4,
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 3,
+                gap: 8,
               }}
             >
-              {dayItems.map((item, idx) => {
-                if (item.kind === 'free') {
-                  const shift = item.shift
-                  return (
-                    <button
-                      key={`free-${shift.slot_start_iso}-${shift.professional_id}-${shift.service_id}-${idx}`}
-                      onClick={() => onFreeSlotClick?.(shift)}
-                      aria-label={`Agendar a las ${shift.open} con ${shift.professional_name}`}
-                      style={{
-                        display: 'block',
-                        width: '100%',
-                        textAlign: 'left',
-                        background: 'transparent',
-                        border: '1px dashed var(--color-border)',
-                        borderRadius: 4,
-                        padding: '4px 6px',
-                        cursor: 'pointer',
-                        flexShrink: 0,
-                        color: 'var(--color-text-secondary)',
-                        opacity: 0.85,
-                        transition: 'background 0.12s',
-                      }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface)' }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
-                    >
-                      <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.3 }}>
-                        {shift.open}
-                      </div>
-                      <div style={{ fontSize: 10, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        + Libre
-                        {showProfessionalName ? ` · ${shift.professional_name}` : ''}
-                      </div>
-                    </button>
-                  )
-                }
-
-                const event = item.event
-                const color = getEventColor(event.resource.status)
-                const profName =
-                  event.resource.professionals?.name ??
-                  event.resource.services?.professional_name ??
-                  null
-
-                return (
-                  <button
-                    key={event.id}
-                    onClick={() => onEventClick?.(event.resource)}
+              {dayGroups.map(([profName, groupItems]) => (
+                <div
+                  key={`group-${profName}`}
+                  role="group"
+                  aria-label={`${profName}`}
+                  style={{ display: 'flex', flexDirection: 'column', gap: 3 }}
+                >
+                  {/* Sub-cabecera por profesional dentro de la columna del día */}
+                  <div
                     style={{
-                      display: 'block',
-                      width: '100%',
-                      textAlign: 'left',
-                      background: `${color}18`,
-                      border: 'none',
-                      borderLeft: `3px solid ${color}`,
-                      borderRadius: '0 4px 4px 0',
-                      padding: '4px 6px',
-                      cursor: 'pointer',
-                      flexShrink: 0,
-                      transition: 'background 0.12s',
+                      fontSize: 9,
+                      fontWeight: 600,
+                      letterSpacing: '0.03em',
+                      textTransform: 'uppercase',
+                      color: 'var(--color-text-secondary)',
+                      padding: '2px 2px 1px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
                     }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = `${color}30`
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = `${color}18`
-                    }}
+                    title={profName}
                   >
-                    <div
-                      style={{
-                        fontSize: 11,
-                        fontWeight: 700,
-                        color,
-                        lineHeight: 1.3,
-                      }}
-                    >
-                      {format(event.start, 'HH:mm')}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 11,
-                        color: 'var(--color-text-primary)',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        lineHeight: 1.3,
-                      }}
-                    >
-                      {event.resource.patients?.full_name ?? 'Paciente'}
-                    </div>
-                    {profName && (
-                      <div
+                    {profName}
+                  </div>
+                  {groupItems.map((item, idx) => {
+                    if (item.kind === 'free') {
+                      const shift = item.shift
+                      // Tinte muy tenue del color de servicio para el hueco.
+                      const svcColor = getServiceColor(shift.service_id)
+                      return (
+                        <button
+                          key={`free-${shift.slot_start_iso}-${shift.professional_id}-${shift.service_id}-${idx}`}
+                          onClick={() => onFreeSlotClick?.(shift)}
+                          aria-label={`Agendar a las ${shift.open} con ${shift.professional_name}`}
+                          style={{
+                            display: 'block',
+                            width: '100%',
+                            textAlign: 'left',
+                            background: `${svcColor}08`,
+                            border: `1px dashed ${svcColor}66`,
+                            borderRadius: 4,
+                            padding: '4px 6px',
+                            cursor: 'pointer',
+                            flexShrink: 0,
+                            color: 'var(--color-text-secondary)',
+                            opacity: 0.85,
+                            transition: 'background 0.12s',
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = `${svcColor}14` }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = `${svcColor}08` }}
+                        >
+                          <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.3 }}>
+                            {shift.open}
+                          </div>
+                          <div style={{ fontSize: 10, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            + Libre
+                            {shift.service_name ? ` · ${shift.service_name}` : ''}
+                          </div>
+                        </button>
+                      )
+                    }
+
+                    const event = item.event
+                    // Color por SERVICIO (identidad). El estado queda
+                    // distinguible por la opacidad de cancelado/no-show.
+                    const color = getServiceColor(event.resource.service_id)
+                    const status = event.resource.status
+                    const isDimmed = status === 'cancelled' || status === 'no_show'
+                    const serviceName = event.resource.services?.name ?? null
+
+                    return (
+                      <button
+                        key={event.id}
+                        onClick={() => onEventClick?.(event.resource)}
                         style={{
-                          fontSize: 10,
-                          color: 'var(--color-text-secondary)',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                          lineHeight: 1.3,
+                          display: 'block',
+                          width: '100%',
+                          textAlign: 'left',
+                          background: `${color}18`,
+                          border: 'none',
+                          borderLeft: `3px solid ${color}`,
+                          borderRadius: '0 4px 4px 0',
+                          padding: '4px 6px',
+                          cursor: 'pointer',
+                          flexShrink: 0,
+                          opacity: isDimmed ? 0.55 : 1,
+                          textDecoration: status === 'cancelled' ? 'line-through' : 'none',
+                          transition: 'background 0.12s',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = `${color}30`
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = `${color}18`
                         }}
                       >
-                        {profName}
-                      </div>
-                    )}
-                    {event.resource.session_index != null && (
-                      <div style={{ marginTop: 3 }}>
-                        <SesionSerieBadge
-                          sessionIndex={event.resource.session_index}
-                          totalSessions={event.resource.treatments?.total_sessions}
-                        />
-                      </div>
-                    )}
-                  </button>
-                )
-              })}
+                        <div
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color,
+                            lineHeight: 1.3,
+                          }}
+                        >
+                          {format(event.start, 'HH:mm')}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: 'var(--color-text-primary)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            lineHeight: 1.3,
+                          }}
+                        >
+                          {event.resource.patients?.full_name ?? 'Paciente'}
+                        </div>
+                        {serviceName && (
+                          <div
+                            style={{
+                              fontSize: 10,
+                              color: 'var(--color-text-secondary)',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              lineHeight: 1.3,
+                            }}
+                          >
+                            {serviceName}
+                          </div>
+                        )}
+                        {event.resource.session_index != null && (
+                          <div style={{ marginTop: 3 }}>
+                            <SesionSerieBadge
+                              sessionIndex={event.resource.session_index}
+                              totalSessions={event.resource.treatments?.total_sessions}
+                            />
+                          </div>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              ))}
             </div>
           </div>
         )
@@ -603,6 +664,8 @@ interface CalendarViewRangeReadOnlyProps {
   // Story 10.7 — disponibilidad (opcional, aditivo)
   freeShiftsByDate?: Record<string, AvailabilityShift[]> // clave 'YYYY-MM-DD' local
   availabilitySummary?: Record<string, DaySummary>
+  // Aceptado por compatibilidad de la llamada actual; el profesional ahora se
+  // muestra en la cabecera de cada grupo dentro de la columna del día.
   showProfessionalName?: boolean
   onFreeSlotClick?: (shift: AvailabilityShift) => void
   onDayClick?: (isoDate: string) => void
@@ -618,7 +681,6 @@ export function CalendarViewRangeReadOnly({
   onAppointmentClick,
   freeShiftsByDate,
   availabilitySummary,
-  showProfessionalName,
   onFreeSlotClick,
   onDayClick,
 }: CalendarViewRangeReadOnlyProps) {
@@ -657,7 +719,6 @@ export function CalendarViewRangeReadOnly({
         events={events}
         onEventClick={onAppointmentClick}
         freeShiftsByDate={freeShiftsByDate}
-        showProfessionalName={showProfessionalName}
         onFreeSlotClick={onFreeSlotClick}
       />
     )

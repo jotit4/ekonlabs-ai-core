@@ -7,34 +7,29 @@ import { useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import {
   type Appointment,
-  type AppointmentStatus,
   type CalendarEvent,
   appointmentToCalendarEvent,
+  STATUS_LABELS,
 } from '@/types/appointments'
 import type { AvailabilityShift } from '@/types/availability'
+import { getServiceColor } from '@/lib/agenda/service-visuals'
+import { StatusDot, statusToVariant } from '@/components/shared/StatusDot'
 import { AgendaDayViewSkeleton } from './AgendaDayView'
 import { ReminderBadge } from './ReminderBadge'
 import { SesionSerieBadge } from './SesionSerieBadge'
 import { AbsenceDecisionDialog } from './AbsenceDecisionDialog'
 import type { AbsenceDecision } from '@/lib/schemas/absence-decision.schema'
 
-function getEventColor(status: AppointmentStatus): string {
-  switch (status) {
-    case 'confirmed':
-      return '#0071e3'
-    case 'completed':
-      return '#22c55e'
-    case 'rescheduled':
-      return '#f97316'
-    case 'cancelled':
-      return '#8e8e93'
-    case 'no_show':
-      return '#ef4444'
-    case 'pending':
-    case 'pending_calendar':
-    default:
-      return '#8b5cf6'
-  }
+// Nombre de profesional para agrupar/mostrar — mismo orden de fallback en
+// turnos y huecos libres. 'Sin profesional' agrupa lo que no tiene asignado.
+const NO_PROFESSIONAL_LABEL = 'Sin profesional'
+
+function eventProfessionalName(event: CalendarEvent): string {
+  return (
+    event.resource.professionals?.name ??
+    event.resource.services?.professional_name ??
+    NO_PROFESSIONAL_LABEL
+  )
 }
 
 // ─── Modal de confirmación para cancelar turno ────────────────────────────────
@@ -280,14 +275,12 @@ function DayListView({
   date,
   onReschedule,
   freeShifts,
-  showProfessionalName,
   onFreeSlotClick,
 }: {
   events: CalendarEvent[]
   date: string
   onReschedule?: (appointment: Appointment) => void
   freeShifts?: AvailabilityShift[]
-  showProfessionalName?: boolean
   onFreeSlotClick?: (shift: AvailabilityShift) => void
 }) {
   const queryClient = useQueryClient()
@@ -303,6 +296,24 @@ function DayListView({
       shift,
     })),
   ].sort((a, b) => a.sortKey - b.sortKey)
+
+  // Agrupar por profesional (cambio "agrupar por profesional"). El orden
+  // cronológico se preserva dentro de cada grupo porque `items` ya viene
+  // ordenado y recorremos en ese orden. Los grupos se ordenan alfabéticamente
+  // por nombre de profesional para una salida estable.
+  const groupsMap = new Map<string, DayItem[]>()
+  for (const item of items) {
+    const name =
+      item.kind === 'event'
+        ? eventProfessionalName(item.event)
+        : item.shift.professional_name || NO_PROFESSIONAL_LABEL
+    const bucket = groupsMap.get(name)
+    if (bucket) bucket.push(item)
+    else groupsMap.set(name, [item])
+  }
+  const groups = Array.from(groupsMap.entries()).sort((a, b) =>
+    a[0].localeCompare(b[0], 'es'),
+  )
 
   // Estado para modal de cancelación
   const [cancelTarget, setCancelTarget] = useState<Appointment | null>(null)
@@ -433,275 +444,315 @@ function DayListView({
 
   return (
     <>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 0' }}>
-        {items.map((item, idx) => {
-          if (item.kind === 'free') {
-            const shift = item.shift
-            return (
-              <button
-                key={`free-${shift.slot_start_iso}-${shift.professional_id}-${shift.service_id}-${idx}`}
-                type="button"
-                onClick={() => onFreeSlotClick?.(shift)}
-                aria-label={`Agendar a las ${shift.open} con ${shift.professional_name}`}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 16,
-                  padding: '10px 16px',
-                  width: '100%',
-                  textAlign: 'left',
-                  border: '1px dashed var(--color-border)',
-                  borderRadius: 8,
-                  background: 'transparent',
-                  cursor: 'pointer',
-                  color: 'var(--color-text-secondary)',
-                  opacity: 0.85,
-                  transition: 'background 0.12s',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface)' }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
-              >
-                <div style={{ minWidth: 88, flexShrink: 0, fontSize: 14, fontWeight: 600 }}>
-                  {shift.open}
-                </div>
-                <div style={{ flex: 1, minWidth: 0, fontSize: 13 }}>
-                  + Libre
-                  {showProfessionalName && (
-                    <span style={{ color: 'var(--color-text-secondary)' }}>
-                      {' · '}
-                      {shift.professional_name}
-                    </span>
-                  )}
-                </div>
-              </button>
-            )
-          }
-
-          const event = item.event
-          const color = getEventColor(event.resource.status)
-          const isCancelled = event.resource.status === 'cancelled'
-          const profName =
-            event.resource.professionals?.name ??
-            event.resource.services?.professional_name ??
-            null
-          const serviceName = event.resource.services?.name ?? null
-          const patientName = event.resource.patients?.full_name ?? 'Paciente'
-          const patientId = event.resource.patient_id
-          const isAttendanceOpen = attendanceOpenId === event.resource.appointment_id
-
-          return (
-            <div
-              key={event.id}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '4px 0' }}>
+        {groups.map(([profName, groupItems]) => (
+          <div key={`group-${profName}`} role="group" aria-label={`Turnos de ${profName}`}>
+            {/* Cabecera por profesional (cambio "agrupar por profesional") */}
+            <h3
               style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 16,
-                padding: '12px 16px',
-                backgroundColor: `${color}12`,
-                borderLeft: `4px solid ${color}`,
-                borderRadius: '0 8px 8px 0',
-                opacity: isCancelled ? 0.6 : 1,
+                position: 'sticky',
+                top: 0,
+                zIndex: 1,
+                margin: '0 0 6px',
+                padding: '4px 4px 6px',
+                fontSize: 12,
+                fontWeight: 600,
+                letterSpacing: '0.02em',
+                textTransform: 'uppercase',
+                color: 'var(--color-text-secondary)',
+                borderBottom: '1px solid var(--color-border)',
+                background: 'var(--color-bg)',
               }}
             >
-              {/* Horario */}
-              <div style={{ minWidth: 88, flexShrink: 0 }}>
-                <div
-                  style={{
-                    fontSize: 14,
-                    fontWeight: 700,
-                    color,
-                    lineHeight: 1.3,
-                  }}
-                >
-                  {format(event.start, 'HH:mm')}
-                </div>
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: 'var(--color-text-secondary)',
-                    lineHeight: 1.3,
-                  }}
-                >
-                  {format(event.end, 'HH:mm')}
-                </div>
-              </div>
-
-              {/* Paciente + servicio + profesional */}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                {/* Feature D: nombre del paciente como link */}
-                {patientId ? (
-                  <Link
-                    href={`/pacientes/${patientId}`}
-                    style={{
-                      fontSize: 14,
-                      fontWeight: 600,
-                      color: 'var(--color-interactive)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      lineHeight: 1.4,
-                      display: 'block',
-                      textDecoration: 'none',
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none' }}
-                    aria-label={`Ver ficha de ${patientName}`}
-                  >
-                    {patientName}
-                  </Link>
-                ) : (
-                  <div
-                    style={{
-                      fontSize: 14,
-                      fontWeight: 600,
-                      color: 'var(--color-text-primary)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    {patientName}
-                  </div>
-                )}
-                {(serviceName ?? profName) && (
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: 'var(--color-text-secondary)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      marginTop: 2,
-                      lineHeight: 1.3,
-                    }}
-                  >
-                    {[serviceName, profName].filter(Boolean).join(' · ')}
-                  </div>
-                )}
-                <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
-                  <ReminderBadge
-                    reminderSentAt={event.resource.reminder_sent_at}
-                    attendanceConfirmed={event.resource.attendance_confirmed}
-                  />
-                  <SesionSerieBadge
-                    sessionIndex={event.resource.session_index}
-                    totalSessions={event.resource.treatments?.total_sessions}
-                  />
-                </div>
-              </div>
-
-              {/* Acciones */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, position: 'relative' }}>
-                {/* Feature C: botón de asistencia (reloj) → dropdown */}
-                {!isCancelled && (
-                  <div style={{ position: 'relative' }}>
+              {profName}
+            </h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {groupItems.map((item, idx) => {
+                if (item.kind === 'free') {
+                  const shift = item.shift
+                  // Tinte muy tenue del color del servicio para el hueco libre.
+                  const svcColor = getServiceColor(shift.service_id)
+                  return (
                     <button
+                      key={`free-${shift.slot_start_iso}-${shift.professional_id}-${shift.service_id}-${idx}`}
                       type="button"
-                      onClick={() =>
-                        setAttendanceOpenId(
-                          isAttendanceOpen ? null : event.resource.appointment_id
-                        )
-                      }
+                      onClick={() => onFreeSlotClick?.(shift)}
+                      aria-label={`Agendar a las ${shift.open} con ${shift.professional_name}`}
                       style={{
-                        width: 32,
-                        height: 32,
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'center',
-                        borderRadius: 6,
-                        border: 'none',
-                        background: 'none',
+                        gap: 16,
+                        padding: '10px 16px',
+                        width: '100%',
+                        textAlign: 'left',
+                        border: `1px dashed ${svcColor}66`,
+                        borderRadius: 8,
+                        background: `${svcColor}08`,
                         cursor: 'pointer',
                         color: 'var(--color-text-secondary)',
+                        opacity: 0.85,
                         transition: 'background 0.12s',
                       }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.06)' }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
-                      aria-label={`Marcar asistencia de ${patientName}`}
-                      aria-haspopup="menu"
-                      aria-expanded={isAttendanceOpen}
-                      title="Marcar asistencia"
+                      onMouseEnter={(e) => { e.currentTarget.style.background = `${svcColor}14` }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = `${svcColor}08` }}
                     >
-                      <Clock style={{ width: 15, height: 15 }} />
+                      <div style={{ minWidth: 88, flexShrink: 0, fontSize: 14, fontWeight: 600 }}>
+                        {shift.open}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0, fontSize: 13 }}>
+                        + Libre
+                        {shift.service_name && (
+                          <span style={{ color: 'var(--color-text-secondary)' }}>
+                            {' · '}
+                            {shift.service_name}
+                          </span>
+                        )}
+                        {/* El profesional ya aparece en la cabecera del grupo;
+                            evitamos duplicarlo en cada card. */}
+                      </div>
                     </button>
-                    {isAttendanceOpen && (
-                      <AttendanceDropdown
-                        patientName={patientName}
-                        onSelect={(status) => handleAttendanceSelect(event.resource, status)}
-                        onClose={() => setAttendanceOpenId(null)}
-                        isLoading={attendanceLoading}
-                      />
-                    )}
+                  )
+                }
+
+                const event = item.event
+                // Color por SERVICIO (identidad). El estado se mantiene
+                // distinguible vía StatusDot + label y la opacidad de cancelado.
+                const color = getServiceColor(event.resource.service_id)
+                const status = event.resource.status
+                const isCancelled = status === 'cancelled'
+                const profNameInner =
+                  event.resource.professionals?.name ??
+                  event.resource.services?.professional_name ??
+                  null
+                const serviceName = event.resource.services?.name ?? null
+                const patientName = event.resource.patients?.full_name ?? 'Paciente'
+                const patientId = event.resource.patient_id
+                const isAttendanceOpen = attendanceOpenId === event.resource.appointment_id
+
+                return (
+                  <div
+                    key={event.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 16,
+                      padding: '12px 16px',
+                      backgroundColor: `${color}12`,
+                      borderLeft: `4px solid ${color}`,
+                      borderRadius: '0 8px 8px 0',
+                      opacity: isCancelled ? 0.6 : 1,
+                    }}
+                  >
+                    {/* Horario */}
+                    <div style={{ minWidth: 88, flexShrink: 0 }}>
+                      <div
+                        style={{
+                          fontSize: 14,
+                          fontWeight: 700,
+                          color,
+                          lineHeight: 1.3,
+                        }}
+                      >
+                        {format(event.start, 'HH:mm')}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: 'var(--color-text-secondary)',
+                          lineHeight: 1.3,
+                        }}
+                      >
+                        {format(event.end, 'HH:mm')}
+                      </div>
+                    </div>
+
+                    {/* Paciente + servicio + profesional */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {/* Feature D: nombre del paciente como link */}
+                      {patientId ? (
+                        <Link
+                          href={`/pacientes/${patientId}`}
+                          style={{
+                            fontSize: 14,
+                            fontWeight: 600,
+                            color: 'var(--color-interactive)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            lineHeight: 1.4,
+                            display: 'block',
+                            textDecoration: 'none',
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline' }}
+                          onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none' }}
+                          aria-label={`Ver ficha de ${patientName}`}
+                        >
+                          {patientName}
+                        </Link>
+                      ) : (
+                        <div
+                          style={{
+                            fontSize: 14,
+                            fontWeight: 600,
+                            color: 'var(--color-text-primary)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            lineHeight: 1.4,
+                          }}
+                        >
+                          {patientName}
+                        </div>
+                      )}
+                      {(serviceName ?? profNameInner) && (
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: 'var(--color-text-secondary)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            marginTop: 2,
+                            lineHeight: 1.3,
+                          }}
+                        >
+                          {[serviceName, profNameInner].filter(Boolean).join(' · ')}
+                        </div>
+                      )}
+                      <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+                        {/* Badge de ESTADO — mantiene la semántica de estado al
+                            margen del color de servicio (cancelado/no-show, etc.). */}
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <StatusDot variant={statusToVariant(status)} label={STATUS_LABELS[status]} />
+                          <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+                            {STATUS_LABELS[status]}
+                          </span>
+                        </span>
+                        <ReminderBadge
+                          reminderSentAt={event.resource.reminder_sent_at}
+                          attendanceConfirmed={event.resource.attendance_confirmed}
+                        />
+                        <SesionSerieBadge
+                          sessionIndex={event.resource.session_index}
+                          totalSessions={event.resource.treatments?.total_sessions}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Acciones */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, position: 'relative' }}>
+                      {/* Feature C: botón de asistencia (reloj) → dropdown */}
+                      {!isCancelled && (
+                        <div style={{ position: 'relative' }}>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAttendanceOpenId(
+                                isAttendanceOpen ? null : event.resource.appointment_id
+                              )
+                            }
+                            style={{
+                              width: 32,
+                              height: 32,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              borderRadius: 6,
+                              border: 'none',
+                              background: 'none',
+                              cursor: 'pointer',
+                              color: 'var(--color-text-secondary)',
+                              transition: 'background 0.12s',
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.06)' }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
+                            aria-label={`Marcar asistencia de ${patientName}`}
+                            aria-haspopup="menu"
+                            aria-expanded={isAttendanceOpen}
+                            title="Marcar asistencia"
+                          >
+                            <Clock style={{ width: 15, height: 15 }} />
+                          </button>
+                          {isAttendanceOpen && (
+                            <AttendanceDropdown
+                              patientName={patientName}
+                              onSelect={(s) => handleAttendanceSelect(event.resource, s)}
+                              onClose={() => setAttendanceOpenId(null)}
+                              isLoading={attendanceLoading}
+                            />
+                          )}
+                        </div>
+                      )}
+
+                      {/* Botón reprogramar */}
+                      {onReschedule && !isCancelled && (
+                        <button
+                          type="button"
+                          onClick={() => onReschedule(event.resource)}
+                          style={{
+                            width: 32,
+                            height: 32,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderRadius: 6,
+                            border: 'none',
+                            background: 'none',
+                            cursor: 'pointer',
+                            color: 'var(--color-text-secondary)',
+                            transition: 'background 0.12s',
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.06)' }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
+                          aria-label={`Reprogramar turno de ${patientName}`}
+                          title="Reprogramar"
+                        >
+                          <Pencil style={{ width: 15, height: 15 }} />
+                        </button>
+                      )}
+
+                      {/* Feature B: botón cancelar (X) */}
+                      {!isCancelled && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCancelError(null)
+                            setCancelTarget(event.resource)
+                          }}
+                          style={{
+                            width: 32,
+                            height: 32,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderRadius: 6,
+                            border: 'none',
+                            background: 'none',
+                            cursor: 'pointer',
+                            color: 'var(--color-text-secondary)',
+                            transition: 'background 0.12s',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'rgba(239,68,68,0.08)'
+                            e.currentTarget.style.color = '#ef4444'
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'none'
+                            e.currentTarget.style.color = 'var(--color-text-secondary)'
+                          }}
+                          aria-label={`Cancelar turno de ${patientName}`}
+                          title="Cancelar turno"
+                        >
+                          <X style={{ width: 15, height: 15 }} />
+                        </button>
+                      )}
+                    </div>
                   </div>
-                )}
-
-                {/* Botón reprogramar */}
-                {onReschedule && !isCancelled && (
-                  <button
-                    type="button"
-                    onClick={() => onReschedule(event.resource)}
-                    style={{
-                      width: 32,
-                      height: 32,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      borderRadius: 6,
-                      border: 'none',
-                      background: 'none',
-                      cursor: 'pointer',
-                      color: 'var(--color-text-secondary)',
-                      transition: 'background 0.12s',
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.06)' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
-                    aria-label={`Reprogramar turno de ${patientName}`}
-                    title="Reprogramar"
-                  >
-                    <Pencil style={{ width: 15, height: 15 }} />
-                  </button>
-                )}
-
-                {/* Feature B: botón cancelar (X) */}
-                {!isCancelled && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCancelError(null)
-                      setCancelTarget(event.resource)
-                    }}
-                    style={{
-                      width: 32,
-                      height: 32,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      borderRadius: 6,
-                      border: 'none',
-                      background: 'none',
-                      cursor: 'pointer',
-                      color: 'var(--color-text-secondary)',
-                      transition: 'background 0.12s',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'rgba(239,68,68,0.08)'
-                      e.currentTarget.style.color = '#ef4444'
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'none'
-                      e.currentTarget.style.color = 'var(--color-text-secondary)'
-                    }}
-                    aria-label={`Cancelar turno de ${patientName}`}
-                    title="Cancelar turno"
-                  >
-                    <X style={{ width: 15, height: 15 }} />
-                  </button>
-                )}
-              </div>
+                )
+              })}
             </div>
-          )
-        })}
+          </div>
+        ))}
       </div>
 
       {/* Modal de confirmación de cancelación */}
@@ -746,6 +797,8 @@ interface CalendarViewProps {
   onReschedule?: (appointment: Appointment) => void
   // Story 10.7 — huecos libres del día (opcional, sin romper llamadas actuales)
   freeShifts?: AvailabilityShift[]
+  // Aceptado por compatibilidad de la llamada actual; el profesional ahora se
+  // muestra en la cabecera de cada grupo, así que este flag ya no se usa acá.
   showProfessionalName?: boolean
   onFreeSlotClick?: (shift: AvailabilityShift) => void
 }
@@ -758,7 +811,6 @@ export function CalendarView({
   onRefetch,
   onReschedule,
   freeShifts,
-  showProfessionalName,
   onFreeSlotClick,
 }: CalendarViewProps) {
   if (isLoading) {
@@ -792,7 +844,6 @@ export function CalendarView({
       date={date}
       onReschedule={onReschedule}
       freeShifts={freeShifts}
-      showProfessionalName={showProfessionalName}
       onFreeSlotClick={onFreeSlotClick}
     />
   )

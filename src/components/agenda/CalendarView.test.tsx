@@ -791,4 +791,97 @@ describe('CalendarView', () => {
       })
     })
   })
+
+  describe('agrupación por profesional', () => {
+    const aptPerez: Appointment = {
+      ...BASE_APPOINTMENT,
+      appointment_id: 'apt-perez',
+      start_at: '2026-05-07T09:00:00',
+      end_at: '2026-05-07T10:00:00',
+      patients: { full_name: 'Juan García' },
+      professionals: { name: 'Dra. Pérez' },
+    }
+    const aptLuque: Appointment = {
+      ...BASE_APPOINTMENT,
+      appointment_id: 'apt-luque',
+      start_at: '2026-05-07T11:00:00',
+      end_at: '2026-05-07T12:00:00',
+      patients: { full_name: 'Ana López' },
+      professionals: { name: 'Aldo Luque' },
+    }
+
+    it('renderiza un header (role=group) por cada profesional con turnos', () => {
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[aptPerez, aptLuque]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      expect(screen.getByRole('group', { name: /turnos de dra\. pérez/i })).toBeInTheDocument()
+      expect(screen.getByRole('group', { name: /turnos de aldo luque/i })).toBeInTheDocument()
+    })
+
+    it('cada paciente aparece dentro del grupo de su profesional', () => {
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[aptPerez, aptLuque]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      const grupoPerez = screen.getByRole('group', { name: /turnos de dra\. pérez/i })
+      expect(grupoPerez).toHaveTextContent('Juan García')
+      expect(grupoPerez).not.toHaveTextContent('Ana López')
+    })
+
+    it('mantiene orden cronológico dentro de un grupo del mismo profesional', () => {
+      const tarde: Appointment = {
+        ...aptPerez,
+        appointment_id: 'apt-perez-2',
+        start_at: '2026-05-07T14:00:00',
+        end_at: '2026-05-07T15:00:00',
+        patients: { full_name: 'Zoe Tarde' },
+      }
+      const temprano: Appointment = {
+        ...aptPerez,
+        appointment_id: 'apt-perez-1',
+        start_at: '2026-05-07T07:00:00',
+        end_at: '2026-05-07T08:00:00',
+        patients: { full_name: 'Ana Temprano' },
+      }
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[tarde, temprano]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      const names = screen.getAllByText(/Ana Temprano|Zoe Tarde/)
+      expect(names[0]).toHaveTextContent('Ana Temprano')
+      expect(names[1]).toHaveTextContent('Zoe Tarde')
+    })
+  })
+
+  describe('color por servicio y badge de estado', () => {
+    it('muestra el badge de estado del turno (semántica de estado preservada)', () => {
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[{ ...BASE_APPOINTMENT, status: 'no_show' }]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />
+      )
+      // STATUS_LABELS['no_show'] === 'No-show'
+      expect(screen.getByText('No-show')).toBeInTheDocument()
+    })
+  })
 })
