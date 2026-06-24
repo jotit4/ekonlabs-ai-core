@@ -12,10 +12,10 @@ export const dynamic = 'force-dynamic'
 const LANDING_BY_ROLE: Record<UserRole, string> = {
   // Recepción NO técnica → pantalla única "Modo recepción"
   receptionist: '/recepcion',
-  // Por ahora doctor y admin siguen entrando a la agenda (sin cambios).
-  // Cuando existan sus landings propios, se actualizan acá.
+  // Por ahora doctor sigue entrando a la agenda (sin cambios).
   doctor: '/agenda',
-  admin: '/agenda',
+  // El dueño/admin entra a su "Vista Dueño": pulso del negocio + su agenda.
+  admin: '/inicio',
 }
 
 // A dónde mandar si el JWT no trae un rol válido (caso borde).
