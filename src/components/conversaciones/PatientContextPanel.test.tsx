@@ -30,12 +30,24 @@ describe('PatientContextPanel', () => {
     expect(skeletons.length).toBeGreaterThanOrEqual(5)
   })
 
-  it('muestra "No se pudo cargar el contexto" cuando context es null (no loading)', () => {
-    mockUseAgentContext.mockReturnValue({ context: null, isLoading: false, isError: false })
+  it('muestra "No se pudo cargar el contexto" cuando isError es true', () => {
+    mockUseAgentContext.mockReturnValue({ context: null, isLoading: false, isError: true })
 
     render(<PatientContextPanel phone="+5491111111111" />)
 
     expect(screen.getByText('No se pudo cargar el contexto')).toBeInTheDocument()
+  })
+
+  it('distingue "sin datos aún" (context null sin error) de un error de carga', () => {
+    mockUseAgentContext.mockReturnValue({ context: null, isLoading: false, isError: false })
+
+    render(<PatientContextPanel phone="+5491111111111" />)
+
+    // No es un error de carga: el agente simplemente todavía no capturó nada.
+    expect(
+      screen.getByText('El agente aún no capturó datos de esta conversación')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('No se pudo cargar el contexto')).not.toBeInTheDocument()
   })
 
   it('muestra nombre del paciente cuando hay datos', () => {
@@ -61,7 +73,7 @@ describe('PatientContextPanel', () => {
     expect(screen.getByText('Juan Pérez')).toBeInTheDocument()
   })
 
-  it('muestra "Sin datos" para campos null como DNI', () => {
+  it('muestra "Sin datos aún" para campos null como DNI (dato no capturado, no error)', () => {
     mockUseAgentContext.mockReturnValue({
       context: {
         patient_name: 'Ana López',
@@ -80,8 +92,8 @@ describe('PatientContextPanel', () => {
 
     render(<PatientContextPanel phone="+5491111111111" />)
 
-    // Múltiples "Sin datos" para los campos null
-    const sinDatosEls = screen.getAllByText('Sin datos')
+    // Múltiples "Sin datos aún" para los campos que el agente todavía no capturó.
+    const sinDatosEls = screen.getAllByText('Sin datos aún')
     expect(sinDatosEls.length).toBeGreaterThan(0)
   })
 

@@ -25,8 +25,11 @@ export function TakeoverBar({
   conversationStatus,
   confidenceLevel = 'medium',
   controlledBy,
-  currentUserName = 'En control',
+  currentUserName,
 }: TakeoverBarProps) {
+  // Nombre a mostrar en "[Nombre] · En control": prioriza quién tomó el control
+  // (derivado del hilo), luego el usuario actual, luego un genérico.
+  const controllerName = controlledBy ?? currentUserName ?? 'Operador'
   const { takeover, isPending } = useTakeover()
   const { release, isPending: isPendingRelease } = useRelease(phone)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -98,7 +101,7 @@ export function TakeoverBar({
           }}
         >
           <span style={{ fontSize: 13, color: 'var(--color-text-primary)', fontWeight: 500 }}>
-            {controlledBy ?? currentUserName} · En control
+            {controllerName} · En control
           </span>
           {/* "Liberar al agente" — ghost button, activado en Story 4.7 */}
           <button

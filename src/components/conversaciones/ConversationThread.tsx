@@ -1,11 +1,15 @@
 'use client'
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { DegradationBanner } from '@/components/pacientes/DegradationBanner'
 import { CorreccionAgenteModal } from '@/components/conversaciones/CorreccionAgenteModal'
 import { findPreviousPatientMessage } from '@/lib/conversaciones/correccion'
+import {
+  relativeDayLabel,
+  shouldShowDateSeparator,
+} from '@/lib/conversaciones/thread-dates'
 import type { ChatwootMessage } from '@/types/conversations'
 
 interface ConversationThreadProps {
@@ -13,6 +17,47 @@ interface ConversationThreadProps {
   isConnected: boolean
   /** Si el rol del usuario puede escribir KB (admin/receptionist). Default false. */
   canCorrect?: boolean
+}
+
+/**
+ * Separador de fecha entre grupos de mensajes de distintos días (estilo
+ * Chatwoot/WhatsApp). El label es "Hoy" / "Ayer" o la fecha absoluta
+ * ("14 de mayo"). created_at viene en SEGUNDOS — multiplicar por 1000.
+ */
+function DateSeparator({ createdAt }: { createdAt: number }) {
+  const relative = relativeDayLabel(createdAt)
+  const label =
+    relative ?? format(new Date(createdAt * 1000), "d 'de' MMMM", { locale: es })
+
+  return (
+    <li
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        margin: '12px 0 4px',
+        listStyle: 'none',
+      }}
+    >
+      <hr style={{ flex: 1, border: 'none', borderTop: '1px solid var(--color-border)' }} />
+      <span
+        style={{
+          fontSize: 12,
+          fontWeight: 500,
+          color: 'var(--color-text-secondary)',
+          whiteSpace: 'nowrap',
+          padding: '2px 10px',
+          borderRadius: 12,
+          background: 'var(--color-surface)',
+          border: '1px solid var(--color-border)',
+          textTransform: 'capitalize',
+        }}
+      >
+        {label}
+      </span>
+      <hr style={{ flex: 1, border: 'none', borderTop: '1px solid var(--color-border)' }} />
+    </li>
+  )
 }
 
 function MessageBubble({
@@ -240,13 +285,19 @@ export function ConversationThread({ messages, isConnected, canCorrect = false }
           </p>
         ) : (
           <ul role="log" aria-live="polite" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-            {messages.map((msg) => (
-              <MessageBubble
-                key={msg.id}
-                message={msg}
-                canCorrect={canCorrect}
-                onCorrect={() => setCorrectingMessageId(msg.id)}
-              />
+            {messages.map((msg, i) => (
+              <Fragment key={msg.id}>
+                {/* Separador de fecha al iniciar un día nuevo (no rompe los
+                    separadores de actividad type 2 — se renderizan dentro del bubble) */}
+                {shouldShowDateSeparator(msg, messages[i - 1]) && (
+                  <DateSeparator createdAt={msg.created_at} />
+                )}
+                <MessageBubble
+                  message={msg}
+                  canCorrect={canCorrect}
+                  onCorrect={() => setCorrectingMessageId(msg.id)}
+                />
+              </Fragment>
             ))}
           </ul>
         )}

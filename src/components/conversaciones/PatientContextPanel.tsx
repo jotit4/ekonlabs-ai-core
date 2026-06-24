@@ -59,7 +59,9 @@ function ContextField({
             {value}
           </>
         ) : (
-          'Sin datos'
+          // El contexto se cargó bien pero el agente aún no capturó este dato en la
+          // conversación. Es distinto de un error de carga (ver bloque !context abajo).
+          'Sin datos aún'
         )}
       </span>
     </div>
@@ -93,7 +95,7 @@ interface PatientContextPanelProps {
 }
 
 export function PatientContextPanel({ phone, conversationStatus }: PatientContextPanelProps) {
-  const { context, isLoading } = useAgentContext(phone)
+  const { context, isLoading, isError } = useAgentContext(phone)
 
   if (isLoading) {
     return (
@@ -147,10 +149,17 @@ export function PatientContextPanel({ phone, conversationStatus }: PatientContex
         </div>
       )}
 
-      {/* Estado sin contexto / error */}
-      {!context ? (
-        <p style={{ fontSize: 14, color: 'var(--color-text-secondary)' }}>
+      {/* Estado sin contexto: distingue error de carga vs conversación sin datos aún.
+          - isError: la request falló (red/servidor) → mensaje de error real.
+          - !context sin error: se cargó bien pero el agente todavía no capturó nada
+            (conversación nueva, sin paciente ni contexto vivo). */}
+      {isError ? (
+        <p style={{ fontSize: 14, color: 'var(--color-status-error, var(--color-text-secondary))' }}>
           No se pudo cargar el contexto
+        </p>
+      ) : !context ? (
+        <p style={{ fontSize: 14, color: 'var(--color-text-secondary)' }}>
+          El agente aún no capturó datos de esta conversación
         </p>
       ) : (
         <>

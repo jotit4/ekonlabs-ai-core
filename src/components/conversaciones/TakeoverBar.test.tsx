@@ -127,6 +127,42 @@ describe('TakeoverBar', () => {
     expect(screen.getByText('Valentina · En control')).toBeInTheDocument()
   })
 
+  // ─── Quién tomó el control (P1.b) ────────────────────────────────────────────
+
+  it('controlledBy tiene prioridad sobre currentUserName en el label', () => {
+    render(
+      <TakeoverBar
+        phone="+5491111111111"
+        conversationStatus="human_takeover"
+        controlledBy="Carla"
+        currentUserName="Valentina"
+      />
+    )
+    expect(screen.getByText('Carla · En control')).toBeInTheDocument()
+    expect(screen.queryByText('Valentina · En control')).not.toBeInTheDocument()
+  })
+
+  it('cae a currentUserName cuando no hay controlledBy', () => {
+    render(
+      <TakeoverBar
+        phone="+5491111111111"
+        conversationStatus="human_takeover"
+        currentUserName="Valentina"
+      />
+    )
+    expect(screen.getByText('Valentina · En control')).toBeInTheDocument()
+  })
+
+  it('cae a "Operador" cuando no hay controlledBy ni currentUserName', () => {
+    render(
+      <TakeoverBar
+        phone="+5491111111111"
+        conversationStatus="human_takeover"
+      />
+    )
+    expect(screen.getByText('Operador · En control')).toBeInTheDocument()
+  })
+
   it('muestra ghost button "Liberar al agente" cuando status es human_takeover', () => {
     render(
       <TakeoverBar

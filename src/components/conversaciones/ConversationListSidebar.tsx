@@ -8,9 +8,51 @@ import { RealtimeDegradationBanner } from '@/components/conversaciones/RealtimeD
 import { useConversationsRealtime } from '@/hooks/use-conversations-realtime'
 import type { ConversationSummary } from '@/types/conversations'
 
-type FilterMode = 'all' | 'attention'
+type FilterMode = 'all' | 'attention' | 'human_takeover' | 'resolved'
 
 const PAUSED_STATUSES: ConversationSummary['status'][] = ['needs_intervention', 'human_takeover']
+
+// Filtros disponibles en la barra. "attention" agrupa los estados accionables
+// (needs_intervention + human_takeover); los demás filtran por un status único.
+const FILTERS: { mode: FilterMode; label: string }[] = [
+  { mode: 'all', label: 'Todas' },
+  { mode: 'attention', label: 'Requiere atención' },
+  { mode: 'human_takeover', label: 'En control humano' },
+  { mode: 'resolved', label: 'Resueltas' },
+]
+
+function matchesFilter(conversation: ConversationSummary, mode: FilterMode): boolean {
+  switch (mode) {
+    case 'all':
+      return true
+    case 'attention':
+      return PAUSED_STATUSES.includes(conversation.status)
+    case 'human_takeover':
+      return conversation.status === 'human_takeover'
+    case 'resolved':
+      return conversation.status === 'resolved'
+  }
+}
+
+// Búsqueda client-side: normaliza acentos para que "lopez" matchee "López",
+// y para teléfonos compara solo dígitos (ignora +, espacios, guiones).
+function normalize(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // elimina marcas diacríticas combinadas
+}
+
+function matchesSearch(conversation: ConversationSummary, query: string): boolean {
+  const q = normalize(query.trim())
+  if (!q) return true
+  if (normalize(conversation.patient_name).includes(q)) return true
+  // Teléfono: comparar solo dígitos contra los dígitos del query
+  const phoneDigits = conversation.phone_number.replace(/\D/g, '')
+  const queryDigits = q.replace(/\D/g, '')
+  if (queryDigits && phoneDigits.includes(queryDigits)) return true
+  return false
+}
 
 function ConversationListSkeleton() {
   return (
@@ -45,6 +87,7 @@ export function ConversationListSidebar() {
   const pathname = usePathname()
   const listRef = useRef<HTMLUListElement>(null)
   const [filterMode, setFilterMode] = useState<FilterMode>('all')
+  const [searchQuery, setSearchQuery] = useState('')
 
   // Extrae el phone_number del path: /conversaciones/{phone} — decodificar %2B → +
   const rawSegment = pathname?.match(/\/conversaciones\/([^/]+)/)?.[1] ?? null
@@ -63,10 +106,10 @@ export function ConversationListSidebar() {
     PAUSED_STATUSES.includes(c.status)
   ).length
 
-  const visibleConversations =
-    filterMode === 'attention'
-      ? conversations.filter((c) => PAUSED_STATUSES.includes(c.status))
-      : conversations
+  // Filtro por estado + búsqueda de texto, ambos client-side sobre lo ya cargado.
+  const visibleConversations = conversations.filter(
+    (c) => matchesFilter(c, filterMode) && matchesSearch(c, searchQuery)
+  )
 
   const handleSelect = useCallback(
     (phone: string) => {
@@ -93,80 +136,98 @@ export function ConversationListSidebar() {
     >
       {!isConnected && <RealtimeDegradationBanner />}
 
-      {/* Filtro toggle: Todas / Requiere atención */}
+      {/* Buscador de texto — filtra por nombre del paciente o teléfono (client-side) */}
+      <div
+        style={{
+          padding: '10px 12px 6px',
+          borderBottom: '1px solid var(--color-border)',
+        }}
+      >
+        <input
+          type="search"
+          inputMode="search"
+          aria-label="Buscar por nombre o teléfono"
+          placeholder="Buscar por nombre o teléfono…"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          style={{
+            width: '100%',
+            padding: '7px 10px',
+            fontSize: 13,
+            borderRadius: 8,
+            border: '1px solid var(--color-border)',
+            backgroundColor: 'var(--color-surface)',
+            color: 'var(--color-text-primary)',
+            outline: 'none',
+          }}
+        />
+      </div>
+
+      {/* Filtro por estado: Todas / Requiere atención / En control humano / Resueltas */}
       <div
         role="group"
         aria-label="Filtrar conversaciones"
         style={{
           display: 'flex',
+          flexWrap: 'wrap',
           gap: 6,
-          padding: '10px 12px',
+          padding: '8px 12px 10px',
           borderBottom: '1px solid var(--color-border)',
         }}
       >
-        <button
-          type="button"
-          aria-pressed={filterMode === 'all'}
-          onClick={() => setFilterMode('all')}
-          style={{
-            flex: 1,
-            padding: '5px 8px',
-            fontSize: 12,
-            fontWeight: filterMode === 'all' ? 600 : 400,
-            borderRadius: 6,
-            border: '1px solid var(--color-border)',
-            backgroundColor: filterMode === 'all' ? 'var(--color-interactive)' : 'transparent',
-            color: filterMode === 'all' ? '#fff' : 'var(--color-text-secondary)',
-            cursor: 'pointer',
-            transition: 'background-color 120ms, color 120ms',
-          }}
-        >
-          Todas
-        </button>
-        <button
-          type="button"
-          data-tour="filter-attention"
-          aria-pressed={filterMode === 'attention'}
-          onClick={() => setFilterMode('attention')}
-          style={{
-            flex: 1,
-            padding: '5px 8px',
-            fontSize: 12,
-            fontWeight: filterMode === 'attention' ? 600 : 400,
-            borderRadius: 6,
-            border: '1px solid var(--color-border)',
-            backgroundColor: filterMode === 'attention' ? '#ff9f0a' : 'transparent',
-            color: filterMode === 'attention' ? '#fff' : 'var(--color-text-secondary)',
-            cursor: 'pointer',
-            transition: 'background-color 120ms, color 120ms',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 4,
-          }}
-        >
-          Requiere atención
-          {attentionCount > 0 && (
-            <span
-              aria-label={`${attentionCount} conversaciones requieren atención`}
+        {FILTERS.map(({ mode, label }) => {
+          const isActive = filterMode === mode
+          const isAttention = mode === 'attention'
+          // "Requiere atención" usa naranja; los demás usan el color interactivo del dashboard
+          const activeBg = isAttention ? '#ff9f0a' : 'var(--color-interactive)'
+          return (
+            <button
+              key={mode}
+              type="button"
+              data-tour={isAttention ? 'filter-attention' : undefined}
+              aria-pressed={isActive}
+              onClick={() => setFilterMode(mode)}
               style={{
-                display: 'inline-flex',
+                flex: '1 1 calc(50% - 3px)',
+                padding: '5px 8px',
+                fontSize: 12,
+                fontWeight: isActive ? 600 : 400,
+                borderRadius: 6,
+                border: '1px solid var(--color-border)',
+                backgroundColor: isActive ? activeBg : 'transparent',
+                color: isActive ? '#fff' : 'var(--color-text-secondary)',
+                cursor: 'pointer',
+                transition: 'background-color 120ms, color 120ms',
+                display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                minWidth: 16,
-                height: 16,
-                borderRadius: 8,
-                backgroundColor: filterMode === 'attention' ? 'rgba(255,255,255,0.3)' : '#ff9f0a',
-                color: filterMode === 'attention' ? '#fff' : '#fff',
-                fontSize: 10,
-                fontWeight: 600,
-                padding: '0 4px',
+                gap: 4,
               }}
             >
-              {attentionCount}
-            </span>
-          )}
-        </button>
+              {label}
+              {isAttention && attentionCount > 0 && (
+                <span
+                  aria-label={`${attentionCount} conversaciones requieren atención`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    minWidth: 16,
+                    height: 16,
+                    borderRadius: 8,
+                    backgroundColor: isActive ? 'rgba(255,255,255,0.3)' : '#ff9f0a',
+                    color: '#fff',
+                    fontSize: 10,
+                    fontWeight: 600,
+                    padding: '0 4px',
+                  }}
+                >
+                  {attentionCount}
+                </span>
+              )}
+            </button>
+          )
+        })}
       </div>
 
       {isLoading && <ConversationListSkeleton />}
@@ -182,9 +243,15 @@ export function ConversationListSidebar() {
 
       {!isLoading && !isError && visibleConversations.length === 0 && (
         <p style={{ padding: '24px 16px', fontSize: 14, color: 'var(--color-text-secondary)', textAlign: 'center' }}>
-          {filterMode === 'attention'
-            ? 'No hay conversaciones que requieran atención'
-            : 'No hay conversaciones activas en este momento'}
+          {searchQuery.trim().length > 0
+            ? 'No hay resultados para tu búsqueda'
+            : filterMode === 'attention'
+              ? 'No hay conversaciones que requieran atención'
+              : filterMode === 'human_takeover'
+                ? 'No hay conversaciones en control humano'
+                : filterMode === 'resolved'
+                  ? 'No hay conversaciones resueltas'
+                  : 'No hay conversaciones activas en este momento'}
         </p>
       )}
 

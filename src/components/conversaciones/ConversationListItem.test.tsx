@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { vi, describe, it, expect, beforeEach } from 'vitest'
-import { ConversationListItem } from './ConversationListItem'
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { ConversationListItem, formatRelativeTimestamp } from './ConversationListItem'
 import type { ConversationSummary } from '@/types/conversations'
 
 // ─── Datos de prueba ─────────────────────────────────────────────────────────
@@ -129,15 +129,16 @@ describe('ConversationListItem', () => {
     expect(nameEl).toHaveStyle({ fontWeight: 400 })
   })
 
-  it('timestamp muestra formato HH:mm', () => {
+  it('timestamp de HOY muestra formato HH:mm', () => {
+    // Un mensaje de hace 1 hora cae siempre en "hoy" → debe formatearse como HH:mm
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
     render(
       <ConversationListItem
-        conversation={makeConversation({ last_message_at: '2026-05-11T14:30:00.000Z' })}
+        conversation={makeConversation({ last_message_at: oneHourAgo })}
         onSelect={onSelect}
       />
     )
-    // El timestamp se formatea como HH:mm — el valor exacto depende del timezone del entorno
-    // Verificamos que existe un elemento con formato de hora (2 dígitos:2 dígitos)
+    // El valor exacto depende del timezone del entorno; verificamos formato HH:mm
     const timestampEls = screen.getAllByText(/^\d{2}:\d{2}$/)
     expect(timestampEls.length).toBeGreaterThan(0)
   })
@@ -187,5 +188,47 @@ describe('ConversationListItem', () => {
       />
     )
     expect(screen.getByRole('option')).toHaveAttribute('aria-selected', 'false')
+  })
+})
+
+// ─── formatRelativeTimestamp (P1 — timestamp relativo estilo Chatwoot) ─────────
+
+describe('formatRelativeTimestamp', () => {
+  // Ancla: miércoles 2026-05-13 15:00 local. Usamos fechas locales (no UTC) para
+  // que isToday/isYesterday/isThisWeek no dependan del timezone del runner.
+  const NOW = new Date(2026, 4, 13, 15, 0, 0) // mié 13 may 2026
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('hoy → formato HH:mm', () => {
+    const todayMorning = new Date(2026, 4, 13, 9, 5, 0).toISOString()
+    expect(formatRelativeTimestamp(todayMorning)).toBe('09:05')
+  })
+
+  it('ayer → "Ayer"', () => {
+    const yesterday = new Date(2026, 4, 12, 20, 0, 0).toISOString()
+    expect(formatRelativeTimestamp(yesterday)).toBe('Ayer')
+  })
+
+  it('esta semana (no hoy/ayer) → día abreviado en español', () => {
+    // Lunes 11 may 2026 — misma semana ISO (lun-dom) que el miércoles ancla
+    const monday = new Date(2026, 4, 11, 12, 0, 0).toISOString()
+    expect(formatRelativeTimestamp(monday)).toBe('lun')
+  })
+
+  it('más viejo que esta semana → fecha corta dd/MM', () => {
+    const older = new Date(2026, 3, 14, 10, 0, 0).toISOString() // 14 abr 2026
+    expect(formatRelativeTimestamp(older)).toBe('14/04')
+  })
+
+  it('fecha inválida → string vacío (no rompe)', () => {
+    expect(formatRelativeTimestamp('no-es-una-fecha')).toBe('')
   })
 })

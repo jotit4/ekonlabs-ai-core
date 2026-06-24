@@ -49,19 +49,30 @@ export interface ChatwootMessage {
 export interface AgentContext {
   patient_name?: string | null
   phone_number?: string | null
-  /** Intent detectado: "agendar_turno" | "cancelar_turno" | "consultar_disponibilidad" | etc. */
+  /**
+   * Intención detectada EN VIVO por el agente, ya legible:
+   * "Sacar un turno" | "Cancelar un turno" | "Consulta informativa" | etc.
+   * Cae a "Turno confirmado" si solo hay un turno persistido y no contexto vivo.
+   */
   detected_intent?: string | null
-  /** DNI capturado del paciente */
+  /** DNI capturado en la conversación (vivo) o el del paciente persistido */
   dni?: string | null
-  /** Servicio solicitado: ej "Kinesiología", "Fisioterapia" */
+  /** Servicio en negociación (vivo) o el del último turno confirmado */
   service_requested?: string | null
-  /** ISO datetime del slot solicitado, ej "2026-05-15T10:00:00" */
+  /**
+   * Slot que el agente está negociando AHORA (fecha YYYY-MM-DD o ISO datetime),
+   * NO necesariamente el turno confirmado. Cae al start_at del último turno
+   * confirmado si la conversación ya cerró sin contexto vivo.
+   */
   slot_requested?: string | null
   /** Texto libre sobre disponibilidad cuando no hay slot específico */
   availability_info?: string | null
-  /** Obra social: ej "OSDE", "Swiss Medical" */
+  /** Obra social capturada (vivo) o la del paciente persistido: ej "OSDE", "Swiss Medical" */
   obra_social?: string | null
-  /** Razón del bloqueo actual si aplica */
+  /**
+   * Bloqueo / paso actual del flujo. Si el hilo está pausado muestra la razón de
+   * pausa; si no, el paso vivo del agente ("Ofreciendo horarios", etc.).
+   */
   current_block?: string | null
   /** true si la conversación está resuelta */
   is_resolved?: boolean

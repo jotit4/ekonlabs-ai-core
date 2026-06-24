@@ -5,9 +5,11 @@ import { useQuery } from '@tanstack/react-query'
 import { useChatwootMessages } from '@/hooks/use-chatwoot-messages'
 import { useConversationThreadRealtime } from '@/hooks/use-conversation-thread-realtime'
 import { useUserRole } from '@/hooks/use-user-role'
+import { useCurrentUser } from '@/hooks/use-current-user'
 import { ConversationThread } from '@/components/conversaciones/ConversationThread'
 import { PatientContextPanel } from '@/components/conversaciones/PatientContextPanel'
 import { TakeoverBar } from '@/components/conversaciones/TakeoverBar'
+import { deriveControllerName } from '@/lib/conversaciones/thread-dates'
 import type { ConversationSummary, ConversationStatus, ConfidenceLevel } from '@/types/conversations'
 
 export default function ConversationThreadPage() {
@@ -21,6 +23,15 @@ export default function ConversationThreadPage() {
   // igual rechaza otros roles con 403 (guard de 6.7) — esto es defensa en profundidad UI.
   const role = useUserRole()
   const canCorrect = role === 'admin' || role === 'receptionist'
+
+  // Quién está en control (P1.b). Fuente: el hilo de mensajes — el último mensaje
+  // saliente de un agente humano lleva el nombre del operador (meta.agent.name).
+  // Es la única señal disponible client-side: thread_states no guarda el usuario,
+  // audit_logs es admin-only y el endpoint de takeover solo expone controlled_by en
+  // el 409. Fallback: el nombre del usuario actual (recién tomó control, aún sin
+  // mensajes propios en el hilo).
+  const { user: currentUser } = useCurrentUser()
+  const controlledBy = deriveControllerName(messages) ?? undefined
 
   // Suscribir reactivamente a la lista de conversaciones para detectar cambios de estado
   const { data: conversations, isPending: isConversationsPending } = useQuery<ConversationSummary[]>({
@@ -94,6 +105,8 @@ export default function ConversationThreadPage() {
           phone={conversationId}
           conversationStatus={conversationStatus}
           confidenceLevel={confidenceLevel}
+          controlledBy={controlledBy}
+          currentUserName={currentUser?.fullName}
         />
       </section>
 

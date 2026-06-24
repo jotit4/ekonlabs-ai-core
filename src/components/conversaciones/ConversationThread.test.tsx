@@ -228,4 +228,67 @@ describe('ConversationThread', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Corregir esta respuesta del agente' }))
     expect(screen.getByTestId('correccion-modal-mock')).toBeInTheDocument()
   })
+
+  // ── Separadores de fecha (P1.a) ───────────────────────────────────────────
+  // El label "Hoy"/"Ayer" se deriva con Date nativo (no con el `format` mockeado),
+  // por eso podemos assertarlo de forma determinista.
+
+  const secondsAt = (y: number, m: number, d: number): number =>
+    Math.floor(new Date(y, m - 1, d, 12, 0, 0).getTime() / 1000)
+
+  it('muestra un separador "Hoy" antes del primer mensaje del día actual', () => {
+    const today = secondsAt(
+      new Date().getFullYear(),
+      new Date().getMonth() + 1,
+      new Date().getDate(),
+    )
+    const msg = makeMessage({ id: 1, content: 'Mensaje de hoy', created_at: today })
+    render(<ConversationThread messages={[msg]} isConnected={true} />)
+    expect(screen.getByText('Hoy')).toBeInTheDocument()
+  })
+
+  it('inserta un separador entre mensajes de días distintos', () => {
+    const now = new Date()
+    const today = secondsAt(now.getFullYear(), now.getMonth() + 1, now.getDate())
+    const yesterdayDate = new Date(now)
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1)
+    const yesterday = secondsAt(
+      yesterdayDate.getFullYear(),
+      yesterdayDate.getMonth() + 1,
+      yesterdayDate.getDate(),
+    )
+    const messages = [
+      makeMessage({ id: 1, content: 'Mensaje de ayer', created_at: yesterday }),
+      makeMessage({ id: 2, content: 'Mensaje de hoy', created_at: today }),
+    ]
+    render(<ConversationThread messages={messages} isConnected={true} />)
+    // Dos separadores: "Ayer" para el primer grupo, "Hoy" para el segundo
+    expect(screen.getByText('Ayer')).toBeInTheDocument()
+    expect(screen.getByText('Hoy')).toBeInTheDocument()
+  })
+
+  it('NO inserta separador adicional entre mensajes del MISMO día', () => {
+    const now = new Date()
+    const today = secondsAt(now.getFullYear(), now.getMonth() + 1, now.getDate())
+    const messages = [
+      makeMessage({ id: 1, content: 'Primero hoy', created_at: today }),
+      makeMessage({ id: 2, content: 'Segundo hoy', created_at: today + 3600 }),
+    ]
+    render(<ConversationThread messages={messages} isConnected={true} />)
+    // Un único separador "Hoy" para ambos mensajes
+    expect(screen.getAllByText('Hoy')).toHaveLength(1)
+  })
+
+  it('los separadores de actividad (type 2) no abren un día nuevo', () => {
+    const now = new Date()
+    const today = secondsAt(now.getFullYear(), now.getMonth() + 1, now.getDate())
+    const messages = [
+      makeMessage({ id: 1, content: 'Mensaje', created_at: today }),
+      makeMessage({ id: 2, message_type: 2, content: 'Valentina tomó control', created_at: today + 60 }),
+    ]
+    render(<ConversationThread messages={messages} isConnected={true} />)
+    // Solo el separador "Hoy" del primer mensaje; la actividad sigue visible
+    expect(screen.getAllByText('Hoy')).toHaveLength(1)
+    expect(screen.getByText('Valentina tomó control')).toBeInTheDocument()
+  })
 })

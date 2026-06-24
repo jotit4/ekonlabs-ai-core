@@ -1,6 +1,6 @@
 'use client'
 
-import { format } from 'date-fns'
+import { format, isToday, isYesterday, isThisWeek } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { StatusDot } from '@/components/shared/StatusDot'
 import type { StatusDotVariant } from '@/components/shared/StatusDot'
@@ -59,6 +59,29 @@ function statusToConfidenceText(status: ConversationStatus, confidenceLevel: Con
   }
 }
 
+// ─── Timestamp relativo estilo Chatwoot ──────────────────────────────────────
+//
+// Hoy      → hora "HH:mm"   (14:30)
+// Ayer     → "Ayer"
+// Esta sem.→ día abreviado  ("lun", "mar"…)  — semana arranca el lunes (locale es)
+// Más viejo→ fecha corta    "dd/MM"          (14/05)
+export function formatRelativeTimestamp(isoDate: string): string {
+  const date = new Date(isoDate)
+  if (Number.isNaN(date.getTime())) return ''
+
+  if (isToday(date)) {
+    return format(date, 'HH:mm', { locale: es })
+  }
+  if (isYesterday(date)) {
+    return 'Ayer'
+  }
+  // weekStartsOn: 1 (lunes) — consistente con la convención AR/es del dashboard
+  if (isThisWeek(date, { weekStartsOn: 1 })) {
+    return format(date, 'EEE', { locale: es })
+  }
+  return format(date, 'dd/MM', { locale: es })
+}
+
 function getInitials(name: string): string {
   return name
     .split(' ')
@@ -88,7 +111,7 @@ export function ConversationListItem({
   const dotLabel = statusToLabel(conversation.status, conversation.confidence_level)
   const confidenceText = statusToConfidenceText(conversation.status, conversation.confidence_level)
   const initials = getInitials(conversation.patient_name)
-  const timestamp = format(new Date(conversation.last_message_at), 'HH:mm', { locale: es })
+  const timestamp = formatRelativeTimestamp(conversation.last_message_at)
   const preview =
     conversation.last_message_preview.length > 80
       ? conversation.last_message_preview.slice(0, 80) + '…'
