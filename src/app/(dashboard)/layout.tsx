@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import { Toaster } from 'sonner'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 import { AppSidebar } from '@/components/AppSidebar'
@@ -49,6 +50,7 @@ export default async function DashboardLayout({
           </main>
         </div>
       </div>
+      <Toaster position="bottom-center" richColors closeButton />
       </OnboardingProvider>
     </DashboardProviders>
   )
