@@ -13,6 +13,7 @@ import {
   type NewAppointmentFormValues,
 } from '@/lib/schemas/appointment.schema'
 import { PatientFormSchema, type PatientFormValues } from '@/lib/schemas/patient.schema'
+import { useAvailability } from '@/hooks/use-availability'
 
 interface PatientResult {
   patient_id: string
@@ -43,21 +44,6 @@ interface NewTurnoModalProps {
   initialProfessionalId?: string
   initialDate?: string // YYYY-MM-DD
   initialTimeHHmm?: string // HH:MM
-}
-
-function generateTimeSlots(durationMinutes: number): string[] {
-  const slots: string[] = []
-  const startHour = 8
-  const endHour = 20
-  let current = startHour * 60
-
-  while (current + durationMinutes <= endHour * 60) {
-    const hh = Math.floor(current / 60).toString().padStart(2, '0')
-    const mm = (current % 60).toString().padStart(2, '0')
-    slots.push(`${hh}:${mm}`)
-    current += durationMinutes
-  }
-  return slots
 }
 
 export function NewTurnoModal({
@@ -131,11 +117,37 @@ export function NewTurnoModal({
   })
   const services = (servicesResult?.data ?? []) as ServiceOption[]
 
-  // Watch selected service to generate time slots
+  // Watch selección de servicio / profesional / fecha para calcular la
+  // disponibilidad REAL (no horarios inventados). El horario solo se elige
+  // sobre los huecos libres del servicio+profesional para la fecha elegida.
   const selectedServiceId = useWatch({ control: appointmentForm.control, name: 'service_id' })
+  const selectedProfessionalId = useWatch({ control: appointmentForm.control, name: 'professional_id' })
+  const selectedDate = useWatch({ control: appointmentForm.control, name: 'appointment_date' })
   const selectedService = services.find((s) => s.service_id === selectedServiceId)
   const durationMinutes = selectedService?.duration_minutes ?? 60
-  const timeSlots = generateTimeSlots(durationMinutes)
+
+  // Disponibilidad real (RPC check_clinic_availability vía /api/availability).
+  // Solo se consulta cuando hay servicio + profesional + fecha elegidos; si falta
+  // alguno, no se muestran horarios inventados.
+  const availabilityEnabled =
+    !!selectedServiceId && !!selectedProfessionalId && !!selectedDate
+  const {
+    shiftsForDate,
+    isLoading: isLoadingAvailability,
+    isError: isAvailabilityError,
+  } = useAvailability({
+    dateFrom: selectedDate || '',
+    dateTo: selectedDate || '',
+    serviceId: selectedServiceId || null,
+    professionalId: selectedProfessionalId || null,
+    enabled: availabilityEnabled,
+  })
+
+  // Horarios libres (HH:MM local) para la fecha elegida. La RPC ya considera
+  // el horario del profesional y los turnos ocupados.
+  const availableTimes = availabilityEnabled
+    ? shiftsForDate(selectedDate).map((shift) => shift.open)
+    : []
 
   // Cargar profesionales del servicio elegido (modelo de turnos por profesional).
   // El paciente elige el profesional, por eso el selector se filtra por servicio.
@@ -220,6 +232,20 @@ export function NewTurnoModal({
     // appointmentForm es estable (react-hook-form); deps = solo open + valores de prefill
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialServiceId, initialProfessionalId, initialDate, initialTimeHHmm])
+
+  // Limpiar la hora elegida si dejó de estar disponible (cambió servicio /
+  // profesional / fecha, o el hueco se ocupó). Solo cuando ya hay datos de
+  // disponibilidad cargados, para no borrar el prefill (Story 10.7) antes de
+  // resolver la consulta. Si el horario prellenado sigue libre, se conserva.
+  const selectedTime = useWatch({ control: appointmentForm.control, name: 'appointment_time_hhmm' })
+  useEffect(() => {
+    if (!availabilityEnabled || isLoadingAvailability || isAvailabilityError) return
+    if (selectedTime && !availableTimes.includes(selectedTime)) {
+      appointmentForm.setValue('appointment_time_hhmm', '')
+    }
+    // appointmentForm es estable; availableTimes deriva de los watches de arriba
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availabilityEnabled, isLoadingAvailability, isAvailabilityError, selectedTime, availableTimes.join(',')])
 
   const handleClose = () => {
     // Reset all state before closing
@@ -753,6 +779,7 @@ export function NewTurnoModal({
                     <select
                       id="time-select"
                       {...appointmentForm.register('appointment_time_hhmm')}
+                      disabled={!availabilityEnabled || isLoadingAvailability || availableTimes.length === 0}
                       className={inputClass(
                         !!appointmentForm.formState.errors.appointment_time_hhmm || !!slotConflictError,
                       )}
@@ -767,13 +794,28 @@ export function NewTurnoModal({
                             : undefined
                       }
                     >
-                      <option value="">Seleccioná un horario</option>
-                      {timeSlots.map((slot) => (
+                      <option value="">
+                        {!availabilityEnabled
+                          ? 'Elegí servicio, profesional y fecha'
+                          : isLoadingAvailability
+                            ? 'Cargando horarios disponibles...'
+                            : isAvailabilityError
+                              ? 'No se pudo cargar la disponibilidad'
+                              : availableTimes.length === 0
+                                ? 'Sin horarios libres para esta fecha'
+                                : 'Seleccioná un horario'}
+                      </option>
+                      {availableTimes.map((slot) => (
                         <option key={slot} value={slot}>
                           {slot}
                         </option>
                       ))}
                     </select>
+                    {isAvailabilityError && (
+                      <p role="alert" className="mt-1 text-xs text-red-600">
+                        No se pudo cargar la disponibilidad. Probá de nuevo.
+                      </p>
+                    )}
                     {appointmentForm.formState.errors.appointment_time_hhmm && !slotConflictError && (
                       <p id="time-error" role="alert" className="mt-1 text-xs text-red-600">
                         {appointmentForm.formState.errors.appointment_time_hhmm.message}

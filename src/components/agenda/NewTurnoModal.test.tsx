@@ -3,6 +3,48 @@ import userEvent from '@testing-library/user-event'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { NewTurnoModal } from './NewTurnoModal'
 import { patientSearchSchema } from '@/lib/schemas/appointment.schema'
+import type { AvailabilityShift } from '@/types/availability'
+
+// Mock del hook de disponibilidad: el modal pinta los horarios REALES libres
+// (RPC check_clinic_availability vía useAvailability). En los tests devolvemos
+// huecos controlados según servicio+profesional+fecha elegidos.
+vi.mock('@/hooks/use-availability', () => ({
+  useAvailability: vi.fn(),
+}))
+import { useAvailability } from '@/hooks/use-availability'
+
+function makeShift(open: string): AvailabilityShift {
+  return {
+    open,
+    close: open,
+    slot_start_iso: `2026-05-15T12:00:00.000Z`,
+    slot_end_iso: `2026-05-15T13:00:00.000Z`,
+    service_id: 'svc-1',
+    service_name: 'Kinesiología',
+    require_referral: false,
+    professional_id: 'prof-1',
+    professional_name: 'Patricia Pérez',
+  }
+}
+
+// Por defecto el hook ofrece 09:00–11:00 libres cuando hay servicio+profesional+
+// fecha (enabled). Cuando enabled=false (falta algún dato) no hay huecos.
+function mockAvailability(
+  times: string[] = ['09:00', '10:00', '11:00'],
+  opts: { isLoading?: boolean; isError?: boolean } = {},
+) {
+  vi.mocked(useAvailability).mockImplementation(({ enabled }) => {
+    const shifts = enabled ? times.map(makeShift) : []
+    return {
+      daysShifts: {},
+      daysSummary: {},
+      isLoading: opts.isLoading ?? false,
+      isError: opts.isError ?? false,
+      refetch: vi.fn(),
+      shiftsForDate: () => shifts,
+    }
+  })
+}
 
 // Mock global fetch
 const mockFetch = vi.fn()
@@ -107,6 +149,8 @@ describe('NewTurnoModal', () => {
     vi.clearAllMocks()
     // Default: búsqueda sin resultados
     mockFetch.mockResolvedValue(makeSearchResponse([]))
+    // Default: disponibilidad con 09:00–11:00 libres cuando se eligió servicio+profesional+fecha
+    mockAvailability()
   })
 
   describe('renderizado', () => {
@@ -439,6 +483,99 @@ describe('NewTurnoModal', () => {
         const dateInput = screen.getByLabelText('Fecha') as HTMLInputElement
         expect(dateInput.getAttribute('min')).toMatch(/^\d{4}-\d{2}-\d{2}$/)
       })
+    })
+  })
+
+  describe('horario por disponibilidad real (reclamo ISADI #5)', () => {
+    const singlePatient = {
+      patient_id: 'pat-uuid-1',
+      full_name: 'María López',
+      phone_number: '+5491111111111',
+      obra_social: null,
+      deletion_requested_at: null,
+    }
+
+    it('no muestra horarios inventados hasta elegir servicio + profesional + fecha', async () => {
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
+        return Promise.resolve(makeSearchResponse([]))
+      })
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
+
+      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
+      await user.click(screen.getByRole('button', { name: /buscar/i }))
+
+      await waitFor(() => screen.getByLabelText('Horario'))
+
+      // Sin profesional elegido aún, el selector está deshabilitado y sin opciones
+      // de horario (solo el placeholder). NO aparecen las 08:00–19:00 hardcodeadas.
+      const timeSelect = screen.getByLabelText('Horario') as HTMLSelectElement
+      expect(timeSelect.disabled).toBe(true)
+      expect(screen.queryByRole('option', { name: '08:00' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: '19:00' })).not.toBeInTheDocument()
+      expect(screen.getByRole('option', { name: /Elegí servicio, profesional y fecha/i })).toBeInTheDocument()
+    })
+
+    it('al elegir servicio+profesional+fecha muestra solo los huecos libres reales', async () => {
+      // Disponibilidad real: solo 09:00 y 15:00 libres (no el rango 08–19 fijo).
+      mockAvailability(['09:00', '15:00'])
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
+        if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse([{ professional_id: 'prof-1', name: 'Patricia Pérez' }]))
+        return Promise.resolve(makeSearchResponse([]))
+      })
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
+
+      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
+      await user.click(screen.getByRole('button', { name: /buscar/i }))
+      await waitFor(() => screen.getByLabelText('Servicio'))
+
+      await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+      await waitFor(() => {
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('prof-1')
+      })
+
+      // Solo los huecos reales se ofrecen como opciones
+      await waitFor(() => {
+        expect(screen.getByRole('option', { name: '09:00' })).toBeInTheDocument()
+        expect(screen.getByRole('option', { name: '15:00' })).toBeInTheDocument()
+      })
+      // No aparecen horarios fuera de la disponibilidad real
+      expect(screen.queryByRole('option', { name: '08:00' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: '10:00' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: '19:00' })).not.toBeInTheDocument()
+    })
+
+    it('muestra "sin horarios libres" cuando la disponibilidad real está vacía', async () => {
+      mockAvailability([]) // ningún hueco libre, aun con prerequisitos
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
+        if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse([{ professional_id: 'prof-1', name: 'Patricia Pérez' }]))
+        return Promise.resolve(makeSearchResponse([]))
+      })
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
+
+      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
+      await user.click(screen.getByRole('button', { name: /buscar/i }))
+      await waitFor(() => screen.getByLabelText('Servicio'))
+
+      await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+      await waitFor(() => {
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('prof-1')
+      })
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole('option', { name: /Sin horarios libres para esta fecha/i }),
+        ).toBeInTheDocument()
+      })
+      expect((screen.getByLabelText('Horario') as HTMLSelectElement).disabled).toBe(true)
     })
   })
 
