@@ -83,6 +83,27 @@ describe('AppSidebar', () => {
     expect(screen.getAllByText('Métricas').length).toBeGreaterThan(0)
   })
 
+  it('receptionist: el ítem Inicio apunta a /recepcion (no a /)', () => {
+    render(<AppSidebar role="receptionist" />)
+    const inicioLinks = screen.getAllByRole('link', { name: /inicio/i })
+    expect(inicioLinks.length).toBeGreaterThan(0)
+    expect(inicioLinks.every((l) => l.getAttribute('href') === '/recepcion')).toBe(true)
+  })
+
+  it('doctor: el ítem Inicio apunta a /mi-jornada (no a /)', () => {
+    render(<AppSidebar role="doctor" />)
+    const inicioLinks = screen.getAllByRole('link', { name: /inicio/i })
+    expect(inicioLinks.length).toBeGreaterThan(0)
+    expect(inicioLinks.every((l) => l.getAttribute('href') === '/mi-jornada')).toBe(true)
+  })
+
+  it('admin: el ítem Inicio apunta a /inicio (no a /)', () => {
+    render(<AppSidebar role="admin" />)
+    const inicioLinks = screen.getAllByRole('link', { name: /inicio/i })
+    expect(inicioLinks.length).toBeGreaterThan(0)
+    expect(inicioLinks.every((l) => l.getAttribute('href') === '/inicio')).toBe(true)
+  })
+
   it('toggle colapsa y expande el sidebar', async () => {
     const user = userEvent.setup()
     render(<AppSidebar role="receptionist" />)

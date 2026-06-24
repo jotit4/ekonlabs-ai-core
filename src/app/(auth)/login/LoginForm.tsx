@@ -5,10 +5,8 @@ import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { createSupabaseBrowserClient } from '@/lib/supabase/client'
-import { parseJwtPayload } from '@/lib/utils/jwt'
 import { loginSchema, type LoginFormValues } from '@/lib/schemas/auth'
 import { Button } from '@/components/ui/button'
-import type { UserRole } from '@/types/index'
 
 const inputClass =
   'w-full rounded-[8px] border border-[rgba(0,0,0,0.12)] bg-white px-3 py-2.5 text-[15px] ' +
@@ -37,12 +35,10 @@ export default function LoginForm() {
       return
     }
 
-    const { data: { session } } = await supabase.auth.getSession()
-    const claims = parseJwtPayload(session?.access_token ?? '')
-    const role = claims?.role as UserRole
-
-    const redirectPath = role === 'doctor' ? '/pacientes' : '/agenda'
-    router.push(redirectPath)
+    // Mandamos a "/" — la raíz redirige a cada usuario a SU landing según el rol
+    // (recepción → /recepcion, dueño → /inicio, profesional → /mi-jornada).
+    // Antes había un redirect hardcodeado a /agenda que ignoraba el rol.
+    router.push('/')
     router.refresh()
   }
 

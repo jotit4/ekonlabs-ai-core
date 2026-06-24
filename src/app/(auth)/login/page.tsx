@@ -1,8 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
-import { parseJwtPayload } from '@/lib/utils/jwt'
 import LoginForm from './LoginForm'
-import type { UserRole } from '@/types/index'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,10 +11,8 @@ export default async function LoginPage() {
   } = await supabase.auth.getUser()
 
   if (user) {
-    const { data: { session } } = await supabase.auth.getSession()
-    const claims = parseJwtPayload(session?.access_token ?? '')
-    const role = claims?.role as UserRole
-    redirect(role === 'doctor' ? '/pacientes' : '/agenda')
+    // Ya logueado: a "/", que redirige a su landing según el rol.
+    redirect('/')
   }
 
   return (

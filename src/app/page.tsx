@@ -12,8 +12,8 @@ export const dynamic = 'force-dynamic'
 const LANDING_BY_ROLE: Record<UserRole, string> = {
   // Recepción NO técnica → pantalla única "Modo recepción"
   receptionist: '/recepcion',
-  // Por ahora doctor sigue entrando a la agenda (sin cambios).
-  doctor: '/agenda',
+  // El profesional entra a su "Vista Profesional": su jornada clínica del día.
+  doctor: '/mi-jornada',
   // El dueño/admin entra a su "Vista Dueño": pulso del negocio + su agenda.
   admin: '/inicio',
 }

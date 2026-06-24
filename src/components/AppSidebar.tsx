@@ -4,7 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
-  Calendar, CalendarClock, ChartBar, Layers, MessageSquare, PanelLeft,
+  Calendar, CalendarClock, ChartBar, Home, Layers, MessageSquare, PanelLeft,
   PanelLeftClose, Settings, ShieldCheck, UserCheck, UserCog, UserX, Users,
 } from 'lucide-react'
 import type { UserRole } from '@/types/index'
@@ -15,6 +15,17 @@ type NavItem = {
   label: string
   icon: React.ElementType
 }
+
+// "Inicio" lleva al landing propio de cada rol, DIRECTO (sin el salto por "/").
+// Recepción → /recepcion, dueño → /inicio, profesional → /mi-jornada.
+// Mantener sincronizado con LANDING_BY_ROLE de src/app/page.tsx.
+// Va destacado y primero, fuera de la lista por rol, igual en todas las pantallas.
+const HOME_HREF_BY_ROLE: Record<UserRole, string> = {
+  receptionist: '/recepcion',
+  doctor: '/mi-jornada',
+  admin: '/inicio',
+}
+const HOME_LABEL = 'Inicio'
 
 const NAV_ITEMS: Record<UserRole, NavItem[]> = {
   receptionist: [
@@ -47,6 +58,11 @@ export function AppSidebar({ role }: { role: UserRole }) {
   const pathname = usePathname()
   const items = NAV_ITEMS[role] ?? NAV_ITEMS.receptionist
 
+  // "Inicio" lleva al landing del rol y se resalta cuando estás en esa página.
+  const homeHref = HOME_HREF_BY_ROLE[role] ?? '/agenda'
+  const homeActive = pathname === homeHref || pathname.startsWith(homeHref + '/')
+  const HomeIcon = Home
+
   return (
     <>
       {/* Desktop sidebar — visible at lg (1024px) and above */}
@@ -75,6 +91,24 @@ export function AppSidebar({ role }: { role: UserRole }) {
         </div>
 
         <ul className="flex-1 flex flex-col gap-1 p-2 pt-3" role="list">
+          {/* Inicio — primero y destacado. Lleva a "/" (redirige por rol). */}
+          <li>
+            <Link
+              href={homeHref}
+              aria-current={homeActive ? 'page' : undefined}
+              className={[
+                'flex items-center gap-3 px-3 py-2.5 rounded-[8px] min-h-[44px]',
+                'text-[14px] font-semibold transition-colors duration-120',
+                homeActive
+                  ? 'bg-[var(--color-surface)] text-[var(--color-text-primary)] border-l-2 border-[var(--color-interactive)]'
+                  : 'text-[var(--color-interactive)] hover:bg-[var(--color-surface)]',
+              ].join(' ')}
+            >
+              <HomeIcon size={20} className="shrink-0" />
+              {!collapsed && <span className="truncate">{HOME_LABEL}</span>}
+            </Link>
+          </li>
+
           {items.map(({ href, label, icon: Icon }) => {
             const active = pathname === href || pathname.startsWith(href + '/')
             return (
@@ -110,6 +144,23 @@ export function AppSidebar({ role }: { role: UserRole }) {
         className="lg:hidden fixed bottom-0 inset-x-0 flex items-center justify-around
           h-14 border-t border-[var(--color-border)] bg-[var(--color-bg)] z-40"
       >
+        {/* Inicio — primero también en móvil. Lleva a "/" (redirige por rol). */}
+        <Link
+          href={homeHref}
+          aria-current={homeActive ? 'page' : undefined}
+          aria-label={HOME_LABEL}
+          className={[
+            'flex flex-col items-center gap-0.5 px-4 py-2 min-h-[44px] min-w-[44px]',
+            'text-[10px] font-semibold transition-colors duration-120',
+            homeActive
+              ? 'text-[var(--color-interactive)]'
+              : 'text-[var(--color-interactive)]',
+          ].join(' ')}
+        >
+          <HomeIcon size={22} />
+          <span>{HOME_LABEL}</span>
+        </Link>
+
         {items.slice(0, 3).map(({ href, label, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(href + '/')
           return (
