@@ -69,6 +69,7 @@ describe('POST /api/chatwoot/conversations/[conversation_id]/messages/send', () 
   afterEach(() => {
     process.env = originalEnv
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('retorna 400 si conversation_id no es un número (A-01)', async () => {
@@ -199,5 +200,109 @@ describe('POST /api/chatwoot/conversations/[conversation_id]/messages/send', () 
     expect(bodyParsed.message_type).toBe('outgoing')
     expect(bodyParsed.private).toBe(false)
     expect(bodyParsed.content).toBe('Test mensaje')
+  })
+
+  // ─── Tests multipart (A3) ─────────────────────────────────────────────────
+
+  function makeMultipartRequest(content: string, files: File[] = []) {
+    const form = new FormData()
+    if (content) form.append('content', content)
+    for (const f of files) form.append('attachments', f)
+    return new Request(
+      `http://localhost/api/chatwoot/conversations/${CONVERSATION_ID}/messages/send`,
+      {
+        method: 'POST',
+        // No setear Content-Type — FormData lo setea automáticamente
+        body: form,
+      }
+    )
+  }
+
+  it('retorna 201 al enviar multipart con texto y adjunto', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 1000 }),
+      })
+    )
+
+    const file = new File(['img'], 'photo.jpg', { type: 'image/jpeg' })
+    const res = await POST(makeMultipartRequest('Mirá esta foto', [file]), makeContext())
+    expect(res.status).toBe(201)
+    const body = await res.json()
+    expect(body).toEqual({ status: 'ok' })
+  })
+
+  it('retorna 201 al enviar multipart con solo adjunto (sin texto)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })
+    )
+
+    const file = new File(['pdf'], 'doc.pdf', { type: 'application/pdf' })
+    const res = await POST(makeMultipartRequest('', [file]), makeContext())
+    expect(res.status).toBe(201)
+  })
+
+  it('retorna 400 al enviar multipart sin texto ni adjunto', async () => {
+    const res = await POST(makeMultipartRequest('', []), makeContext())
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.error).toBe('content o adjunto requerido')
+  })
+
+  it('retorna 413 si el adjunto supera 10 MB', async () => {
+    // jsdom no preserva el .size de File al hacer formData() roundtrip, así que
+    // mockeamos request.formData() para devolver un File con .size grande.
+    const bigFile = new File(['x'], 'grande.jpg', { type: 'image/jpeg' })
+    Object.defineProperty(bigFile, 'size', { value: 11 * 1024 * 1024, configurable: true })
+
+    const req = makeMultipartRequest('texto', [bigFile])
+    vi.spyOn(req, 'formData').mockResolvedValue(
+      Object.assign(new FormData(), {
+        get: (k: string) => (k === 'content' ? 'texto' : null),
+        getAll: (k: string) => (k === 'attachments' ? [bigFile] : []),
+      }) as unknown as FormData
+    )
+
+    const res = await POST(req, makeContext())
+    expect(res.status).toBe(413)
+    const body = await res.json()
+    expect(body.error).toBe('archivo_muy_grande')
+  })
+
+  it('el envío multipart NO incluye Content-Type header manual (lo pone FormData)', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const file = new File(['img'], 'photo.jpg', { type: 'image/jpeg' })
+    await POST(makeMultipartRequest('foto', [file]), makeContext())
+
+    expect(mockFetch).toHaveBeenCalledOnce()
+    const [, options] = mockFetch.mock.calls[0] as [string, RequestInit]
+    // El header Content-Type NO debe estar seteado manualmente (lo setea FormData con el boundary)
+    const headers = options.headers as Record<string, string> | undefined
+    expect(headers?.['Content-Type']).toBeUndefined()
+  })
+
+  it('retorna 401 en multipart si no hay sesión', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null } })
+    const file = new File(['img'], 'photo.jpg', { type: 'image/jpeg' })
+    const res = await POST(makeMultipartRequest('foto', [file]), makeContext())
+    expect(res.status).toBe(401)
+  })
+
+  it('retorna 503 en multipart si faltan env vars', async () => {
+    process.env = { ...originalEnv }
+    delete process.env.CHATWOOT_BASE_URL
+    const file = new File(['img'], 'photo.jpg', { type: 'image/jpeg' })
+    const res = await POST(makeMultipartRequest('foto', [file]), makeContext())
+    expect(res.status).toBe(503)
   })
 })

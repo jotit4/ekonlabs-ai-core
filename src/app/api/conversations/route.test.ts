@@ -42,13 +42,38 @@ import { GET } from './route'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// Mock de from('patients').select().in() devolviendo los pacientes dados
-function mockPatients(patients: Array<{ phone_number: string; full_name: string }> = []) {
-  mockFrom.mockReturnValue({
-    select: vi.fn().mockReturnValue({
-      in: vi.fn().mockResolvedValue({ data: patients, error: null }),
-    }),
-  })
+// El GET ahora hace 3 llamadas a from() en paralelo vía Promise.all:
+//   1. patients → select().in()
+//   2. conversation_reads → select().in()
+//   3. conversation_resolutions → select().in()
+
+interface PatientRow { phone_number: string; full_name: string }
+interface ReadRow { phone_number: string; last_read_at: string }
+interface ResolutionRow { phone_number: string; resolved_at: string | null }
+
+const makeSelectIn = (data: unknown[]) => ({
+  select: vi.fn().mockReturnValue({
+    in: vi.fn().mockResolvedValue({ data, error: null }),
+  }),
+})
+
+// Configura mockFrom con mockReturnValueOnce en orden: patients, reads, resolutions.
+// IMPORTANTE: limpia mocks previos con mockReset antes de configurar.
+function mockFromAll(
+  patients: PatientRow[] = [],
+  reads: ReadRow[] = [],
+  resolutions: ResolutionRow[] = []
+) {
+  mockFrom.mockReset()
+  mockFrom
+    .mockReturnValueOnce(makeSelectIn(patients))
+    .mockReturnValueOnce(makeSelectIn(reads))
+    .mockReturnValueOnce(makeSelectIn(resolutions))
+}
+
+// Alias para tests que no se preocupan de reads/resolutions
+function mockPatients(patients: PatientRow[] = []) {
+  mockFromAll(patients, [], [])
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -139,6 +164,7 @@ describe('GET /api/conversations', () => {
       ],
       error: null,
     })
+    mockPatients([])
 
     const res = await GET()
 
@@ -167,6 +193,7 @@ describe('GET /api/conversations', () => {
       ],
       error: null,
     })
+    mockPatients([])
 
     const res = await GET()
     const body = await res.json()
@@ -190,6 +217,7 @@ describe('GET /api/conversations', () => {
       ],
       error: null,
     })
+    mockPatients([])
 
     const res = await GET()
 
@@ -239,6 +267,7 @@ describe('GET /api/conversations', () => {
       ],
       error: null,
     })
+    mockPatients([])
 
     const res = await GET()
     const body = await res.json()
@@ -277,7 +306,11 @@ describe('GET /api/conversations', () => {
       ],
       error: null,
     })
-    mockPatients([{ phone_number: '+5490000000001', full_name: 'Juan Pérez' }])
+    mockFromAll(
+      [{ phone_number: '+5490000000001', full_name: 'Juan Pérez' }],
+      [],
+      []
+    )
 
     const res = await GET()
     const body = await res.json()
@@ -316,6 +349,7 @@ describe('GET /api/conversations', () => {
       ],
       error: null,
     })
+    mockPatients([])
 
     const res = await GET()
     const body = await res.json()
@@ -346,5 +380,197 @@ describe('GET /api/conversations', () => {
     const res = await GET()
     const body = await res.json()
     expect(body.conversations).toEqual([])
+  })
+
+  // ─── B1 — is_unread real ──────────────────────────────────────────────────
+
+  it('B1: is_unread=true cuando last_role=user y no hay registro de lectura', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    mockRpc.mockResolvedValue({
+      data: [
+        {
+          phone_number: '+5491111111111',
+          last_content: 'Hola',
+          last_role: 'user',
+          last_created_at: '2026-06-25T10:00:00.000Z',
+          ts_status: null,
+          ts_paused_reason: null,
+          ts_updated_at: null,
+        },
+      ],
+      error: null,
+    })
+    // reads: vacío (sin lectura previa)
+    mockFromAll([], [], [])
+
+    const res = await GET()
+    const body = await res.json()
+    expect(body.conversations[0].is_unread).toBe(true)
+  })
+
+  it('B1: is_unread=false cuando last_role=assistant', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    mockRpc.mockResolvedValue({
+      data: [
+        {
+          phone_number: '+5491111111111',
+          last_content: 'Turno confirmado',
+          last_role: 'assistant',
+          last_created_at: '2026-06-25T10:00:00.000Z',
+          ts_status: null,
+          ts_paused_reason: null,
+          ts_updated_at: null,
+        },
+      ],
+      error: null,
+    })
+    mockFromAll([], [], [])
+
+    const res = await GET()
+    const body = await res.json()
+    expect(body.conversations[0].is_unread).toBe(false)
+  })
+
+  it('B1: is_unread=false cuando last_read_at es posterior al último mensaje', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    mockRpc.mockResolvedValue({
+      data: [
+        {
+          phone_number: '+5491111111111',
+          last_content: 'Hola',
+          last_role: 'user',
+          last_created_at: '2026-06-25T10:00:00.000Z',
+          ts_status: null,
+          ts_paused_reason: null,
+          ts_updated_at: null,
+        },
+      ],
+      error: null,
+    })
+    // La lectura ocurrió DESPUÉS del último mensaje → ya leído
+    mockFromAll(
+      [],
+      [{ phone_number: '+5491111111111', last_read_at: '2026-06-25T11:00:00.000Z' }],
+      []
+    )
+
+    const res = await GET()
+    const body = await res.json()
+    expect(body.conversations[0].is_unread).toBe(false)
+  })
+
+  it('B1: is_unread=true cuando last_read_at es anterior al último mensaje', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    mockRpc.mockResolvedValue({
+      data: [
+        {
+          phone_number: '+5491111111111',
+          last_content: 'Nuevo mensaje',
+          last_role: 'user',
+          last_created_at: '2026-06-25T12:00:00.000Z',
+          ts_status: null,
+          ts_paused_reason: null,
+          ts_updated_at: null,
+        },
+      ],
+      error: null,
+    })
+    // La lectura ocurrió ANTES del último mensaje → no leído
+    mockFromAll(
+      [],
+      [{ phone_number: '+5491111111111', last_read_at: '2026-06-25T10:00:00.000Z' }],
+      []
+    )
+
+    const res = await GET()
+    const body = await res.json()
+    expect(body.conversations[0].is_unread).toBe(true)
+  })
+
+  // ─── B2 — is_resolved override ────────────────────────────────────────────
+
+  it('B2: status=resolved cuando existe resolución y no llegó mensaje posterior', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    mockRpc.mockResolvedValue({
+      data: [
+        {
+          phone_number: '+5491111111111',
+          last_content: 'Gracias',
+          last_role: 'user',
+          last_created_at: '2026-06-25T10:00:00.000Z',
+          ts_status: 'active',
+          ts_paused_reason: null,
+          ts_updated_at: null,
+        },
+      ],
+      error: null,
+    })
+    // resolved_at es posterior al último mensaje → está resuelta
+    mockFromAll(
+      [],
+      [],
+      [{ phone_number: '+5491111111111', resolved_at: '2026-06-25T11:00:00.000Z' }]
+    )
+
+    const res = await GET()
+    const body = await res.json()
+    expect(body.conversations[0].status).toBe('resolved')
+  })
+
+  it('B2: auto-reabre si llegó un mensaje DESPUÉS de la resolución', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    mockRpc.mockResolvedValue({
+      data: [
+        {
+          phone_number: '+5491111111111',
+          last_content: 'Quiero otro turno',
+          last_role: 'user',
+          // El último mensaje es POSTERIOR a la resolución
+          last_created_at: '2026-06-25T13:00:00.000Z',
+          ts_status: 'active',
+          ts_paused_reason: null,
+          ts_updated_at: null,
+        },
+      ],
+      error: null,
+    })
+    mockFromAll(
+      [],
+      [],
+      [{ phone_number: '+5491111111111', resolved_at: '2026-06-25T11:00:00.000Z' }]
+    )
+
+    const res = await GET()
+    const body = await res.json()
+    // Auto-reabre → status vuelve a derivarse normalmente (active → ai_active)
+    expect(body.conversations[0].status).toBe('ai_active')
+  })
+
+  it('B2: resolved_at=null en la tabla no override el status', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    mockRpc.mockResolvedValue({
+      data: [
+        {
+          phone_number: '+5491111111111',
+          last_content: 'Hola',
+          last_role: 'user',
+          last_created_at: '2026-06-25T10:00:00.000Z',
+          ts_status: 'active',
+          ts_paused_reason: null,
+          ts_updated_at: null,
+        },
+      ],
+      error: null,
+    })
+    // resolved_at=null → reabierta, no debe override
+    mockFromAll(
+      [],
+      [],
+      [{ phone_number: '+5491111111111', resolved_at: null }]
+    )
+
+    const res = await GET()
+    const body = await res.json()
+    expect(body.conversations[0].status).toBe('ai_active')
   })
 })

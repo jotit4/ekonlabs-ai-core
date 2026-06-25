@@ -8,16 +8,53 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
 }))
 
-// Mock @tanstack/react-query
+// Mock @tanstack/react-query — useQueryClient lo usa use-conversation-thread-realtime
 const mockUseQuery = vi.fn()
 vi.mock('@tanstack/react-query', () => ({
   useQuery: (options: unknown) => mockUseQuery(options),
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
 }))
 
 // Mock useChatwootMessages
 const mockUseChatwootMessages = vi.fn()
 vi.mock('@/hooks/use-chatwoot-messages', () => ({
   useChatwootMessages: (id: string) => mockUseChatwootMessages(id),
+}))
+
+// Mock hooks que crean el cliente Supabase del browser (sin env en tests) —
+// se aíslan igual que los componentes hijos.
+vi.mock('@/hooks/use-conversation-thread-realtime', () => ({
+  useConversationThreadRealtime: () => {},
+}))
+vi.mock('@/hooks/use-user-role', () => ({
+  useUserRole: () => 'admin',
+}))
+vi.mock('@/hooks/use-current-user', () => ({
+  useCurrentUser: () => ({ user: { fullName: 'Test User' } }),
+}))
+
+// Mock hooks nuevos del panel (B): marcar leído + id del usuario actual
+vi.mock('@/hooks/use-mark-read', () => ({
+  useMarkRead: () => ({ markRead: vi.fn(), isPending: false }),
+}))
+vi.mock('@/hooks/use-current-user-id', () => ({
+  useCurrentUserId: () => 'user-1',
+}))
+
+// Mock componentes nuevos de la columna derecha (B): resolver + notas
+vi.mock('@/components/conversaciones/ResolveControl', () => ({
+  ResolveControl: ({ phone, conversationStatus }: { phone: string; conversationStatus: string }) => (
+    <div data-testid="resolve-control" data-phone={phone} data-status={conversationStatus}>
+      ResolveControl
+    </div>
+  ),
+}))
+vi.mock('@/components/conversaciones/ConversationNotes', () => ({
+  ConversationNotes: ({ phone }: { phone: string }) => (
+    <div data-testid="conversation-notes" data-phone={phone}>
+      ConversationNotes
+    </div>
+  ),
 }))
 
 // Mock ConversationThread

@@ -1,14 +1,19 @@
 'use client'
 
+import { useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { useChatwootMessages } from '@/hooks/use-chatwoot-messages'
 import { useConversationThreadRealtime } from '@/hooks/use-conversation-thread-realtime'
 import { useUserRole } from '@/hooks/use-user-role'
 import { useCurrentUser } from '@/hooks/use-current-user'
+import { useMarkRead } from '@/hooks/use-mark-read'
+import { useCurrentUserId } from '@/hooks/use-current-user-id'
 import { ConversationThread } from '@/components/conversaciones/ConversationThread'
 import { PatientContextPanel } from '@/components/conversaciones/PatientContextPanel'
 import { TakeoverBar } from '@/components/conversaciones/TakeoverBar'
+import { ResolveControl } from '@/components/conversaciones/ResolveControl'
+import { ConversationNotes } from '@/components/conversaciones/ConversationNotes'
 import { deriveControllerName } from '@/lib/conversaciones/thread-dates'
 import type { ConversationSummary, ConversationStatus, ConfidenceLevel } from '@/types/conversations'
 
@@ -31,6 +36,7 @@ export default function ConversationThreadPage() {
   // el 409. Fallback: el nombre del usuario actual (recién tomó control, aún sin
   // mensajes propios en el hilo).
   const { user: currentUser } = useCurrentUser()
+  const currentUserId = useCurrentUserId()
   const controlledBy = deriveControllerName(messages) ?? undefined
 
   // Suscribir reactivamente a la lista de conversaciones para detectar cambios de estado
@@ -47,6 +53,15 @@ export default function ConversationThreadPage() {
   const conversation = conversations?.find((c) => c.phone_number === conversationId)
   const conversationStatus: ConversationStatus = conversation?.status ?? 'ai_active'
   const confidenceLevel: ConfidenceLevel = conversation?.confidence_level ?? 'medium'
+
+  // B1: marcar como leída al abrir la conversación y cuando llegan mensajes nuevos.
+  const { markRead } = useMarkRead()
+  useEffect(() => {
+    if (conversationId) {
+      markRead(conversationId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, messages.length])
 
   // Estado vacío cuando id es inválido
   if (!conversationId) {
@@ -110,8 +125,32 @@ export default function ConversationThreadPage() {
         />
       </section>
 
-      {/* Columna 2: Panel de contexto capturado por el agente */}
-      <PatientContextPanel phone={conversationId} />
+      {/* Columna 2: Panel de contexto + controles de resolución + notas */}
+      <section
+        style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column' }}
+        aria-label="Panel lateral"
+      >
+        {/* PatientContextPanel ocupa la parte superior */}
+        <PatientContextPanel phone={conversationId} />
+
+        {/* B2: Resolver / Reabrir — debajo del contexto, fuera de TakeoverBar */}
+        {conversationId && (
+          <div style={{ padding: '12px 16px', borderTop: '1px solid var(--color-border)' }}>
+            <ResolveControl
+              phone={conversationId}
+              conversationStatus={conversationStatus}
+            />
+          </div>
+        )}
+
+        {/* B3: Notas privadas internas */}
+        {conversationId && currentUserId && (
+          <ConversationNotes
+            phone={conversationId}
+            currentUserId={currentUserId}
+          />
+        )}
+      </section>
     </main>
   )
 }

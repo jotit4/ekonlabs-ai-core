@@ -270,4 +270,20 @@ describe('ConversationListSidebar', () => {
 
     expect(screen.getByText('No hay resultados para tu búsqueda')).toBeInTheDocument()
   })
+
+  // ─── B1: contador de no leídos ───────────────────────────────────────────────
+
+  it('B1: muestra contador "1 sin leer" cuando hay una conversación no leída', () => {
+    mockUseQuery.mockReturnValue({ data: CONVERSATIONS, isLoading: false, isError: false })
+    // CONVERSATIONS tiene c1 con is_unread: true
+    render(<ConversationListSidebar />)
+    expect(screen.getByText(/1 sin leer/i)).toBeInTheDocument()
+  })
+
+  it('B1: NO muestra contador cuando todas las conversaciones están leídas', () => {
+    const allRead = CONVERSATIONS.map((c) => ({ ...c, is_unread: false }))
+    mockUseQuery.mockReturnValue({ data: allRead, isLoading: false, isError: false })
+    render(<ConversationListSidebar />)
+    expect(screen.queryByText(/sin leer/i)).not.toBeInTheDocument()
+  })
 })

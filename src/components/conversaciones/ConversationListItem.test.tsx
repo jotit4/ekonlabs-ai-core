@@ -129,6 +129,28 @@ describe('ConversationListItem', () => {
     expect(nameEl).toHaveStyle({ fontWeight: 400 })
   })
 
+  it('is_unread true → muestra el punto azul de no leído', () => {
+    render(
+      <ConversationListItem
+        conversation={makeConversation({ is_unread: true })}
+        onSelect={onSelect}
+      />
+    )
+    const dot = screen.getByRole('status', { name: /no leído/i })
+    expect(dot).toBeInTheDocument()
+    expect(dot).toHaveStyle({ backgroundColor: '#0071e3' })
+  })
+
+  it('is_unread false → NO muestra el punto azul de no leído', () => {
+    render(
+      <ConversationListItem
+        conversation={makeConversation({ is_unread: false })}
+        onSelect={onSelect}
+      />
+    )
+    expect(screen.queryByRole('status', { name: /no leído/i })).not.toBeInTheDocument()
+  })
+
   it('timestamp de HOY muestra formato HH:mm', () => {
     // Un mensaje de hace 1 hora cae siempre en "hoy" → debe formatearse como HH:mm
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()

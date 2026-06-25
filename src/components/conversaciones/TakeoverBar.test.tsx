@@ -386,4 +386,118 @@ describe('TakeoverBar', () => {
     )
     expect(screen.getByLabelText('Liberar al agente')).toBeDisabled()
   })
+
+  // ─── Tests de adjuntos (Track A — A3) ────────────────────────────────────────
+
+  it('muestra el botón de adjuntar cuando status es human_takeover', () => {
+    render(
+      <TakeoverBar
+        phone="+5491111111111"
+        conversationStatus="human_takeover"
+      />
+    )
+    // El botón (visible) tiene aria-label "Adjuntar archivo"; el input oculto tiene "Seleccionar archivo adjunto"
+    expect(screen.getByRole('button', { name: 'Adjuntar archivo' })).toBeInTheDocument()
+  })
+
+  it('NO muestra el botón de adjuntar cuando status es ai_active', () => {
+    render(
+      <TakeoverBar
+        phone="+5491111111111"
+        conversationStatus="ai_active"
+      />
+    )
+    // En ai_active no hay compose area
+    expect(screen.queryByRole('button', { name: 'Adjuntar archivo' })).not.toBeInTheDocument()
+  })
+
+  it('botón "Enviar" está habilitado cuando hay solo un adjunto (sin texto)', () => {
+    render(
+      <TakeoverBar
+        phone="+5491111111111"
+        conversationStatus="human_takeover"
+      />
+    )
+    // Simular selección de archivo vía el input oculto (aria-label del input)
+    const fileInput = screen.getByLabelText('Seleccionar archivo adjunto') as HTMLInputElement
+    const file = new File(['content'], 'imagen.jpg', { type: 'image/jpeg' })
+    Object.defineProperty(fileInput, 'files', { value: [file], configurable: true })
+    fireEvent.change(fileInput)
+
+    const sendButton = screen.getByLabelText('Enviar mensaje')
+    expect(sendButton).not.toBeDisabled()
+  })
+
+  it('muestra el nombre del archivo adjunto como preview tras seleccionarlo', () => {
+    render(
+      <TakeoverBar
+        phone="+5491111111111"
+        conversationStatus="human_takeover"
+      />
+    )
+    const fileInput = screen.getByLabelText('Seleccionar archivo adjunto') as HTMLInputElement
+    const file = new File(['content'], 'documento.pdf', { type: 'application/pdf' })
+    Object.defineProperty(fileInput, 'files', { value: [file], configurable: true })
+    fireEvent.change(fileInput)
+
+    expect(screen.getByText('documento.pdf')).toBeInTheDocument()
+  })
+
+  it('botón "Quitar adjunto" elimina el preview', () => {
+    render(
+      <TakeoverBar
+        phone="+5491111111111"
+        conversationStatus="human_takeover"
+      />
+    )
+    const fileInput = screen.getByLabelText('Seleccionar archivo adjunto') as HTMLInputElement
+    const file = new File(['content'], 'video.mp4', { type: 'video/mp4' })
+    Object.defineProperty(fileInput, 'files', { value: [file], configurable: true })
+    fireEvent.change(fileInput)
+
+    expect(screen.getByText('video.mp4')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('Quitar adjunto'))
+    expect(screen.queryByText('video.mp4')).not.toBeInTheDocument()
+  })
+
+  it('muestra error cuando el archivo supera 10 MB', () => {
+    render(
+      <TakeoverBar
+        phone="+5491111111111"
+        conversationStatus="human_takeover"
+      />
+    )
+    const fileInput = screen.getByLabelText('Seleccionar archivo adjunto') as HTMLInputElement
+    // Crear archivo > 10 MB
+    const bigFile = new File(['x'.repeat(1)], 'grande.jpg', { type: 'image/jpeg' })
+    Object.defineProperty(bigFile, 'size', { value: 11 * 1024 * 1024 })
+    Object.defineProperty(fileInput, 'files', { value: [bigFile], configurable: true })
+    fireEvent.change(fileInput)
+
+    expect(screen.getByText('El archivo supera el límite de 10 MB.')).toBeInTheDocument()
+    // El preview no debe mostrarse
+    expect(screen.queryByText('grande.jpg')).not.toBeInTheDocument()
+  })
+
+  it('el botón "Enviar" llama a sendMessage con adjunto cuando hay archivo seleccionado', () => {
+    render(
+      <TakeoverBar
+        phone="+5491111111111"
+        conversationStatus="human_takeover"
+      />
+    )
+    const fileInput = screen.getByLabelText('Seleccionar archivo adjunto') as HTMLInputElement
+    const file = new File(['content'], 'imagen.jpg', { type: 'image/jpeg' })
+    Object.defineProperty(fileInput, 'files', { value: [file], configurable: true })
+    fireEvent.change(fileInput)
+
+    // Agregar texto
+    const textarea = screen.getByLabelText('Escribí tu mensaje')
+    fireEvent.change(textarea, { target: { value: 'Mirá esta imagen' } })
+
+    fireEvent.click(screen.getByLabelText('Enviar mensaje'))
+
+    expect(mockSendMessage).toHaveBeenCalledWith('Mirá esta imagen', [file])
+  })
 })

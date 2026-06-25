@@ -14,6 +14,16 @@ interface ConversationOverviewRow {
   ts_updated_at: string | null
 }
 
+interface ConversationReadRow {
+  phone_number: string
+  last_read_at: string
+}
+
+interface ConversationResolutionRow {
+  phone_number: string
+  resolved_at: string | null
+}
+
 // ─── Helpers de derivación de estado ─────────────────────────────────────────
 
 function deriveStatus(status: string, pausedReason: string | null): ConversationStatus {
@@ -93,22 +103,60 @@ export async function GET() {
   const phoneNumbers = visibleRows.map((row) => row.phone_number)
 
   // 3. Obtener nombres de pacientes por phone_number (RLS filtra por tenant — AR14)
-  const { data: patients } = await supabase
-    .from('patients')
-    .select('phone_number, full_name')
-    .in('phone_number', phoneNumbers)
+  // 4. Obtener reads del usuario actual (RLS filtra a user_id = auth.uid())
+  // 5. Obtener resoluciones del tenant (RLS filtra por tenant)
+  const [patientsResult, readsResult, resolutionsResult] = await Promise.all([
+    supabase
+      .from('patients')
+      .select('phone_number, full_name')
+      .in('phone_number', phoneNumbers),
+    supabase
+      .from('conversation_reads')
+      .select('phone_number, last_read_at')
+      .in('phone_number', phoneNumbers),
+    supabase
+      .from('conversation_resolutions')
+      .select('phone_number, resolved_at')
+      .in('phone_number', phoneNumbers),
+  ])
 
   const nameByPhone = new Map<string, string>(
-    (patients ?? []).map((p) => [p.phone_number, p.full_name])
+    (patientsResult.data ?? []).map((p) => [p.phone_number, p.full_name])
   )
 
-  // 4. Construir ConversationSummary[]. Si no hay thread_state (ts_status === null)
-  // el default es status='active' / paused_reason=null → deriveStatus → ai_active.
+  const readByPhone = new Map<string, string>(
+    (readsResult.data ?? [] as ConversationReadRow[]).map((r: ConversationReadRow) => [r.phone_number, r.last_read_at])
+  )
+
+  const resolvedByPhone = new Map<string, string | null>(
+    (resolutionsResult.data ?? [] as ConversationResolutionRow[]).map((r: ConversationResolutionRow) => [r.phone_number, r.resolved_at])
+  )
+
+  // 6. Construir ConversationSummary[].
   const conversations: ConversationSummary[] = visibleRows.map((row) => {
     const status = row.ts_status ?? 'active'
     const pausedReason = row.ts_paused_reason ?? null
-    const convStatus = deriveStatus(status, pausedReason)
+    let convStatus = deriveStatus(status, pausedReason)
     const preview = row.last_content?.slice(0, 80) ?? ''
+
+    // B2: override de status a 'resolved' si la resolución existe y no llegó
+    // un mensaje posterior (auto-reabre al llegar nuevo mensaje del paciente).
+    const resolvedAt = resolvedByPhone.get(row.phone_number)
+    if (
+      resolvedAt != null &&
+      resolvedAt !== '' &&
+      new Date(row.last_created_at).getTime() <= new Date(resolvedAt).getTime()
+    ) {
+      convStatus = 'resolved'
+    }
+
+    // B1: is_unread = último mensaje es del paciente AND
+    //     (no hay registro de lectura O la lectura es anterior al último mensaje)
+    const lastReadAt = readByPhone.get(row.phone_number)
+    const isUnread =
+      row.last_role === 'user' &&
+      (lastReadAt === undefined ||
+        new Date(row.last_created_at).getTime() > new Date(lastReadAt).getTime())
 
     return {
       id: row.phone_number,
@@ -118,7 +166,7 @@ export async function GET() {
       confidence_level: deriveConfidence(pausedReason),
       last_message_preview: preview,
       last_message_at: row.last_created_at,
-      is_unread: false, // MVP: sin tracking de leídos
+      is_unread: isUnread,
     }
   })
 

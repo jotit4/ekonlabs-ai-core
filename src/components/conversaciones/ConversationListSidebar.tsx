@@ -127,6 +127,8 @@ export function ConversationListSidebar() {
     PAUSED_STATUSES.includes(c.status)
   ).length
 
+  const unreadCount = conversations.filter((c) => c.is_unread).length
+
   // Filtro por estado + búsqueda de texto, ambos client-side sobre lo ya cargado.
   const visibleConversations = conversations.filter(
     (c) => matchesFilter(c, filterMode) && matchesSearch(c, searchQuery)
@@ -157,7 +159,7 @@ export function ConversationListSidebar() {
     >
       {!isConnected && <RealtimeDegradationBanner />}
 
-      {/* Buscador de texto — filtra por nombre del paciente o teléfono (client-side) */}
+      {/* Buscador de texto + contador de no leídos */}
       <div
         style={{
           padding: '10px 12px 6px',
@@ -182,6 +184,30 @@ export function ConversationListSidebar() {
             outline: 'none',
           }}
         />
+        {unreadCount > 0 && (
+          <p
+            aria-live="polite"
+            style={{
+              margin: '6px 0 0',
+              fontSize: 12,
+              color: '#0071e3',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+            }}
+          >
+            <span
+              style={{
+                display: 'inline-block',
+                width: 7,
+                height: 7,
+                borderRadius: '50%',
+                backgroundColor: '#0071e3',
+              }}
+            />
+            {unreadCount} sin leer
+          </p>
+        )}
       </div>
 
       {/* Filtro por estado: Todas / Requiere atención / En control humano / Resueltas */}

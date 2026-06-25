@@ -142,20 +142,19 @@ function MessageBubble({
           message.content
         ) : null}
 
-        {/* Audio attachment — renderizar si hay adjunto de tipo audio */}
-        {message.attachments?.some((a) => a.file_type === 'audio') && (
-          <div style={{ marginTop: message.content ? 8 : 0 }}>
-            {message.attachments
-              .filter((a) => a.file_type === 'audio')
-              .map((a) => {
-                // Usar data_url directamente si es un data URI (no tiene restricciones CORS).
-                // Para URLs externas de Chatwoot, proxear via /api/media/audio para evitar
-                // MEDIA_ELEMENT_ERROR code 4 (CORS/CSP cross-origin media block en el browser).
-                const rawSrc = a.data_url ?? a.file_url
-                const src =
-                  rawSrc.startsWith('data:')
-                    ? rawSrc
-                    : `/api/media/audio?url=${encodeURIComponent(rawSrc)}`
+        {/* Adjuntos — audio, imagen, video, documento */}
+        {message.attachments && message.attachments.length > 0 && (
+          <div style={{ marginTop: message.content ? 8 : 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {message.attachments.map((a) => {
+              // Src helper: data URIs se usan directamente; URLs externas se proxean.
+              // Audio usa /api/media/audio; el resto usa /api/media/file.
+              const rawSrc = a.data_url ?? a.file_url
+              const isDataUri = rawSrc.startsWith('data:')
+
+              if (a.file_type === 'audio') {
+                const src = isDataUri
+                  ? rawSrc
+                  : `/api/media/audio?url=${encodeURIComponent(rawSrc)}`
                 return (
                   <audio
                     key={a.id}
@@ -166,7 +165,92 @@ function MessageBubble({
                     Tu navegador no soporta reproducción de audio.
                   </audio>
                 )
-              })}
+              }
+
+              if (a.file_type === 'image') {
+                const src = isDataUri
+                  ? rawSrc
+                  : `/api/media/file?url=${encodeURIComponent(rawSrc)}`
+                return (
+                  <a
+                    key={a.id}
+                    href={src}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label="Ver imagen en tamaño completo"
+                    style={{ display: 'block' }}
+                  >
+                    <img
+                      src={src}
+                      alt="Imagen adjunta"
+                      style={{
+                        maxWidth: '100%',
+                        borderRadius: 8,
+                        display: 'block',
+                        cursor: 'pointer',
+                      }}
+                    />
+                  </a>
+                )
+              }
+
+              if (a.file_type === 'video') {
+                const src = isDataUri
+                  ? rawSrc
+                  : `/api/media/file?url=${encodeURIComponent(rawSrc)}`
+                return (
+                  <video
+                    key={a.id}
+                    controls
+                    src={src}
+                    style={{ maxWidth: '100%', borderRadius: 8, display: 'block' }}
+                    aria-label="Video adjunto"
+                  >
+                    Tu navegador no soporta reproducción de video.
+                  </video>
+                )
+              }
+
+              // file / tipo desconocido — chip de descarga
+              const src = isDataUri
+                ? rawSrc
+                : `/api/media/file?url=${encodeURIComponent(rawSrc)}`
+              const label = a.extension ? `Documento .${a.extension}` : 'Documento adjunto'
+              return (
+                <a
+                  key={a.id}
+                  href={src}
+                  target="_blank"
+                  rel="noreferrer"
+                  download
+                  aria-label={`Descargar ${label}`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '6px 10px',
+                    borderRadius: 8,
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-surface)',
+                    color: 'var(--color-interactive)',
+                    fontSize: 13,
+                    textDecoration: 'none',
+                    maxWidth: '100%',
+                  }}
+                >
+                  <span aria-hidden="true" style={{ fontSize: 16 }}>📄</span>
+                  <span
+                    style={{
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {label}
+                  </span>
+                </a>
+              )
+            })}
           </div>
         )}
       </div>

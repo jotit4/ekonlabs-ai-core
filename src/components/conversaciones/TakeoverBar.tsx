@@ -6,6 +6,9 @@ import { useSendMessage } from '@/hooks/use-send-message'
 import { useRelease } from '@/hooks/use-release'
 import type { ConversationStatus, ConfidenceLevel } from '@/types/conversations'
 
+// Límite de tamaño para adjuntos (debe coincidir con el de la route)
+const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
+
 interface TakeoverBarProps {
   phone: string
   conversationStatus: ConversationStatus
@@ -37,6 +40,10 @@ export function TakeoverBar({
   const [messageText, setMessageText] = useState('')
   const { sendMessage, isPending: isPendingSend, isError: isSendError, reset: resetSend } = useSendMessage(phone)
 
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [attachedFile, setAttachedFile] = useState<File | null>(null)
+  const [fileError, setFileError] = useState<string | null>(null)
+
   // Foco automático al textarea cuando se toma control (UX-DR22)
   useEffect(() => {
     if (conversationStatus === 'human_takeover') {
@@ -44,11 +51,43 @@ export function TakeoverBar({
     }
   }, [conversationStatus])
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null
+    setFileError(null)
+    if (!file) {
+      setAttachedFile(null)
+      return
+    }
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      setFileError('El archivo supera el límite de 10 MB.')
+      setAttachedFile(null)
+      // Resetear el input para permitir volver a elegir
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
+    setAttachedFile(file)
+  }
+
+  const handleRemoveFile = () => {
+    setAttachedFile(null)
+    setFileError(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
   const handleSend = () => {
-    if (!messageText.trim() || isPendingSend) return
+    const hasText = messageText.trim().length > 0
+    const hasFile = attachedFile !== null
+    if ((!hasText && !hasFile) || isPendingSend) return
     lastMessageRef.current = messageText
-    sendMessage(messageText)
+    if (hasFile) {
+      sendMessage(messageText, [attachedFile])
+    } else {
+      sendMessage(messageText)
+    }
     setMessageText('')
+    setAttachedFile(null)
+    setFileError(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
     textareaRef.current?.focus()
   }
 
@@ -125,7 +164,100 @@ export function TakeoverBar({
 
         {/* Compose area (Story 4.6 activa el envío) */}
         <div style={{ padding: '10px 16px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {/* Preview del adjunto seleccionado */}
+          {attachedFile && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '6px 10px',
+                borderRadius: 8,
+                background: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+                fontSize: 13,
+              }}
+            >
+              <span aria-hidden="true">📎</span>
+              <span
+                style={{
+                  flex: 1,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  color: 'var(--color-text-primary)',
+                }}
+              >
+                {attachedFile.name}
+              </span>
+              <button
+                type="button"
+                onClick={handleRemoveFile}
+                aria-label="Quitar adjunto"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '2px 4px',
+                  color: 'var(--color-text-secondary)',
+                  fontSize: 14,
+                  lineHeight: 1,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {/* Error de tamaño de archivo */}
+          {fileError && (
+            <div
+              role="alert"
+              style={{
+                fontSize: 12,
+                color: 'var(--color-status-alert)',
+                padding: '2px 0',
+              }}
+            >
+              {fileError}
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+            {/* Input file oculto */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,application/pdf,video/*"
+              aria-label="Seleccionar archivo adjunto"
+              onChange={handleFileChange}
+              disabled={isPendingSend}
+              style={{ display: 'none' }}
+            />
+
+            {/* Botón de adjuntar — aria-label distinto del input para evitar ambigüedad */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isPendingSend}
+              aria-label="Adjuntar archivo"
+              title="Adjuntar imagen, PDF o video (máx. 10 MB)"
+              style={{
+                background: 'none',
+                border: '1px solid var(--color-border)',
+                borderRadius: 8,
+                padding: '8px 10px',
+                cursor: isPendingSend ? 'not-allowed' : 'pointer',
+                fontSize: 16,
+                color: 'var(--color-text-secondary)',
+                opacity: isPendingSend ? 0.4 : 1,
+                lineHeight: 1,
+                flexShrink: 0,
+              }}
+            >
+              📎
+            </button>
+
             <textarea
               ref={textareaRef}
               value={messageText}
@@ -150,7 +282,7 @@ export function TakeoverBar({
             />
             <button
               onClick={handleSend}
-              disabled={!messageText.trim() || isPendingSend}
+              disabled={(!messageText.trim() && !attachedFile) || isPendingSend}
               aria-label="Enviar mensaje"
               style={{
                 background: 'var(--color-interactive)',
@@ -160,8 +292,8 @@ export function TakeoverBar({
                 padding: '8px 14px',
                 fontSize: 13,
                 fontWeight: 500,
-                opacity: !messageText.trim() || isPendingSend ? 0.4 : 1,
-                cursor: !messageText.trim() || isPendingSend ? 'not-allowed' : 'pointer',
+                opacity: ((!messageText.trim() && !attachedFile) || isPendingSend) ? 0.4 : 1,
+                cursor: ((!messageText.trim() && !attachedFile) || isPendingSend) ? 'not-allowed' : 'pointer',
               }}
             >
               {isPendingSend ? 'Enviando...' : 'Enviar'}

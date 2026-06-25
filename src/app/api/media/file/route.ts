@@ -1,7 +1,9 @@
-// Proxy server-side para audios de Chatwoot.
-// El browser no puede cargar directamente las URLs de Chatwoot
-// (MEDIA_ELEMENT_ERROR code 4 — CORS/CSP cross-origin media block).
-// Esta route fetchea el audio desde Node.js (sin restricciones CORS) y lo streamea al browser.
+// Proxy server-side genérico para media de Chatwoot (imágenes, video, PDF).
+// El browser no puede cargar directamente URLs de Chatwoot por CORS/CSP.
+// Esta route fetchea el recurso desde Node.js (sin restricciones CORS) y lo streamea al browser.
+//
+// Seguridad: solo https + allowlist de hosts derivada de CHATWOOT_BASE_URL.
+// Mismo patrón que /api/media/audio (helper compartido).
 
 import { buildAllowedMediaHosts } from '@/lib/media/allowed-hosts'
 
@@ -22,17 +24,18 @@ export async function GET(request: Request) {
     return new Response('Invalid url param', { status: 400 })
   }
 
-  // 3. Seguridad: solo proxear URLs de hosts permitidos (derivados de CHATWOOT_BASE_URL)
-  if (!buildAllowedMediaHosts().has(targetUrl.hostname)) {
-    return new Response('Forbidden: host not allowed', { status: 403 })
-  }
-
-  // 4. Solo https
+  // 3. Solo https
   if (targetUrl.protocol !== 'https:') {
     return new Response('Forbidden: only https allowed', { status: 403 })
   }
 
-  // 5. Fetchear el audio server-side (Node.js no tiene restricciones CORS)
+  // 4. Seguridad: solo proxear URLs de hosts permitidos
+  const allowedHosts = buildAllowedMediaHosts()
+  if (!allowedHosts.has(targetUrl.hostname)) {
+    return new Response('Forbidden: host not allowed', { status: 403 })
+  }
+
+  // 5. Fetchear el recurso server-side (Node.js no tiene restricciones CORS)
   try {
     const rangeHeader = request.headers.get('range')
 
@@ -53,7 +56,8 @@ export async function GET(request: Request) {
     // 6. Construir los headers de respuesta — pasar Content-Type y headers de rango
     const responseHeaders = new Headers()
 
-    const contentType = upstream.headers.get('content-type') ?? 'audio/ogg'
+    // Content-type agnóstico — usar el que devuelve el upstream; fallback a octet-stream
+    const contentType = upstream.headers.get('content-type') ?? 'application/octet-stream'
     responseHeaders.set('content-type', contentType)
 
     const contentLength = upstream.headers.get('content-length')
@@ -65,7 +69,7 @@ export async function GET(request: Request) {
     const acceptRanges = upstream.headers.get('accept-ranges')
     if (acceptRanges) responseHeaders.set('accept-ranges', acceptRanges)
 
-    // Cache corto — el audio no cambia pero no queremos caché indefinida
+    // Cache corto — el recurso no cambia pero no queremos caché indefinida
     responseHeaders.set('cache-control', 'private, max-age=3600')
 
     return new Response(upstream.body, {

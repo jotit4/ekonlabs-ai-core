@@ -183,6 +183,120 @@ describe('ConversationThread', () => {
     expect(container.querySelector('audio')).not.toBeInTheDocument()
   })
 
+  // ── Adjuntos A1: imagen, video, documento ─────────────────────────────────
+
+  it('renderiza <img> con proxy cuando el attachment es de tipo image', () => {
+    const msg = makeMessage({
+      content: '',
+      attachments: [
+        { id: 20, file_type: 'image', file_url: 'https://example.com/photo.jpg' },
+      ],
+    })
+    const { container } = render(<ConversationThread messages={[msg]} isConnected={true} />)
+    const img = container.querySelector('img')
+    expect(img).toBeInTheDocument()
+    expect(img).toHaveAttribute(
+      'src',
+      '/api/media/file?url=' + encodeURIComponent('https://example.com/photo.jpg')
+    )
+    expect(img).toHaveAttribute('alt', 'Imagen adjunta')
+  })
+
+  it('la imagen está envuelta en un <a target="_blank"> para ver en tamaño completo', () => {
+    const msg = makeMessage({
+      content: '',
+      attachments: [
+        { id: 21, file_type: 'image', file_url: 'https://example.com/photo.jpg' },
+      ],
+    })
+    const { container } = render(<ConversationThread messages={[msg]} isConnected={true} />)
+    const link = container.querySelector('a[target="_blank"]')
+    expect(link).toBeInTheDocument()
+    expect(link).toHaveAttribute('rel', 'noreferrer')
+  })
+
+  it('usa data_url directamente para imágenes con data URI (sin proxy)', () => {
+    const msg = makeMessage({
+      content: '',
+      attachments: [
+        {
+          id: 22,
+          file_type: 'image',
+          file_url: 'https://example.com/photo.jpg',
+          data_url: 'data:image/jpeg;base64,abc',
+        },
+      ],
+    })
+    const { container } = render(<ConversationThread messages={[msg]} isConnected={true} />)
+    const img = container.querySelector('img')
+    expect(img).toHaveAttribute('src', 'data:image/jpeg;base64,abc')
+  })
+
+  it('renderiza <video controls> con proxy cuando el attachment es de tipo video', () => {
+    const msg = makeMessage({
+      content: '',
+      attachments: [
+        { id: 30, file_type: 'video', file_url: 'https://example.com/video.mp4' },
+      ],
+    })
+    const { container } = render(<ConversationThread messages={[msg]} isConnected={true} />)
+    const video = container.querySelector('video')
+    expect(video).toBeInTheDocument()
+    expect(video).toHaveAttribute(
+      'src',
+      '/api/media/file?url=' + encodeURIComponent('https://example.com/video.mp4')
+    )
+    expect(video).toHaveAttribute('controls')
+    expect(video).toHaveAttribute('aria-label', 'Video adjunto')
+  })
+
+  it('renderiza chip de descarga para attachment de tipo file (PDF)', () => {
+    const msg = makeMessage({
+      content: '',
+      attachments: [
+        { id: 40, file_type: 'file', file_url: 'https://example.com/report.pdf', extension: 'pdf' },
+      ],
+    })
+    const { container } = render(<ConversationThread messages={[msg]} isConnected={true} />)
+    // Debe existir un link de descarga
+    const link = container.querySelector('a[download]')
+    expect(link).toBeInTheDocument()
+    expect(link).toHaveAttribute(
+      'href',
+      '/api/media/file?url=' + encodeURIComponent('https://example.com/report.pdf')
+    )
+    expect(link).toHaveAttribute('target', '_blank')
+    // Label incluye la extensión
+    expect(screen.getByText('Documento .pdf')).toBeInTheDocument()
+  })
+
+  it('renderiza chip de descarga para tipo desconocido sin extensión', () => {
+    const msg = makeMessage({
+      content: '',
+      attachments: [
+        { id: 41, file_type: 'unknown_type', file_url: 'https://example.com/file.bin' },
+      ],
+    })
+    const { container } = render(<ConversationThread messages={[msg]} isConnected={true} />)
+    const link = container.querySelector('a[download]')
+    expect(link).toBeInTheDocument()
+    expect(screen.getByText('Documento adjunto')).toBeInTheDocument()
+  })
+
+  it('renderiza varios adjuntos de distintos tipos en un solo mensaje', () => {
+    const msg = makeMessage({
+      content: 'Adjuntos varios',
+      attachments: [
+        { id: 50, file_type: 'image', file_url: 'https://example.com/img.jpg' },
+        { id: 51, file_type: 'audio', file_url: 'https://example.com/audio.ogg' },
+      ],
+    })
+    const { container } = render(<ConversationThread messages={[msg]} isConnected={true} />)
+    expect(container.querySelector('img')).toBeInTheDocument()
+    expect(container.querySelector('audio')).toBeInTheDocument()
+    expect(screen.getByText('Adjuntos varios')).toBeInTheDocument()
+  })
+
   // ── Botón "Corregir" (Story 6.8) ──────────────────────────────────────────
 
   const agentMsg = makeMessage({

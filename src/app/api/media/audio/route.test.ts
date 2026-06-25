@@ -1,8 +1,10 @@
-import { vi, describe, it, expect, afterEach } from 'vitest'
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { GET } from './route'
 
-const ALLOWED_URL = 'https://ruzzi-chatwoot.az23sf.easypanel.host/rails/active_storage/blobs/redirect/abc123/audio.oga'
+// El host permitido se deriva de CHATWOOT_BASE_URL (no se hardcodea ningún dominio).
+const CHATWOOT_HOST = 'chatwoot.test'
+const ALLOWED_URL = `https://${CHATWOOT_HOST}/rails/active_storage/blobs/redirect/abc123/audio.oga`
 
 function makeRequest(url: string, extraHeaders: Record<string, string> = {}) {
   return new Request(`http://localhost/api/media/audio?url=${encodeURIComponent(url)}`, {
@@ -12,8 +14,13 @@ function makeRequest(url: string, extraHeaders: Record<string, string> = {}) {
 }
 
 describe('GET /api/media/audio', () => {
+  beforeEach(() => {
+    vi.stubEnv('CHATWOOT_BASE_URL', `https://${CHATWOOT_HOST}`)
+  })
+
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllEnvs()
   })
 
   it('retorna 400 si falta el param url', async () => {
@@ -36,7 +43,7 @@ describe('GET /api/media/audio', () => {
   })
 
   it('retorna 403 si la URL usa http en vez de https', async () => {
-    const req = makeRequest('http://ruzzi-chatwoot.az23sf.easypanel.host/audio.ogg')
+    const req = makeRequest(`http://${CHATWOOT_HOST}/audio.ogg`)
     const res = await GET(req)
     expect(res.status).toBe(403)
     expect(await res.text()).toContain('Forbidden: only https allowed')

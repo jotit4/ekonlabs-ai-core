@@ -15,8 +15,20 @@ export interface ConversationSummary {
   last_message_preview: string
   /** ISO timestamp para ordenar y formatear */
   last_message_at: string
-  /** MVP: siempre false (sin tracking de leídos) */
+  /** true si el último mensaje es del paciente y no fue leído por el usuario actual */
   is_unread: boolean
+}
+
+// ─── Track B: Notas privadas ──────────────────────────────────────────────────
+
+export interface ConversationNote {
+  id: string
+  tenant_id: string
+  phone_number: string
+  author_user: string
+  author_name: string | null
+  body: string
+  created_at: string
 }
 
 export interface ChatwootMessage {
@@ -76,6 +88,10 @@ export interface AgentContext {
   current_block?: string | null
   /** true si la conversación está resuelta */
   is_resolved?: boolean
+}
+
+export interface ResolveResponse {
+  status: 'ok'
 }
 
 export interface TakeoverResponse {
