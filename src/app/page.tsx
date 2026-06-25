@@ -1,26 +1,10 @@
 import { redirect } from 'next/navigation'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { parseJwtPayload } from '@/lib/utils/jwt'
+import { landingForRole } from '@/lib/landing'
 import type { UserRole } from '@/types/index'
 
 export const dynamic = 'force-dynamic'
-
-// Landing por defecto SEGÚN EL ROL del usuario.
-// Cada rol entra directo a la pantalla que más usa, sin pasar por la agenda.
-// Pensado para crecer: para sumar un landing nuevo (ej. dueño/profesional)
-// basta con agregar una entrada a este mapa.
-const LANDING_BY_ROLE: Record<UserRole, string> = {
-  // Recepción NO técnica → pantalla única "Modo recepción"
-  receptionist: '/recepcion',
-  // El profesional entra a su "Vista Profesional": su jornada clínica del día.
-  doctor: '/mi-jornada',
-  // El dueño/admin entra a su "Vista Dueño": pulso del negocio + su agenda.
-  admin: '/inicio',
-}
-
-// A dónde mandar si el JWT no trae un rol válido (caso borde).
-// El layout del dashboard igual revalida el rol y fuerza re-login si falta.
-const FALLBACK_LANDING = '/agenda'
 
 export default async function Home() {
   const supabase = await createSupabaseServerClient()
@@ -36,6 +20,5 @@ export default async function Home() {
   const claims = parseJwtPayload(session?.access_token ?? '')
   const role = (claims?.app_role ?? claims?.role) as UserRole | undefined
 
-  const destination = (role && LANDING_BY_ROLE[role]) || FALLBACK_LANDING
-  redirect(destination)
+  redirect(landingForRole(role))
 }

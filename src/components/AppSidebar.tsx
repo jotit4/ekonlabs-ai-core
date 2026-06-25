@@ -8,6 +8,7 @@ import {
   PanelLeftClose, Settings, ShieldCheck, UserCheck, UserCog, UserX, Users,
 } from 'lucide-react'
 import type { UserRole } from '@/types/index'
+import { landingForRole } from '@/lib/landing'
 import { UserProfileButton } from './UserProfileButton'
 
 type NavItem = {
@@ -16,15 +17,8 @@ type NavItem = {
   icon: React.ElementType
 }
 
-// "Inicio" lleva al landing propio de cada rol, DIRECTO (sin el salto por "/").
-// Recepción → /recepcion, dueño → /inicio, profesional → /mi-jornada.
-// Mantener sincronizado con LANDING_BY_ROLE de src/app/page.tsx.
+// "Inicio" lleva al landing propio de cada rol (única fuente: src/lib/landing.ts).
 // Va destacado y primero, fuera de la lista por rol, igual en todas las pantallas.
-const HOME_HREF_BY_ROLE: Record<UserRole, string> = {
-  receptionist: '/recepcion',
-  doctor: '/mi-jornada',
-  admin: '/inicio',
-}
 const HOME_LABEL = 'Inicio'
 
 const NAV_ITEMS: Record<UserRole, NavItem[]> = {
@@ -59,7 +53,7 @@ export function AppSidebar({ role }: { role: UserRole }) {
   const items = NAV_ITEMS[role] ?? NAV_ITEMS.receptionist
 
   // "Inicio" lleva al landing del rol y se resalta cuando estás en esa página.
-  const homeHref = HOME_HREF_BY_ROLE[role] ?? '/agenda'
+  const homeHref = landingForRole(role)
   const homeActive = pathname === homeHref || pathname.startsWith(homeHref + '/')
   const HomeIcon = Home
 

@@ -3,6 +3,7 @@ import { Toaster } from 'sonner'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 import { AppSidebar } from '@/components/AppSidebar'
+import { AppTopbar } from '@/components/AppTopbar'
 import { DashboardProviders } from './providers'
 import { ShadowModeBanner } from '@/components/ShadowModeBanner'
 import { OnboardingProvider } from '@/components/onboarding/OnboardingProvider'
@@ -41,6 +42,7 @@ export default async function DashboardLayout({
         </a>
         <AppSidebar role={role} />
         <div className="flex flex-col flex-1 overflow-hidden">
+          <AppTopbar role={role} />
           <ShadowModeBanner />
           <main
             id="main-content"
