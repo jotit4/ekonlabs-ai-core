@@ -75,9 +75,18 @@ function ConversationListSkeleton() {
   )
 }
 
+// Error que conserva el status HTTP para que la UI distinga un fallo de permiso
+// (403, no reintentable) de uno transitorio (red/500, reintentable).
+class ConversationsFetchError extends Error {
+  constructor(public readonly status: number) {
+    super(`Error al cargar conversaciones (${status})`)
+    this.name = 'ConversationsFetchError'
+  }
+}
+
 async function fetchConversations(): Promise<ConversationSummary[]> {
   const res = await fetch('/api/conversations')
-  if (!res.ok) throw new Error('Error al cargar conversaciones')
+  if (!res.ok) throw new ConversationsFetchError(res.status)
   const json = await res.json() as { conversations: ConversationSummary[] }
   return json.conversations
 }
@@ -95,12 +104,24 @@ export function ConversationListSidebar() {
 
   const { isConnected } = useConversationsRealtime()
 
-  const { data: conversations = [], isLoading, isError } = useQuery<ConversationSummary[]>({
+  const {
+    data: conversations = [],
+    isLoading,
+    isError,
+    error,
+    refetch,
+    isFetching,
+  } = useQuery<ConversationSummary[]>({
     queryKey: ['conversations', 'list', { status: 'all' }],
     queryFn: fetchConversations,
     staleTime: 0,
     refetchInterval: 30_000, // fallback: si Realtime cae, la lista se actualiza igual cada 30s
+    // Un 403 (permiso) no se resuelve reintentando; solo reintentar fallos transitorios.
+    retry: (failureCount, err) =>
+      !(err instanceof ConversationsFetchError && err.status === 403) && failureCount < 2,
   })
+
+  const isForbidden = error instanceof ConversationsFetchError && error.status === 403
 
   const attentionCount = conversations.filter((c) =>
     PAUSED_STATUSES.includes(c.status)
@@ -233,12 +254,36 @@ export function ConversationListSidebar() {
       {isLoading && <ConversationListSkeleton />}
 
       {isError && (
-        <p
+        <div
           role="alert"
-          style={{ padding: '24px 16px', fontSize: 14, color: 'var(--color-text-secondary)', textAlign: 'center' }}
+          style={{ padding: '24px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}
         >
-          Error al cargar. Recargá la página.
-        </p>
+          <p style={{ fontSize: 14, color: 'var(--color-text-secondary)', textAlign: 'center', margin: 0 }}>
+            {isForbidden
+              ? 'No tenés permiso para ver las conversaciones. Si creés que es un error, avisale al administrador.'
+              : 'No pudimos cargar las conversaciones. Revisá tu conexión e intentá de nuevo.'}
+          </p>
+          {!isForbidden && (
+            <button
+              type="button"
+              onClick={() => refetch()}
+              disabled={isFetching}
+              style={{
+                padding: '7px 16px',
+                fontSize: 13,
+                fontWeight: 600,
+                borderRadius: 8,
+                border: '1px solid var(--color-border)',
+                backgroundColor: 'var(--color-interactive)',
+                color: '#fff',
+                cursor: isFetching ? 'default' : 'pointer',
+                opacity: isFetching ? 0.6 : 1,
+              }}
+            >
+              {isFetching ? 'Reintentando…' : 'Reintentar'}
+            </button>
+          )}
+        </div>
       )}
 
       {!isLoading && !isError && visibleConversations.length === 0 && (

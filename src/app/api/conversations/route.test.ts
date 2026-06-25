@@ -74,9 +74,22 @@ describe('GET /api/conversations', () => {
     expect(body.error).toBe('No autorizado')
   })
 
-  it('403 si el rol no tiene acceso (receptionist)', async () => {
+  it('200 — receptionist tiene acceso (usuario primario del módulo)', async () => {
     mockParseJwt.mockReturnValueOnce({
       app_role: 'receptionist',
+      tenant_id: 'tenant-1',
+    })
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
+    mockRpc.mockResolvedValue({ data: [], error: null })
+
+    const res = await GET()
+
+    expect(res.status).toBe(200)
+  })
+
+  it('403 si el rol no está en el allowlist', async () => {
+    mockParseJwt.mockReturnValueOnce({
+      app_role: 'unknown_role',
       tenant_id: 'tenant-1',
     })
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })

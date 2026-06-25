@@ -49,13 +49,17 @@ export async function GET() {
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }
 
-  // Check de rol: solo admin y doctor pueden ver la bandeja de conversaciones IA (A-02)
+  // Check de rol: los tres roles operativos (admin, doctor, receptionist) ven la
+  // bandeja de conversaciones IA. La recepcionista es el usuario PRIMARIO del módulo
+  // — es "el humano" del human-takeover (su tour `receptionist-conversaciones` es el
+  // journey más crítico). El allowlist explícito se mantiene como defensa ante roles
+  // futuros que no deban ver conversaciones de pacientes.
   const {
     data: { session },
   } = await supabase.auth.getSession()
   const claims = parseJwtPayload(session?.access_token ?? '')
   const appRole = claims?.app_role as string | undefined
-  if (!['admin', 'doctor'].includes(appRole ?? '')) {
+  if (!['admin', 'doctor', 'receptionist'].includes(appRole ?? '')) {
     return Response.json({ error: 'Acceso denegado' }, { status: 403 })
   }
 
