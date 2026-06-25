@@ -98,13 +98,15 @@ export default function MiJornadaPage() {
             {/* Próximos turnos con asistencia de un toque (Llegó / No vino /
                 Reprogramar). Mismo componente que el Modo recepción, pero
                 alimentado con MI agenda en lugar de la de toda la clínica. */}
-            <ProximosTurnos
-              appointments={misTurnos}
-              hoyISO={hoyISO}
-              isLoading={miAgendaCargando}
-              isError={miAgendaError}
-              onRetry={recargarMiAgenda}
-            />
+            <div data-tour="mi-jornada-proximos">
+              <ProximosTurnos
+                appointments={misTurnos}
+                hoyISO={hoyISO}
+                isLoading={miAgendaCargando}
+                isError={miAgendaError}
+                onRetry={recargarMiAgenda}
+              />
+            </div>
 
             {/* Mi agenda completa del día, por si quiero ver más que los
                 próximos 4 turnos. */}
@@ -138,7 +140,7 @@ export default function MiJornadaPage() {
         <h2 className="mb-4 text-[20px] font-bold tracking-tight text-[var(--color-text-primary)]">
           Accesos rápidos
         </h2>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div data-tour="mi-jornada-accesos" className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {/* Mi disponibilidad */}
           <Link
             href="/mi-disponibilidad"

@@ -51,7 +51,7 @@ describe('OnboardingProvider', () => {
   })
 
   it('click en "?" → crea el driver con los pasos del tour y lo lanza', async () => {
-    window.localStorage.setItem('ekonlabs:tour-seen:receptionist-conversaciones', '1')
+    window.localStorage.setItem('ekonlabs:tour-seen:conversaciones', '1')
     const user = userEvent.setup()
     render(
       <OnboardingProvider role="receptionist">
@@ -73,12 +73,12 @@ describe('OnboardingProvider', () => {
     )
     await waitFor(() => expect(driveMock).toHaveBeenCalledTimes(1), { timeout: 2000 })
     expect(
-      window.localStorage.getItem('ekonlabs:tour-seen:receptionist-conversaciones')
+      window.localStorage.getItem('ekonlabs:tour-seen:conversaciones')
     ).toBe('1')
   })
 
   it('tour ya visto → NO auto-dispara', async () => {
-    window.localStorage.setItem('ekonlabs:tour-seen:receptionist-conversaciones', '1')
+    window.localStorage.setItem('ekonlabs:tour-seen:conversaciones', '1')
     render(
       <OnboardingProvider role="receptionist">
         <div>contenido</div>
@@ -94,7 +94,7 @@ describe('OnboardingProvider', () => {
       const { hasTour } = useOnboarding()
       return <span data-testid="has-tour">{String(hasTour)}</span>
     }
-    window.localStorage.setItem('ekonlabs:tour-seen:receptionist-conversaciones', '1')
+    window.localStorage.setItem('ekonlabs:tour-seen:conversaciones', '1')
     render(
       <OnboardingProvider role="receptionist">
         <Probe />

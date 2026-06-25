@@ -90,11 +90,10 @@ function TourHelpButton({ screen, onClick }: { screen: string; onClick: () => vo
       data-tour="help-button"
       aria-label={`Ayuda: ver guía de ${screen}`}
       title={`Ver guía de ${screen}`}
-      className="fixed right-4 bottom-[72px] lg:bottom-5 z-50 flex h-11 w-11 items-center
-        justify-center rounded-full border border-[var(--color-border)]
-        bg-[var(--color-bg)] text-[18px] font-semibold text-[var(--color-text-secondary)]
-        shadow-md transition-colors duration-120 hover:bg-[var(--color-surface)]
-        hover:text-[var(--color-text-primary)]"
+      className="fixed right-4 bottom-[72px] lg:bottom-5 z-50 flex h-12 w-12 items-center
+        justify-center rounded-full text-[22px] font-semibold text-white
+        bg-[var(--color-interactive)] shadow-lg transition-colors duration-120
+        hover:bg-[var(--color-interactive-dark)]"
     >
       ?
     </button>

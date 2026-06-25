@@ -115,7 +115,7 @@ export function MiAgendaCalendarView({
   }
 
   return (
-    <div className="rbc-wrapper">
+    <div data-tour="mi-agenda-calendar" className="rbc-wrapper">
       {/* Sin SyncStatusBanner ni GCalDegradationBanner — vista solo lectura del profesional */}
       <DragAndDropCalendar
         localizer={localizer}

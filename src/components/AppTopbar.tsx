@@ -40,6 +40,7 @@ export function AppTopbar({ role }: { role: UserRole }) {
       className="shrink-0 flex items-center gap-2 h-14 px-3 border-b border-[var(--color-border)] bg-[var(--color-bg)]"
     >
       <Link
+        data-tour="topbar-inicio"
         href={homeHref}
         aria-current={isHome ? 'page' : undefined}
         aria-label="Ir a Inicio"

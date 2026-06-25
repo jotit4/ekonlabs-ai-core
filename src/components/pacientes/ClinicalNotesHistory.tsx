@@ -59,7 +59,7 @@ export function ClinicalNotesHistory({ patientId }: ClinicalNotesHistoryProps) {
   const notes = data?.notes ?? []
 
   return (
-    <section aria-label="Historial de notas clínicas">
+    <section aria-label="Historial de notas clínicas" data-tour="hce-historial-notas">
       {notes.length === 0 ? (
         <p
           style={{

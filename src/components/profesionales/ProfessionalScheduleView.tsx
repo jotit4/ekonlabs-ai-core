@@ -166,7 +166,7 @@ export function ProfessionalScheduleView({ professionalId, professionalName }: P
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   return (
-    <section aria-label={`Horarios de ${professionalName}`} className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[8px] p-5 space-y-4">
+    <section data-tour="disponibilidad-horarios" aria-label={`Horarios de ${professionalName}`} className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[8px] p-5 space-y-4">
       <div>
         <h3 className="text-base font-semibold text-[var(--color-text-primary)]">Horarios semanales</h3>
         <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">

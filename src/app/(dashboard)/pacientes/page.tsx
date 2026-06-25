@@ -38,6 +38,7 @@ function SearchInput({ value, onChange, placeholder }: SearchInputProps) {
       onChange={onChange}
       placeholder={placeholder}
       aria-label={placeholder ?? 'Buscar'}
+      data-tour="pacientes-search"
       style={{
         width: '100%',
         maxWidth: 420,
@@ -154,6 +155,7 @@ export default function PacientesPage() {
         {/* Dialog de creación de paciente */}
         <Dialog.Root open={dialogOpen} onOpenChange={setDialogOpen}>
           <Dialog.Trigger
+            data-tour="pacientes-nuevo-btn"
             className={[
               'shrink-0 px-4 py-2 rounded-[8px] text-sm font-medium',
               'bg-[var(--color-interactive)] text-white',

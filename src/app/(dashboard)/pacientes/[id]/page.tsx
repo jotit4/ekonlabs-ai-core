@@ -307,7 +307,12 @@ export default function PacienteFichaPage() {
       )}
 
       {/* Sistema de tabs */}
-      <nav aria-label="Secciones de la ficha" role="tablist" style={{ marginBottom: 24 }}>
+      <nav
+        aria-label="Secciones de la ficha"
+        role="tablist"
+        data-tour="patient-tabs"
+        style={{ marginBottom: 24 }}
+      >
         <div
           style={{
             display: 'flex',
@@ -485,7 +490,7 @@ export default function PacienteFichaPage() {
 
           {/* Nueva nota — solo si no hay eliminación pendiente */}
           {!hasDeletionPending && (
-            <div style={{ marginBottom: 24 }}>
+            <div data-tour="hce-nueva-nota" style={{ marginBottom: 24 }}>
               <h3 style={{ fontSize: 15, fontWeight: 500, marginBottom: 8 }}>Nueva nota</h3>
               <ClinicalNoteEditor
                 patientId={patientId}
@@ -531,6 +536,7 @@ export default function PacienteFichaPage() {
               <button
                 type="button"
                 onClick={() => setPaqueteOpen(true)}
+                data-tour="paquetes-cargar-btn"
                 className={[
                   'px-4 py-2 rounded-[8px] text-sm font-medium min-h-[44px]',
                   'bg-[var(--color-interactive)] text-white',

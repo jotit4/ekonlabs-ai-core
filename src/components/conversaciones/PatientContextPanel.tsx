@@ -111,6 +111,7 @@ export function PatientContextPanel({ phone, conversationStatus }: PatientContex
   return (
     <aside
       role="complementary"
+      data-tour="agent-context-panel"
       aria-label="Contexto de la conversación"
       style={{
         padding: 16,

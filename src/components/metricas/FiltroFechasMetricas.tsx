@@ -120,6 +120,7 @@ export function FiltroFechasMetricas({
 
   return (
     <div
+      data-tour="metricas-filtro"
       role="search"
       aria-label="Filtro de período de métricas"
       className="flex flex-wrap items-end gap-3 mb-6 p-4 rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-border)]"

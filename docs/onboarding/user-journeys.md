@@ -31,7 +31,7 @@ Decisión de negocio (2026-06-08): **🟡 Amarillo = "atendé, te necesita".** E
 
 **Orden de la bandeja:** dentro de los amarillos, los `needs_intervention` van arriba (más urgentes primero). Un solo color para el staff, pero el orden comunica prioridad.
 
-> ⚠️ **Prerequisito técnico** (ver sección final): hoy el código mapea distinto (rojo = accionable, amarillo = confianza media). Hay que remapear `statusToVariant` en `src/components/conversaciones/ConversationListItem.tsx` antes de lanzar el onboarding, o el vocabulario del tour no coincidirá con la pantalla.
+> ✅ **Resuelto (2026-06-25):** `statusToVariant` en `src/components/conversaciones/ConversationListItem.tsx` ya mapea con la convención "amarillo = accionable" (`needs_intervention` y `ai_active` + confianza baja → amarillo; confianza alta/media → verde). El vocabulario del tour coincide con la pantalla.
 
 ---
 
@@ -127,12 +127,42 @@ Entra **a diario**.
 
 ---
 
-## Prerequisitos técnicos antes de lanzar el onboarding
+## Estado de implementación del onboarding (2026-06-25)
 
-1. **Remapear el semáforo** de conversaciones a la convención "amarillo = accionable" (`ConversationListItem.tsx` → `statusToVariant` + etiquetas + tests). Confianza media → verde. ~15 líneas + 2-3 tests. Aislado a conversaciones; no afecta la agenda.
-2. **Ordenar la bandeja** por prioridad dentro de los amarillos (`needs_intervention` arriba).
-3. **Agregar los `data-tour`** de la tabla de arriba.
-4. **Integrar driver.js** + un wrapper que cargue el journey según el rol + el botón "?" persistente.
+Los prerequisitos técnicos están cumplidos y el tutorial cubre **los tres roles + los módulos profundos**. Fuente de verdad del código: `src/lib/onboarding/tours.ts` (`getTourForRoute`).
+
+**Núcleo (ya cableado):** `OnboardingProvider` (auto-dispara el tour en la primera visita a cada pantalla + botón "?" persistente para relanzarlo) · `storage.ts` (flag `ekonlabs:tour-seen:{tourId}` en localStorage) · semáforo remapeado a "amarillo = accionable".
+
+**Cambio clave de esta actualización:** cada rol ahora aterriza en su **landing** (`/recepcion`, `/mi-jornada`, `/inicio`), no en `/conversaciones`. Antes el tour de bienvenida no se disparaba porque solo arrancaba en `/conversaciones`. Ahora el **principio rector** vive en el tour de cada landing, que es la primera pantalla que ve el usuario.
+
+### Tours implementados (rol → ruta → id)
+
+| Rol | Ruta | Tour (id) |
+|---|---|---|
+| receptionist | `/recepcion` | `receptionist-recepcion` *(principio rector)* |
+| doctor | `/mi-jornada` | `doctor-mi-jornada` *(principio rector)* |
+| admin | `/inicio` | `admin-inicio` *(principio rector)* |
+| receptionist + admin | `/conversaciones` | `conversaciones` *(semáforo, búsqueda, filtro)* |
+| receptionist + admin | `/conversaciones/[id]` | `conversacion-detalle` *(contexto del agente, takeover, responder, liberar, corregir, resolver, notas)* |
+| receptionist + admin | `/agenda` | `agenda` *(nuevo turno)* |
+| los tres | `/pacientes` | `pacientes-lista` *(buscar, alta)* |
+| receptionist | `/pacientes/[id]` | `paciente-ficha` *(solapas + editar)* |
+| doctor + admin | `/pacientes/[id]` | `paciente-hce` *(notas clínicas, antecedentes, evolución, historial)* |
+| doctor | `/mi-disponibilidad` | `doctor-mi-disponibilidad` *(horarios + bloqueos)* |
+| doctor | `/agenda/mi-agenda` | `doctor-mi-agenda` |
+| admin | `/configuracion/agente` | `admin-configuracion-agente` *(identidad, reglas, ventanas, shadow mode, KB, guardar)* |
+| admin | `/metricas` | `admin-metricas` |
+| admin | `/configuracion/usuarios` | `admin-usuarios` |
+| admin | `/configuracion/auditoria` | `admin-auditoria` |
+| admin | `/configuracion/servicios` | `admin-servicios` |
+| admin | `/configuracion/profesionales` | `admin-profesionales` |
+
+### Anclas
+Las anclas nuevas (`data-tour="..."`) ya están insertadas en las landings, la topbar, las features nuevas de conversaciones (búsqueda, contexto del agente, resolver, notas), la ficha del paciente / HCE / paquetes, mi-disponibilidad, métricas y configuración del agente. Donde ya existía un `id` estable (formularios de configuración, auditoría, servicios, profesionales) el tour referencia ese `id` directamente. Los `id` con punto se referencian como `[id="..."]`.
+
+### Pendiente (no bloqueante)
+- **Videos de visión por rol** (60-90 s) derivados de estos journeys — ver sección siguiente.
+- Tours interactivos más profundos dentro de modales (Nuevo turno paso a paso, Nuevo paquete) si el soporte lo pide.
 
 ---
 

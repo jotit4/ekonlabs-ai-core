@@ -27,6 +27,7 @@ export function ShadowModeToggle({ initialValue }: ShadowModeToggleProps) {
           </p>
         </div>
         <div
+          data-tour="shadow-mode-toggle"
           role="switch"
           aria-checked={isEnabled}
           aria-label="Shadow mode — bloquear agendamiento automático"

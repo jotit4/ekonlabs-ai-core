@@ -321,6 +321,7 @@ export function AgentPromptEditor() {
 
         <div className="flex items-center justify-between">
           <button
+            data-tour="agent-save-btn"
             type="submit"
             disabled={isSubmitting || mutation.isPending}
             className={[

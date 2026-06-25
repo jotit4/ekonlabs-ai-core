@@ -116,7 +116,10 @@ export default function InicioPage() {
           Cómo va la clínica
         </h2>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div
+          data-tour="inicio-pulso"
+          className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
+        >
           {/* Turnos de hoy */}
           <PulsoCard
             icono={<CalendarDays className="h-5 w-5" />}
@@ -163,7 +166,7 @@ export default function InicioPage() {
 
           {/* El asistente de WhatsApp — resolvió solo vs necesitó una persona.
               Ocupa el ancho de dos columnas para que entre la frase completa. */}
-          <div className="sm:col-span-2 lg:col-span-2">
+          <div data-tour="inicio-asistente" className="sm:col-span-2 lg:col-span-2">
             <div className="flex min-h-[44px] h-full items-center gap-4 rounded-[16px] border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
               <span
                 aria-hidden="true"
@@ -271,7 +274,7 @@ export default function InicioPage() {
         <h2 className="mb-4 text-[20px] font-bold tracking-tight text-[var(--color-text-primary)]">
           Accesos rápidos
         </h2>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div data-tour="inicio-accesos" className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Link
             href="/metricas"
             className={[

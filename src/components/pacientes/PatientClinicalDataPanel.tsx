@@ -68,6 +68,7 @@ function PatientClinicalDataPanelContent({ patientId, readOnly }: PatientClinica
         type="button"
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
+        data-tour="hce-contexto-clinico"
         className="flex min-h-[44px] items-center gap-1 text-sm font-medium text-[var(--color-interactive)] hover:underline"
       >
         <span aria-hidden="true">{expanded ? '▾' : '▸'}</span>

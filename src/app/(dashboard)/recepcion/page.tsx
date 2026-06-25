@@ -156,6 +156,7 @@ export default function RecepcionPage() {
 
         {/* Conversaciones que necesitan una persona */}
         <Link
+          data-tour="recepcion-conversaciones"
           href="/conversaciones"
           aria-label={
             cantidadNecesitanPersona > 0
@@ -258,6 +259,7 @@ export default function RecepcionPage() {
 
       {/* ── 3 tarjetas grandes ───────────────────────────────────────────── */}
       <div
+        data-tour="recepcion-acciones"
         role="group"
         aria-label="Acciones rápidas"
         className="grid grid-cols-1 gap-4 sm:grid-cols-3"

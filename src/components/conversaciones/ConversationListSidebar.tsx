@@ -169,6 +169,7 @@ export function ConversationListSidebar() {
         <input
           type="search"
           inputMode="search"
+          data-tour="search-conversations"
           aria-label="Buscar por nombre o teléfono"
           placeholder="Buscar por nombre o teléfono…"
           value={searchQuery}

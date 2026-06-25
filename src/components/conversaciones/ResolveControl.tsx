@@ -28,6 +28,7 @@ export function ResolveControl({ phone, conversationStatus }: ResolveControlProp
   return (
     <button
       type="button"
+      data-tour="resolve-conversation-btn"
       onClick={handleClick}
       disabled={isPending}
       aria-label={isResolved ? 'Reabrir conversación' : 'Resolver conversación'}

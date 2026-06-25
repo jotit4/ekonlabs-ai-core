@@ -107,6 +107,7 @@ export function ConversationNotes({ phone, currentUserId }: ConversationNotesPro
 
   return (
     <section
+      data-tour="conversation-notes-panel"
       aria-label="Notas internas"
       style={{
         borderTop: '1px solid var(--color-border)',

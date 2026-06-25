@@ -51,7 +51,7 @@ export function MetricasView({
 
   return (
     <>
-      <section aria-label="KPIs operativos">
+      <section data-tour="metricas-operativos" aria-label="KPIs operativos">
         <header className="mb-6">
           <p className="text-sm text-[var(--color-text-secondary)]">{periodoLabel}</p>
         </header>
@@ -74,7 +74,7 @@ export function MetricasView({
         </div>
       </section>
 
-      <section aria-label="KPIs del agente IA" className="mt-8">
+      <section data-tour="metricas-agente" aria-label="KPIs del agente IA" className="mt-8">
         <h2 className="text-[18px] font-semibold text-[var(--color-text-primary)] mb-4">
           Agente IA
         </h2>

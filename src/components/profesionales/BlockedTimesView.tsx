@@ -141,7 +141,7 @@ export function BlockedTimesView({ professionalId, professionalName }: BlockedTi
   const deleteBlocked = useDeleteBlockedTime()
 
   return (
-    <section aria-label={`Bloqueos de ${professionalName}`} className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[8px] p-5 space-y-4">
+    <section data-tour="disponibilidad-bloqueos" aria-label={`Bloqueos de ${professionalName}`} className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[8px] p-5 space-y-4">
       <div>
         <h3 className="text-base font-semibold text-[var(--color-text-primary)]">Períodos bloqueados</h3>
         <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
