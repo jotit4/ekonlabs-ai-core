@@ -38,11 +38,33 @@ vi.mock('date-fns/locale', async (importOriginal) => {
 })
 
 // SessionNotePanel (Story 14.3) se testea en su propio archivo; acá se mockea
-// para no arrastrar useCurrentTenant/auth al test del modal (mismo recurso que
-// PaquetesTracking.test con TreatmentPlanPanel en 14.2).
+// para no arrastrar useCurrentTenant/auth al test del modal.
 vi.mock('@/components/paquetes/SessionNotePanel', () => ({
   SessionNotePanel: () => null,
 }))
+
+// AbsenceDecisionDialog se mockea para aislar el modal de sus dependencias.
+vi.mock('@/components/agenda/AbsenceDecisionDialog', () => ({
+  AbsenceDecisionDialog: () => null,
+}))
+
+// next/link — mockear para evitar errores de router context
+vi.mock('next/link', async () => {
+  const React = await import('react')
+  return {
+    default: ({ href, children, ...props }: { href: string; children: React.ReactNode; [key: string]: unknown }) =>
+      React.createElement('a', { href, ...props }, children),
+  }
+})
+
+// @tanstack/react-query — useAppointmentActions usa useQueryClient
+const mockInvalidateQueries = vi.fn()
+vi.mock('@tanstack/react-query', () => ({
+  useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries }),
+}))
+
+const mockFetch = vi.fn()
+global.fetch = mockFetch
 
 import { TurnoDetailModal } from './TurnoDetailModal'
 
@@ -72,6 +94,10 @@ describe('TurnoDetailModal', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ success: true }),
+    })
   })
 
   it('NO renderiza nada cuando open=false', () => {

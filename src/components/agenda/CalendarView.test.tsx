@@ -27,6 +27,7 @@ const BASE_APPOINTMENT: Appointment = {
   phone_number: '+541100000000',
   patient_id: 'pat-1',
   service_id: 'svc-1',
+  professional_id: null,
   appointment_time: '2026-05-07T09:00:00',
   start_at: '2026-05-07T09:00:00',
   end_at: '2026-05-07T10:00:00',
@@ -566,8 +567,8 @@ describe('CalendarView', () => {
     })
   })
 
-  describe('Feature D — Link nombre paciente', () => {
-    it('muestra el nombre del paciente como link cuando patient_id está presente', () => {
+  describe('Feature D — Nombre paciente y modal de detalle', () => {
+    it('muestra el nombre del paciente en la fila del turno', () => {
       render(
         <CalendarView
           date="2026-05-07"
@@ -577,9 +578,26 @@ describe('CalendarView', () => {
           onRefetch={mockOnRefetch}
         />
       )
-      const link = screen.getByRole('link', { name: /ver ficha de juan garcía/i })
-      expect(link).toBeInTheDocument()
-      expect(link).toHaveAttribute('href', '/pacientes/pat-1')
+      expect(screen.getByText('Juan García')).toBeInTheDocument()
+      // El nombre ya NO es un link navegable en la lista — "Ver ficha" está en el modal
+      expect(screen.queryByRole('link', { name: /ver ficha de juan garcía/i })).not.toBeInTheDocument()
+    })
+
+    it('llama onAppointmentClick al hacer click en la fila del turno', async () => {
+      const user = userEvent.setup()
+      const mockOnAppointmentClick = vi.fn()
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+          onAppointmentClick={mockOnAppointmentClick}
+        />
+      )
+      await user.click(screen.getByRole('button', { name: /ver detalle del turno de juan garcía/i }))
+      expect(mockOnAppointmentClick).toHaveBeenCalledWith(BASE_APPOINTMENT)
     })
 
     it('muestra el nombre sin link cuando patient_id es null', () => {

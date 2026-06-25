@@ -414,6 +414,14 @@ export function AgendaView() {
             freeShifts={focusedDayFreeShifts}
             showProfessionalName={showProfessionalName}
             onFreeSlotClick={handleFreeSlotClick}
+            onAppointmentClick={handleAppointmentClick}
+          />
+          <TurnoDetailModal
+            open={selectedAppointmentDetail !== null}
+            appointment={selectedAppointmentDetail}
+            onClose={() => setSelectedAppointmentDetail(null)}
+            onReschedule={handleRescheduleFromDetail}
+            date={isoDate}
           />
         </>
       ) : (
@@ -437,6 +445,7 @@ export function AgendaView() {
             appointment={selectedAppointmentDetail}
             onClose={() => setSelectedAppointmentDetail(null)}
             onReschedule={handleRescheduleFromDetail}
+            date={isoDate}
           />
         </>
       )}

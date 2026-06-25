@@ -3,8 +3,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { format, parseISO } from 'date-fns'
 import { Pencil, X, Clock } from 'lucide-react'
-import { useQueryClient } from '@tanstack/react-query'
-import Link from 'next/link'
 import {
   type Appointment,
   type CalendarEvent,
@@ -19,6 +17,7 @@ import { ReminderBadge } from './ReminderBadge'
 import { SesionSerieBadge } from './SesionSerieBadge'
 import { AbsenceDecisionDialog } from './AbsenceDecisionDialog'
 import type { AbsenceDecision } from '@/lib/schemas/absence-decision.schema'
+import { useAppointmentActions } from '@/hooks/use-appointment-actions'
 
 // Nombre de profesional para agrupar/mostrar — mismo orden de fallback en
 // turnos y huecos libres. 'Sin profesional' agrupa lo que no tiene asignado.
@@ -276,15 +275,15 @@ function DayListView({
   onReschedule,
   freeShifts,
   onFreeSlotClick,
+  onAppointmentClick,
 }: {
   events: CalendarEvent[]
   date: string
   onReschedule?: (appointment: Appointment) => void
   freeShifts?: AvailabilityShift[]
   onFreeSlotClick?: (shift: AvailabilityShift) => void
+  onAppointmentClick?: (appointment: Appointment) => void
 }) {
-  const queryClient = useQueryClient()
-
   // Lista unificada ordenada cronológicamente — turnos ocupados + huecos libres.
   // Para ordenar usamos el timestamp UTC (event.start ya es Date; el shift se
   // parsea con parseISO sobre slot_start_iso, que es UTC con Z).
@@ -315,116 +314,23 @@ function DayListView({
     a[0].localeCompare(b[0], 'es'),
   )
 
-  // Estado para modal de cancelación
-  const [cancelTarget, setCancelTarget] = useState<Appointment | null>(null)
-  const [cancelLoading, setCancelLoading] = useState(false)
-  const [cancelError, setCancelError] = useState<string | null>(null)
-
   // Estado para dropdown de asistencia (almacena appointment_id del abierto)
   const [attendanceOpenId, setAttendanceOpenId] = useState<string | null>(null)
-  const [attendanceLoading, setAttendanceLoading] = useState(false)
 
-  // Story 13.6 — diálogo de decisión manual para turnos de serie (no_show / cancelled).
-  const [absenceTarget, setAbsenceTarget] = useState<
-    { appointment: Appointment; action: 'no_show' | 'cancelled' } | null
-  >(null)
-  const [absenceLoading, setAbsenceLoading] = useState(false)
-  const [absenceError, setAbsenceError] = useState<string | null>(null)
+  // Acciones compartidas vía hook (cancelación, asistencia, serie)
+  const actions = useAppointmentActions(date)
 
-  async function handleUpdateStatus(
-    appointmentId: string,
-    status: 'cancelled' | 'completed' | 'no_show',
-    extra?: { decision: AbsenceDecision; note?: string }
-  ) {
-    const payload: { status: typeof status; decision?: AbsenceDecision; note?: string } = { status }
-    if (extra) {
-      payload.decision = extra.decision
-      if (extra.note !== undefined) payload.note = extra.note
-    }
-    const response = await fetch(`/api/appointments/${appointmentId}/status`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}))
-      throw new Error((body as { error?: string }).error ?? 'Error al actualizar el turno')
-    }
-  }
-
-  // Tras una decisión de serie, además de la agenda hay que refrescar el tracking
-  // de la story 13.5 (contador de sesiones en la ficha del paciente).
-  function invalidateTrackingQueries(patientId: string | null) {
-    queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
-    queryClient.invalidateQueries({ queryKey: ['treatments'], exact: false })
-    if (patientId) {
-      queryClient.invalidateQueries({ queryKey: ['treatments', 'by-patient', patientId] })
-    }
-  }
-
-  async function handleCancelConfirm() {
-    if (!cancelTarget) return
-    // Turno de serie → abrir el diálogo de decisión en lugar de cancelar directo.
-    if (cancelTarget.package_id) {
-      setAbsenceError(null)
-      setAbsenceTarget({ appointment: cancelTarget, action: 'cancelled' })
-      setCancelTarget(null)
-      return
-    }
-    setCancelLoading(true)
-    setCancelError(null)
-    try {
-      await handleUpdateStatus(cancelTarget.appointment_id, 'cancelled')
-      queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
-      setCancelTarget(null)
-    } catch (err) {
-      setCancelError(err instanceof Error ? err.message : 'Error al cancelar el turno')
-    } finally {
-      setCancelLoading(false)
-    }
-  }
-
+  // Adaptadores para mantener el comportamiento observable igual que antes
   async function handleAttendanceSelect(
     appointment: Appointment,
     status: 'completed' | 'no_show'
   ) {
-    // Story 13.6 — no_show de un turno de serie → diálogo de decisión manual.
-    // 'completed' (confirmar asistencia) NUNCA dispara el diálogo.
-    if (status === 'no_show' && appointment.package_id) {
-      setAbsenceError(null)
-      setAbsenceTarget({ appointment, action: 'no_show' })
-      setAttendanceOpenId(null)
-      return
-    }
-    setAttendanceLoading(true)
-    try {
-      await handleUpdateStatus(appointment.appointment_id, status)
-      queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
-      setAttendanceOpenId(null)
-    } catch {
-      // silently close — error se puede mejorar en siguiente iteración
-      setAttendanceOpenId(null)
-    } finally {
-      setAttendanceLoading(false)
-    }
+    await actions.handleAttendanceSelect(appointment, status)
+    setAttendanceOpenId(null)
   }
 
   async function handleAbsenceConfirm(decision: AbsenceDecision, note?: string) {
-    if (!absenceTarget) return
-    setAbsenceLoading(true)
-    setAbsenceError(null)
-    try {
-      await handleUpdateStatus(absenceTarget.appointment.appointment_id, absenceTarget.action, {
-        decision,
-        note,
-      })
-      invalidateTrackingQueries(absenceTarget.appointment.patient_id)
-      setAbsenceTarget(null)
-    } catch (err) {
-      setAbsenceError(err instanceof Error ? err.message : 'Error al aplicar la decisión')
-    } finally {
-      setAbsenceLoading(false)
-    }
+    await actions.handleAbsenceConfirm(decision, note)
   }
 
   if (items.length === 0) {
@@ -526,12 +432,21 @@ function DayListView({
                   null
                 const serviceName = event.resource.services?.name ?? null
                 const patientName = event.resource.patients?.full_name ?? 'Paciente'
-                const patientId = event.resource.patient_id
                 const isAttendanceOpen = attendanceOpenId === event.resource.appointment_id
 
                 return (
                   <div
                     key={event.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onAppointmentClick?.(event.resource)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        onAppointmentClick?.(event.resource)
+                      }
+                    }}
+                    aria-label={`Ver detalle del turno de ${patientName}`}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -541,6 +456,13 @@ function DayListView({
                       borderLeft: `4px solid ${color}`,
                       borderRadius: '0 8px 8px 0',
                       opacity: isCancelled ? 0.6 : 1,
+                      cursor: onAppointmentClick ? 'pointer' : 'default',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (onAppointmentClick) e.currentTarget.style.backgroundColor = `${color}1e`
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = `${color}12`
                     }}
                   >
                     {/* Horario */}
@@ -568,42 +490,20 @@ function DayListView({
 
                     {/* Paciente + servicio + profesional */}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      {/* Feature D: nombre del paciente como link */}
-                      {patientId ? (
-                        <Link
-                          href={`/pacientes/${patientId}`}
-                          style={{
-                            fontSize: 14,
-                            fontWeight: 600,
-                            color: 'var(--color-interactive)',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            lineHeight: 1.4,
-                            display: 'block',
-                            textDecoration: 'none',
-                          }}
-                          onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline' }}
-                          onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none' }}
-                          aria-label={`Ver ficha de ${patientName}`}
-                        >
-                          {patientName}
-                        </Link>
-                      ) : (
-                        <div
-                          style={{
-                            fontSize: 14,
-                            fontWeight: 600,
-                            color: 'var(--color-text-primary)',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            lineHeight: 1.4,
-                          }}
-                        >
-                          {patientName}
-                        </div>
-                      )}
+                      {/* Nombre del paciente — el clic en la fila abre el modal (ver ficha está en el modal) */}
+                      <div
+                        style={{
+                          fontSize: 14,
+                          fontWeight: 600,
+                          color: 'var(--color-text-primary)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {patientName}
+                      </div>
                       {(serviceName ?? profNameInner) && (
                         <div
                           style={{
@@ -646,11 +546,12 @@ function DayListView({
                         <div style={{ position: 'relative' }}>
                           <button
                             type="button"
-                            onClick={() =>
+                            onClick={(e) => {
+                              e.stopPropagation()
                               setAttendanceOpenId(
                                 isAttendanceOpen ? null : event.resource.appointment_id
                               )
-                            }
+                            }}
                             style={{
                               width: 32,
                               height: 32,
@@ -678,7 +579,7 @@ function DayListView({
                               patientName={patientName}
                               onSelect={(s) => handleAttendanceSelect(event.resource, s)}
                               onClose={() => setAttendanceOpenId(null)}
-                              isLoading={attendanceLoading}
+                              isLoading={actions.attendanceLoading}
                             />
                           )}
                         </div>
@@ -688,7 +589,7 @@ function DayListView({
                       {onReschedule && !isCancelled && (
                         <button
                           type="button"
-                          onClick={() => onReschedule(event.resource)}
+                          onClick={(e) => { e.stopPropagation(); onReschedule(event.resource) }}
                           style={{
                             width: 32,
                             height: 32,
@@ -715,9 +616,10 @@ function DayListView({
                       {!isCancelled && (
                         <button
                           type="button"
-                          onClick={() => {
-                            setCancelError(null)
-                            setCancelTarget(event.resource)
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            actions.clearCancelError()
+                            actions.setCancelTarget(event.resource)
                           }}
                           style={{
                             width: 32,
@@ -756,31 +658,31 @@ function DayListView({
       </div>
 
       {/* Modal de confirmación de cancelación */}
-      {cancelTarget && (
+      {actions.cancelTarget && (
         <CancelConfirmModal
-          patientName={cancelTarget.patients?.full_name ?? 'Paciente'}
-          onConfirm={handleCancelConfirm}
-          onClose={() => { setCancelTarget(null); setCancelError(null) }}
-          isLoading={cancelLoading}
+          patientName={actions.cancelTarget.patients?.full_name ?? 'Paciente'}
+          onConfirm={actions.handleCancelConfirm}
+          onClose={() => { actions.setCancelTarget(null); actions.clearCancelError() }}
+          isLoading={actions.cancelLoading}
         />
       )}
 
       {/* Error de cancelación (fuera del modal, visible en el listado) */}
-      {cancelError && !cancelTarget && (
+      {actions.cancelError && !actions.cancelTarget && (
         <p role="alert" style={{ fontSize: 13, color: '#ef4444', marginTop: 8, textAlign: 'center' }}>
-          {cancelError}
+          {actions.cancelError}
         </p>
       )}
 
       {/* Story 13.6 — diálogo de decisión manual para turnos de serie */}
-      {absenceTarget && (
+      {actions.absenceTarget && (
         <AbsenceDecisionDialog
-          appointment={absenceTarget.appointment}
-          action={absenceTarget.action}
+          appointment={actions.absenceTarget.appointment}
+          action={actions.absenceTarget.action}
           onConfirm={handleAbsenceConfirm}
-          onClose={() => { setAbsenceTarget(null); setAbsenceError(null) }}
-          isLoading={absenceLoading}
-          error={absenceError}
+          onClose={actions.clearAbsenceTarget}
+          isLoading={actions.absenceLoading}
+          error={actions.absenceError}
         />
       )}
     </>
@@ -801,6 +703,9 @@ interface CalendarViewProps {
   // muestra en la cabecera de cada grupo, así que este flag ya no se usa acá.
   showProfessionalName?: boolean
   onFreeSlotClick?: (shift: AvailabilityShift) => void
+  // Clic en un turno ocupado → abre el modal de detalle (opcional: si no se pasa,
+  // la fila sigue siendo visible pero no clickeable para abrir el modal)
+  onAppointmentClick?: (appointment: Appointment) => void
 }
 
 export function CalendarView({
@@ -812,6 +717,7 @@ export function CalendarView({
   onReschedule,
   freeShifts,
   onFreeSlotClick,
+  onAppointmentClick,
 }: CalendarViewProps) {
   if (isLoading) {
     return <AgendaDayViewSkeleton />
@@ -845,6 +751,7 @@ export function CalendarView({
       onReschedule={onReschedule}
       freeShifts={freeShifts}
       onFreeSlotClick={onFreeSlotClick}
+      onAppointmentClick={onAppointmentClick}
     />
   )
 }
