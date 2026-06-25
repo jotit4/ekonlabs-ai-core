@@ -34,116 +34,140 @@ function setupMocks(shadowModeEnabled: boolean, isPending = false) {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('ShadowModeToggle', () => {
+describe('ShadowModeToggle — Confirmación de turnos', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('toggle con aria-checked="false" cuando shadow mode está desactivado', () => {
+  // ── NO aparece "Shadow Mode" ───────────────────────────────────────────────
+
+  it('NO muestra el texto "Shadow Mode" en ninguna variante', () => {
     setupMocks(false)
     render(<ShadowModeToggle initialValue={false} />)
 
-    const toggle = screen.getByRole('switch')
-    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    expect(screen.queryByText(/shadow mode/i)).not.toBeInTheDocument()
   })
 
-  it('toggle con aria-checked="true" cuando shadow mode está activado', () => {
-    setupMocks(true)
-    render(<ShadowModeToggle initialValue={true} />)
-
-    const toggle = screen.getByRole('switch')
-    expect(toggle).toHaveAttribute('aria-checked', 'true')
-  })
-
-  it('muestra texto "El agente NO confirma turnos automáticamente" cuando activo', () => {
-    setupMocks(true)
-    render(<ShadowModeToggle initialValue={true} />)
-
-    expect(
-      screen.getByText('El agente NO confirma turnos automáticamente')
-    ).toBeInTheDocument()
-  })
-
-  it('muestra texto "El agente confirma turnos automáticamente" cuando inactivo', () => {
+  it('muestra el título "Confirmación de turnos"', () => {
     setupMocks(false)
     render(<ShadowModeToggle initialValue={false} />)
 
-    expect(
-      screen.getByText('El agente confirma turnos automáticamente')
-    ).toBeInTheDocument()
+    expect(screen.getByText('Confirmación de turnos')).toBeInTheDocument()
   })
 
-  it('muestra aviso role="status" cuando shadow mode está activo', () => {
+  // ── Selección de opciones ──────────────────────────────────────────────────
+
+  it('selecciona "Automática" cuando shadow_mode=false', () => {
+    setupMocks(false)
+    render(<ShadowModeToggle initialValue={false} />)
+
+    expect(screen.getByRole('radio', { name: /Automática/i })).toBeChecked()
+    expect(screen.getByRole('radio', { name: /Manual/i })).not.toBeChecked()
+  })
+
+  it('selecciona "Manual" cuando shadow_mode=true', () => {
+    setupMocks(true)
+    render(<ShadowModeToggle initialValue={true} />)
+
+    expect(screen.getByRole('radio', { name: /Manual/i })).toBeChecked()
+    expect(screen.getByRole('radio', { name: /Automática/i })).not.toBeChecked()
+  })
+
+  it('muestra descripción de "Automática" que incluye confirma los turnos al instante', () => {
+    setupMocks(false)
+    render(<ShadowModeToggle initialValue={false} />)
+
+    expect(screen.getByText(/confirma los turnos al instante/i)).toBeInTheDocument()
+  })
+
+  it('muestra descripción de "Manual" que incluye equipo lo confirma', () => {
+    setupMocks(true)
+    render(<ShadowModeToggle initialValue={true} />)
+
+    expect(screen.getByText(/equipo lo confirma/i)).toBeInTheDocument()
+  })
+
+  // ── Aviso de estado ────────────────────────────────────────────────────────
+
+  it('muestra aviso role="status" cuando confirmación manual está activa', () => {
     setupMocks(true)
     render(<ShadowModeToggle initialValue={true} />)
 
     const statusEl = screen.getByRole('status')
     expect(statusEl).toBeInTheDocument()
-    expect(statusEl).toHaveTextContent('Agendamiento automático bloqueado')
+    expect(statusEl).toHaveTextContent(/pendientes de confirmación/i)
   })
 
-  it('NO muestra aviso cuando shadow mode está inactivo', () => {
+  it('NO muestra aviso cuando confirmación automática está activa', () => {
     setupMocks(false)
     render(<ShadowModeToggle initialValue={false} />)
 
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
-  it('click en toggle llama toggle con valor invertido (false → true)', () => {
+  // ── Interacción ───────────────────────────────────────────────────────────
+
+  it('click en "Manual" llama toggle con true', () => {
     setupMocks(false)
     render(<ShadowModeToggle initialValue={false} />)
 
-    const toggle = screen.getByRole('switch')
-    fireEvent.click(toggle)
+    fireEvent.click(screen.getByRole('radio', { name: /Manual/i }))
 
     expect(mockToggle).toHaveBeenCalledWith(true)
   })
 
-  it('click en toggle llama toggle con valor invertido (true → false)', () => {
+  it('click en "Automática" llama toggle con false', () => {
     setupMocks(true)
     render(<ShadowModeToggle initialValue={true} />)
 
-    const toggle = screen.getByRole('switch')
-    fireEvent.click(toggle)
+    fireEvent.click(screen.getByRole('radio', { name: /Automática/i }))
 
     expect(mockToggle).toHaveBeenCalledWith(false)
   })
 
-  it('toggle tiene opacity-50 cuando isPending: true', () => {
+  // ── Estado pendiente ───────────────────────────────────────────────────────
+
+  it('los radios están deshabilitados cuando isPending: true', () => {
     setupMocks(false, true)
     render(<ShadowModeToggle initialValue={false} />)
 
-    const toggle = screen.getByRole('switch')
-    expect(toggle.className).toContain('opacity-50')
+    expect(screen.getByRole('radio', { name: /Automática/i })).toBeDisabled()
+    expect(screen.getByRole('radio', { name: /Manual/i })).toBeDisabled()
   })
 
-  it('click en toggle NO llama toggle cuando isPending: true', () => {
+  it('click en "Manual" NO llama toggle cuando isPending: true', () => {
     setupMocks(false, true)
     render(<ShadowModeToggle initialValue={false} />)
 
-    const toggle = screen.getByRole('switch')
-    fireEvent.click(toggle)
+    fireEvent.click(screen.getByRole('radio', { name: /Manual/i }))
 
     expect(mockToggle).not.toHaveBeenCalled()
   })
 
-  it('Enter activa el toggle', () => {
+  // ── Radiogroup accesible ──────────────────────────────────────────────────
+
+  it('el radiogroup tiene aria-label de confirmación de turnos', () => {
     setupMocks(false)
     render(<ShadowModeToggle initialValue={false} />)
 
-    const toggle = screen.getByRole('switch')
-    fireEvent.keyDown(toggle, { key: 'Enter' })
-
-    expect(mockToggle).toHaveBeenCalledWith(true)
+    expect(
+      screen.getByRole('radiogroup', { name: /confirmación de turnos/i }),
+    ).toBeInTheDocument()
   })
 
-  it('Espacio activa el toggle', () => {
-    setupMocks(false)
-    render(<ShadowModeToggle initialValue={false} />)
+  // ── Valor inicial (SSR optimista) ─────────────────────────────────────────
 
-    const toggle = screen.getByRole('switch')
-    fireEvent.keyDown(toggle, { key: ' ' })
+  it('usa initialValue=true mientras useShadowMode está cargando', () => {
+    mockUseShadowMode.mockReturnValue({
+      shadowModeEnabled: false,
+      isPending: true,
+      isError: false,
+    })
+    mockUseToggleShadowMode.mockReturnValue({ toggle: mockToggle, isPending: false })
 
-    expect(mockToggle).toHaveBeenCalledWith(true)
+    render(<ShadowModeToggle initialValue={true} />)
+
+    // isPending=true en useShadowMode → usa initialValue=true → "Manual" checkeado
+    expect(screen.getByRole('radio', { name: /Manual/i })).toBeChecked()
   })
 })

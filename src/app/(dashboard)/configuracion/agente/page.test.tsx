@@ -26,19 +26,25 @@ vi.mock('@/lib/supabase/server', () => ({
   ),
 }))
 
+// AgentPromptEditor ahora concentra el gating de ShadowModeToggle y
+// KnowledgeBaseManager internamente. El mock expone los props clave para
+// que las pruebas de la page puedan verificar que se pasen correctamente.
 vi.mock('@/components/configuracion/AgentPromptEditor', () => ({
-  AgentPromptEditor: () => <div data-testid="agent-prompt-editor" />,
-}))
-
-vi.mock('@/components/configuracion/ShadowModeToggle', () => ({
-  ShadowModeToggle: ({ initialValue }: { initialValue: boolean }) => (
-    <div data-testid="shadow-mode-toggle" data-initial-value={String(initialValue)} />
-  ),
-}))
-
-vi.mock('@/components/configuracion/KnowledgeBaseManager', () => ({
-  KnowledgeBaseManager: ({ canEdit }: { canEdit?: boolean }) => (
-    <div data-testid="knowledge-base-manager" data-can-edit={String(canEdit)} />
+  AgentPromptEditor: ({
+    isAdmin,
+    initialShadowMode,
+    canEdit,
+  }: {
+    isAdmin?: boolean
+    initialShadowMode?: boolean
+    canEdit?: boolean
+  }) => (
+    <div
+      data-testid="agent-prompt-editor"
+      data-is-admin={String(isAdmin)}
+      data-initial-shadow-mode={String(initialShadowMode)}
+      data-can-edit={String(canEdit)}
+    />
   ),
 }))
 
@@ -54,8 +60,6 @@ function makeJwt(claims: Record<string, unknown> = { app_role: 'admin', tenant_i
   return `h.${encoded}.sig`
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
 function makeSelectSingleChain(result: { data: unknown; error: unknown }) {
   return {
     select: vi.fn().mockReturnThis(),
@@ -63,11 +67,15 @@ function makeSelectSingleChain(result: { data: unknown; error: unknown }) {
   }
 }
 
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
 describe('AgentePage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     // Por defecto: from() retorna shadow_mode_enabled: false
-    mockFrom.mockReturnValue(makeSelectSingleChain({ data: { shadow_mode_enabled: false }, error: null }))
+    mockFrom.mockReturnValue(
+      makeSelectSingleChain({ data: { shadow_mode_enabled: false }, error: null }),
+    )
   })
 
   function setAuth(role: string | null) {
@@ -78,9 +86,13 @@ describe('AgentePage', () => {
     }
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
     mockGetSession.mockResolvedValue({
-      data: { session: { access_token: makeJwt({ app_role: role, tenant_id: 'tenant-1' }) } },
+      data: {
+        session: { access_token: makeJwt({ app_role: role, tenant_id: 'tenant-1' }) },
+      },
     })
   }
+
+  // ── Gating de roles ────────────────────────────────────────────────────────
 
   it('redirige a /login si no hay usuario autenticado', async () => {
     setAuth(null)
@@ -106,21 +118,60 @@ describe('AgentePage', () => {
 
       expect(screen.getByTestId('agent-prompt-editor')).toBeInTheDocument()
       expect(screen.getByText('Agente IA')).toBeInTheDocument()
-    }
+    },
   )
 
-  it('renderiza ShadowModeToggle SOLO para admin', async () => {
+  // ── Props pasados a AgentPromptEditor ─────────────────────────────────────
+
+  it('pasa isAdmin=true a AgentPromptEditor para rol admin', async () => {
+    mockFrom.mockReturnValue(
+      makeSelectSingleChain({ data: { shadow_mode_enabled: true }, error: null }),
+    )
     setAuth('admin')
     const element = await AgentePage()
     render(element)
-    expect(screen.getByTestId('shadow-mode-toggle')).toBeInTheDocument()
+
+    const editor = screen.getByTestId('agent-prompt-editor')
+    expect(editor).toHaveAttribute('data-is-admin', 'true')
+    expect(editor).toHaveAttribute('data-initial-shadow-mode', 'true')
+    expect(editor).toHaveAttribute('data-can-edit', 'true')
   })
 
-  it('NO renderiza ShadowModeToggle para receptionist', async () => {
+  it('pasa isAdmin=false a AgentPromptEditor para rol receptionist', async () => {
     setAuth('receptionist')
     const element = await AgentePage()
     render(element)
-    expect(screen.queryByTestId('shadow-mode-toggle')).not.toBeInTheDocument()
+
+    const editor = screen.getByTestId('agent-prompt-editor')
+    expect(editor).toHaveAttribute('data-is-admin', 'false')
+    expect(editor).toHaveAttribute('data-can-edit', 'true')
   })
 
+  it('initialShadowMode refleja el valor de la DB para admin', async () => {
+    mockFrom.mockReturnValue(
+      makeSelectSingleChain({ data: { shadow_mode_enabled: true }, error: null }),
+    )
+    setAuth('admin')
+    const element = await AgentePage()
+    render(element)
+
+    expect(screen.getByTestId('agent-prompt-editor')).toHaveAttribute(
+      'data-initial-shadow-mode',
+      'true',
+    )
+  })
+
+  it('initialShadowMode es false para receptionist (no consulta DB)', async () => {
+    setAuth('receptionist')
+    const element = await AgentePage()
+    render(element)
+
+    // Para receptionist no se consulta DB, initialShadowMode es false por defecto
+    expect(screen.getByTestId('agent-prompt-editor')).toHaveAttribute(
+      'data-initial-shadow-mode',
+      'false',
+    )
+    // Confirmar que from() NO fue llamado (solo admin consulta shadow_mode)
+    expect(mockFrom).not.toHaveBeenCalled()
+  })
 })

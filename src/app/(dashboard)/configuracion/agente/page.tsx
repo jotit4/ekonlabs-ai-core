@@ -2,8 +2,6 @@ import { redirect } from 'next/navigation'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 import { AgentPromptEditor } from '@/components/configuracion/AgentPromptEditor'
-import { ShadowModeToggle } from '@/components/configuracion/ShadowModeToggle'
-import { KnowledgeBaseManager } from '@/components/configuracion/KnowledgeBaseManager'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,8 +26,8 @@ export default async function AgentePage() {
   const isAdmin = role === 'admin'
 
   // Shadow mode vive en `tenants` y su endpoint es admin-only (Story 6.5).
-  // Sólo se renderiza para admin; no exponer a receptionist/doctor un control
-  // que el backend rechazaría.
+  // Sólo se pasa a AgentPromptEditor cuando el rol es admin; no exponer a
+  // receptionist/doctor un control que el backend rechazaría.
   let initialShadowMode = false
   if (isAdmin) {
     const { data: tenantData } = await supabase
@@ -45,15 +43,11 @@ export default async function AgentePage() {
         <p className="text-sm text-[var(--color-text-secondary)]">Configuración</p>
         <h1 className="mt-1 text-[28px] font-semibold leading-tight">Agente IA</h1>
       </header>
-      <AgentPromptEditor />
-      {isAdmin && (
-        <>
-          <hr className="border-[var(--color-border)] my-8" />
-          <ShadowModeToggle initialValue={initialShadowMode} />
-        </>
-      )}
-      <hr className="border-[var(--color-border)] my-8" />
-      <KnowledgeBaseManager canEdit={role !== 'doctor'} />
+      <AgentPromptEditor
+        isAdmin={isAdmin}
+        initialShadowMode={initialShadowMode}
+        canEdit={role !== 'doctor'}
+      />
     </section>
   )
 }

@@ -78,7 +78,7 @@ describe('useToggleShadowMode', () => {
     })
   })
 
-  it('toast.success con "Shadow mode activado" cuando éxito con true', async () => {
+  it('toast.success incluye "confirmación manual" cuando shadow_mode se activa (true)', async () => {
     const { useToggleShadowMode } = await import('./use-toggle-shadow-mode')
     const { wrapper } = makeWrapper()
     mockFetchSuccess({ data: { shadow_mode_enabled: true } })
@@ -91,12 +91,12 @@ describe('useToggleShadowMode', () => {
 
     await waitFor(() => {
       expect(mockToastSuccess).toHaveBeenCalledWith(
-        expect.stringContaining('Shadow mode activado')
+        expect.stringContaining('Confirmación manual activada')
       )
     })
   })
 
-  it('toast.success con "Shadow mode desactivado" cuando éxito con false', async () => {
+  it('toast.success incluye "confirmación automática" cuando shadow_mode se desactiva (false)', async () => {
     const { useToggleShadowMode } = await import('./use-toggle-shadow-mode')
     const { wrapper } = makeWrapper()
     mockFetchSuccess({ data: { shadow_mode_enabled: false } })
@@ -109,7 +109,7 @@ describe('useToggleShadowMode', () => {
 
     await waitFor(() => {
       expect(mockToastSuccess).toHaveBeenCalledWith(
-        expect.stringContaining('Shadow mode desactivado')
+        expect.stringContaining('Confirmación automática activada')
       )
     })
   })
@@ -127,7 +127,7 @@ describe('useToggleShadowMode', () => {
 
     await waitFor(() => {
       expect(mockToastError).toHaveBeenCalledWith(
-        expect.stringContaining('Error al cambiar el modo shadow'),
+        expect.stringContaining('Error al cambiar la confirmación de turnos'),
         expect.objectContaining({
           action: expect.objectContaining({ label: 'Reintentar' }),
         })

@@ -33,7 +33,7 @@ export function useToggleShadowMode() {
       if (context?.previous !== undefined) {
         queryClient.setQueryData(SHADOW_MODE_KEY, context.previous)
       }
-      toast.error('Error al cambiar el modo shadow.', {
+      toast.error('Error al cambiar la confirmación de turnos.', {
         action: {
           label: 'Reintentar',
           onClick: () => mutation.mutate(newPayload),
@@ -44,8 +44,8 @@ export function useToggleShadowMode() {
       queryClient.invalidateQueries({ queryKey: SHADOW_MODE_KEY })
       toast.success(
         shadow_mode_enabled
-          ? 'Shadow mode activado — agendamiento automático bloqueado'
-          : 'Shadow mode desactivado — agendamiento automático habilitado'
+          ? 'Confirmación manual activada — los turnos quedan pendientes de aprobación'
+          : 'Confirmación automática activada — el agente confirma los turnos al instante'
       )
     },
   })
