@@ -4,7 +4,8 @@
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import 'react-big-calendar/lib/addons/dragAndDrop/styles.css'
 
-import { useMemo } from 'react'
+import { useMemo, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import { Calendar, dateFnsLocalizer, Views } from 'react-big-calendar'
 // withDragAndDrop: import ESM para que vi.mock lo intercepte correctamente en tests
 // El cast any es necesario porque los tipos genéricos de CJS no son compatibles con strict mode
@@ -19,6 +20,8 @@ import {
   appointmentToCalendarEvent,
 } from '@/types/appointments'
 import { AgendaDayViewSkeleton } from './AgendaDayView'
+import { useUserRole } from '@/hooks/use-user-role'
+import { patientFichaHref } from '@/lib/agenda/patient-ficha-href'
 
 // Cast controlado para compatibilidad con tipos CJS de react-big-calendar en strict mode
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -86,11 +89,25 @@ export function MiAgendaCalendarView({
   isError,
   onRefetch,
 }: MiAgendaCalendarViewProps) {
+  const router = useRouter()
+  const role = useUserRole()
+
   // Vista solo lectura — sin drag & drop, sin optimistic updates
   // useMemo es suficiente ya que no hay mutaciones locales de eventos
   const events = useMemo(
     () => appointments.map(appointmentToCalendarEvent),
     [appointments]
+  )
+
+  // Navegar a la ficha del paciente al tocar/hacer clic en un turno.
+  // Cierra la promesa rota del tour del doctor ("Tocá un turno para ver al paciente").
+  // El doctor aterriza en ?tab=notas (notas clínicas); otros roles en la ficha general.
+  const handleSelectEvent = useCallback(
+    (event: CalendarEvent) => {
+      const href = patientFichaHref(event.resource.patient_id, role)
+      if (href) router.push(href)
+    },
+    [role, router],
   )
 
   if (isLoading) {
@@ -129,6 +146,8 @@ export function MiAgendaCalendarView({
         toolbar={false}
         onEventDrop={undefined}
         onEventResize={undefined}
+        onSelectEvent={handleSelectEvent}
+        selectable
         step={30}
         timeslots={2}
         min={new Date(0, 0, 0, 7, 0, 0)}

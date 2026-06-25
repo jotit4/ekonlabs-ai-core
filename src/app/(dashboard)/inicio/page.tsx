@@ -17,6 +17,8 @@ import {
   CalendarOff,
 } from 'lucide-react'
 import { AgendaDayView } from '@/components/agenda/AgendaDayView'
+import { PulsoCard } from '@/components/inicio/PulsoCard'
+import { PendientesDelDueno } from '@/components/inicio/PendientesDelDueno'
 import { useCurrentUser } from '@/hooks/use-current-user'
 import { useAppointments } from '@/hooks/use-appointments'
 import { useClinicKPIs } from '@/hooks/use-clinic-kpis'
@@ -110,6 +112,9 @@ export default function InicioPage() {
         </p>
       </header>
 
+      {/* ── Pendientes que te necesitan ───────────────────────────────────── */}
+      <PendientesDelDueno />
+
       {/* ── Cómo va la clínica ────────────────────────────────────────────── */}
       <section aria-label="Cómo va la clínica" className="mb-10">
         <h2 className="mb-4 text-[20px] font-bold tracking-tight text-[var(--color-text-primary)]">
@@ -120,25 +125,27 @@ export default function InicioPage() {
           data-tour="inicio-pulso"
           className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
         >
-          {/* Turnos de hoy */}
+          {/* Turnos de hoy — deeplink a la agenda del día */}
           <PulsoCard
             icono={<CalendarDays className="h-5 w-5" />}
             tono="interactive"
             valor={turnosHoyCargando ? '—' : cantidadTurnosHoy}
             titulo={cantidadTurnosHoy === 1 ? 'turno para hoy' : 'turnos para hoy'}
             ayuda="Reservados para todos los profesionales"
+            href="/agenda?vista=dia"
           />
 
-          {/* Ocupación */}
+          {/* Ocupación — deeplink a métricas */}
           <PulsoCard
             icono={<TrendingUp className="h-5 w-5" />}
             tono="ok"
             valor={clinicCargando || !clinicKpis ? '—' : `${clinicKpis.ocupacion_pct}%`}
             titulo="de la agenda ocupada"
             ayuda="Este mes, sobre los horarios disponibles"
+            href="/metricas"
           />
 
-          {/* Ausencias (no-shows) */}
+          {/* Ausencias (no-shows) — deeplink a métricas */}
           <PulsoCard
             icono={<UserX className="h-5 w-5" />}
             tono="warn"
@@ -149,9 +156,10 @@ export default function InicioPage() {
                 : 'personas faltaron al turno'
             }
             ayuda="Este mes, sin avisar"
+            href="/metricas"
           />
 
-          {/* Pacientes nuevos */}
+          {/* Pacientes nuevos — deeplink a métricas */}
           <PulsoCard
             icono={<UserPlus className="h-5 w-5" />}
             tono="interactive"
@@ -162,12 +170,17 @@ export default function InicioPage() {
                 : 'pacientes nuevos'
             }
             ayuda="Llegaron por primera vez este mes"
+            href="/metricas"
           />
 
           {/* El asistente de WhatsApp — resolvió solo vs necesitó una persona.
-              Ocupa el ancho de dos columnas para que entre la frase completa. */}
+              Ocupa el ancho de dos columnas para que entre la frase completa.
+              Clickeable → /conversaciones para profundizar. */}
           <div data-tour="inicio-asistente" className="sm:col-span-2 lg:col-span-2">
-            <div className="flex min-h-[44px] h-full items-center gap-4 rounded-[16px] border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
+            <Link
+              href="/conversaciones"
+              className="flex min-h-[44px] h-full items-center gap-4 rounded-[16px] border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 transition-all hover:-translate-y-0.5 hover:border-[var(--color-interactive)] hover:shadow-md focus:outline-none focus-visible:ring-4 focus-visible:ring-[var(--color-interactive)]/30"
+            >
               <span
                 aria-hidden="true"
                 className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-interactive)]/12 text-[var(--color-interactive)]"
@@ -210,7 +223,7 @@ export default function InicioPage() {
                   </p>
                 )}
               </div>
-            </div>
+            </Link>
           </div>
         </div>
       </section>
@@ -338,47 +351,3 @@ export default function InicioPage() {
   )
 }
 
-// ─── Tarjeta de un indicador del pulso ────────────────────────────────────────
-
-type PulsoTono = 'interactive' | 'ok' | 'warn'
-
-const TONO_CLASES: Record<PulsoTono, string> = {
-  interactive: 'bg-[var(--color-interactive)]/12 text-[var(--color-interactive)]',
-  ok: 'bg-[var(--color-status-ok)]/15 text-[var(--color-status-ok)]',
-  warn: 'bg-[var(--color-status-warn)]/15 text-[var(--color-status-warn)]',
-}
-
-interface PulsoCardProps {
-  icono: React.ReactNode
-  tono: PulsoTono
-  valor: number | string
-  titulo: string
-  ayuda: string
-}
-
-function PulsoCard({ icono, tono, valor, titulo, ayuda }: PulsoCardProps) {
-  return (
-    <div className="flex min-h-[44px] h-full items-center gap-4 rounded-[16px] border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
-      <span
-        aria-hidden="true"
-        className={[
-          'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl',
-          TONO_CLASES[tono],
-        ].join(' ')}
-      >
-        {icono}
-      </span>
-      <div className="min-w-0">
-        <p className="text-[26px] font-bold leading-none text-[var(--color-text-primary)]">
-          {valor}
-        </p>
-        <p className="mt-1.5 text-[14px] font-medium leading-tight text-[var(--color-text-primary)]">
-          {titulo}
-        </p>
-        <p className="mt-0.5 text-[12px] leading-tight text-[var(--color-text-secondary)]">
-          {ayuda}
-        </p>
-      </div>
-    </div>
-  )
-}

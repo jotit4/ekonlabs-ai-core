@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { format, parseISO, isValid } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { Pencil } from 'lucide-react'
@@ -7,6 +8,8 @@ import type { Appointment } from '@/types/appointments'
 import { STATUS_LABELS } from '@/types/appointments'
 import { StatusDot, statusToVariant } from '@/components/shared/StatusDot'
 import { ReminderBadge } from './ReminderBadge'
+import { useUserRole } from '@/hooks/use-user-role'
+import { patientFichaHref } from '@/lib/agenda/patient-ficha-href'
 
 interface TurnoCardProps {
   appointment: Appointment
@@ -24,14 +27,26 @@ export function TurnoCard({ appointment, onReschedule }: TurnoCardProps) {
   const label = STATUS_LABELS[appointment.status]
   const variant = statusToVariant(appointment.status)
 
+  const role = useUserRole()
+  const fichaHref = patientFichaHref(appointment.patient_id, role)
+
   return (
     <div className="flex items-center gap-3 px-4 py-3 min-h-[44px]">
       <span className="w-10 shrink-0 text-sm font-mono text-[var(--color-text-secondary)]">
         {hora}
       </span>
-      <span className="flex-1 text-sm font-medium text-[var(--color-text-primary)] truncate">
-        {paciente}
-      </span>
+      {fichaHref ? (
+        <Link
+          href={fichaHref}
+          className="flex-1 text-sm font-medium text-[var(--color-text-primary)] truncate hover:underline"
+        >
+          {paciente}
+        </Link>
+      ) : (
+        <span className="flex-1 text-sm font-medium text-[var(--color-text-primary)] truncate">
+          {paciente}
+        </span>
+      )}
       <span className="text-sm text-[var(--color-text-secondary)] truncate">
         {servicio}
         {profesional ? ` · ${profesional}` : ''}

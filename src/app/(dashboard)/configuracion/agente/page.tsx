@@ -21,6 +21,10 @@ export default async function AgentePage() {
     redirect('/agenda')
   }
 
+  if (role === 'doctor') {
+    redirect('/mi-jornada')
+  }
+
   const isAdmin = role === 'admin'
 
   // Shadow mode vive en `tenants` y su endpoint es admin-only (Story 6.5).

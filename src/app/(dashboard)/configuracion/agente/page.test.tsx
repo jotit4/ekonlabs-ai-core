@@ -92,7 +92,12 @@ describe('AgentePage', () => {
     await expect(AgentePage()).rejects.toThrow('REDIRECT:/agenda')
   })
 
-  it.each(['admin', 'doctor', 'receptionist'])(
+  it('redirige a /mi-jornada si el rol es doctor', async () => {
+    setAuth('doctor')
+    await expect(AgentePage()).rejects.toThrow('REDIRECT:/mi-jornada')
+  })
+
+  it.each(['admin', 'receptionist'])(
     'NO redirige y renderiza AgentPromptEditor para rol %s',
     async (role) => {
       setAuth(role)
@@ -118,10 +123,4 @@ describe('AgentePage', () => {
     expect(screen.queryByTestId('shadow-mode-toggle')).not.toBeInTheDocument()
   })
 
-  it('NO renderiza ShadowModeToggle para doctor', async () => {
-    setAuth('doctor')
-    const element = await AgentePage()
-    render(element)
-    expect(screen.queryByTestId('shadow-mode-toggle')).not.toBeInTheDocument()
-  })
 })

@@ -13,9 +13,17 @@ import {
   CalendarClock,
   UserX,
   ArrowRight,
+  Ban,
 } from 'lucide-react'
 import { RescheduleTurnoModal } from '@/components/agenda/RescheduleTurnoModal'
+import { AbsenceDecisionDialog } from '@/components/agenda/AbsenceDecisionDialog'
+import { CancelConfirmInline } from '@/components/agenda/CancelConfirmInline'
+import { useAppointmentActions } from '@/hooks/use-appointment-actions'
+import { useUserRole } from '@/hooks/use-user-role'
+import { patientFichaHref } from '@/lib/agenda/patient-ficha-href'
 import type { Appointment } from '@/types/appointments'
+import type { AbsenceDecision } from '@/lib/schemas/absence-decision.schema'
+import type { UserRole } from '@/types'
 
 // Cuántos turnos próximos mostramos en la lista corta del Modo recepción.
 const MAX_PROXIMOS = 4
@@ -30,14 +38,6 @@ interface ProximosTurnosProps {
   onRetry: () => void
 }
 
-// Estados que cuentan como "ya pasó por recepción / fuera de la cola de espera".
-// Un turno completed/no_show/cancelled ya no es "alguien que viene ahora".
-const STATUS_FUERA_DE_COLA: Appointment['status'][] = [
-  'completed',
-  'no_show',
-  'cancelled',
-]
-
 export function ProximosTurnos({
   appointments,
   hoyISO,
@@ -46,6 +46,7 @@ export function ProximosTurnos({
   onRetry,
 }: ProximosTurnosProps) {
   const queryClient = useQueryClient()
+  const role = useUserRole()
 
   // Turno seleccionado para reprogramar (abre el mismo modal que la agenda).
   const [rescheduleTarget, setRescheduleTarget] = useState<Appointment | null>(null)
@@ -135,6 +136,7 @@ export function ProximosTurnos({
               esProximo={idx === 0}
               queryClient={queryClient}
               onReschedule={() => setRescheduleTarget(turno)}
+              role={role}
             />
           ))}
         </ul>
@@ -180,20 +182,26 @@ interface TurnoFilaProps {
   esProximo: boolean
   queryClient: ReturnType<typeof useQueryClient>
   onReschedule: () => void
+  role: UserRole | null
 }
 
-function TurnoFila({ turno, hoyISO, esProximo, queryClient, onReschedule }: TurnoFilaProps) {
+function TurnoFila({ turno, hoyISO, esProximo, queryClient, onReschedule, role }: TurnoFilaProps) {
   // Estado optimista local: una vez que marcamos "Llegó", la fila pasa a "Presente".
   // Si el server falla, lo revertimos. El refetch de la query confirma el estado real.
   const [presente, setPresente] = useState(turno.status === 'completed')
   const [enviando, setEnviando] = useState(false)
   const [menuAbierto, setMenuAbierto] = useState(false)
 
+  // Hook compartido de acciones: maneja cancelar (con flujo de serie), no_show (con
+  // flujo de serie) y el AbsenceDecisionDialog para paquetes.
+  const actions = useAppointmentActions(hoyISO)
+
   const nombrePaciente = turno.patients?.full_name ?? 'Paciente'
   const nombreServicio = turno.services?.name ?? null
   const nombreProfesional =
     turno.professionals?.name ?? turno.services?.professional_name ?? null
   const horaTexto = turno.start_at ? format(parseISO(turno.start_at), 'HH:mm') : '--:--'
+  const fichaHref = patientFichaHref(turno.patient_id, role)
 
   // Invalida la query del día — misma queryKey que usa useAppointments(hoyISO):
   // ['agenda', 'day', hoyISO, ...]. Como invalidamos por prefijo, refresca tanto
@@ -202,7 +210,7 @@ function TurnoFila({ turno, hoyISO, esProximo, queryClient, onReschedule }: Turn
     queryClient.invalidateQueries({ queryKey: ['agenda', 'day', hoyISO] })
   }
 
-  async function actualizarEstado(status: 'completed' | 'no_show') {
+  async function actualizarEstado(status: 'completed') {
     const response = await fetch(`/api/appointments/${turno.appointment_id}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -221,9 +229,10 @@ function TurnoFila({ turno, hoyISO, esProximo, queryClient, onReschedule }: Turn
     try {
       await actualizarEstado('completed')
       invalidarDia()
-      toast.success(`${nombrePaciente} marcado como presente`, {
-        action: { label: 'Deshacer', onClick: handleDeshacer },
-      })
+      // Bug fix (Story D / Story F): "Deshacer" se quitó porque el endpoint no acepta
+      // status:'confirmed' — el schema solo permite cancelled|completed|no_show.
+      // Un turno marcado como 'completed' no puede revertirse sin cambiar el backend.
+      toast.success(`${nombrePaciente} marcado como presente`)
     } catch (err) {
       setPresente(false) // revertir
       toast.error(
@@ -235,134 +244,164 @@ function TurnoFila({ turno, hoyISO, esProximo, queryClient, onReschedule }: Turn
     }
   }
 
-  // Deshacer: volver el turno a "confirmed" (estado previo natural de un turno
-  // de hoy que todavía no pasó por recepción).
-  async function handleDeshacer() {
-    if (enviando) return
-    setEnviando(true)
-    setPresente(false) // optimista
-    try {
-      const response = await fetch(`/api/appointments/${turno.appointment_id}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'confirmed' }),
-      })
-      if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { error?: string }
-        throw new Error(body.error ?? 'No se pudo deshacer')
-      }
-      invalidarDia()
-    } catch {
-      setPresente(true) // revertir
-      toast.error('No se pudo deshacer. Intentá de nuevo.')
-    } finally {
-      setEnviando(false)
-    }
-  }
-
+  // "No vino" — migrado a useAppointmentActions (Story D).
+  // Si el turno pertenece a una serie (package_id), el hook abre AbsenceDecisionDialog.
+  // Si no, actualiza el status directamente y refresca la query.
   async function handleNoVino() {
     setMenuAbierto(false)
-    if (enviando) return
-    setEnviando(true)
-    try {
-      await actualizarEstado('no_show')
-      invalidarDia()
-      toast.success(`${nombrePaciente} marcado como ausente`)
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : 'No se pudo marcar como ausente',
-      )
-    } finally {
-      setEnviando(false)
-    }
+    await actions.handleAttendanceSelect(turno, 'no_show')
   }
+
+  // "Cancelar turno" — usa useAppointmentActions.
+  // El hook abre CancelConfirmInline (si es turno suelto) o AbsenceDecisionDialog
+  // (si es turno de serie) al confirmar.
+  function handleCancelarClick() {
+    setMenuAbierto(false)
+    actions.clearCancelError()
+    actions.setCancelTarget(turno)
+  }
+
+  async function handleCancelConfirm() {
+    await actions.handleCancelConfirm()
+    // Si era turno suelto: cancelTarget queda null → CancelConfirmInline desaparece.
+    // Si era turno de serie: absenceTarget se activa → AbsenceDecisionDialog aparece.
+  }
+
+  async function handleAbsenceConfirm(decision: AbsenceDecision, note?: string) {
+    await actions.handleAbsenceConfirm(decision, note)
+  }
+
+  // ¿Está mostrando la confirmación de cancelar para ESTE turno?
+  const mostrandoCancelConfirm =
+    actions.cancelTarget?.appointment_id === turno.appointment_id
+
+  const disabled = enviando || actions.cancelLoading || actions.attendanceLoading
 
   return (
     <li
       className={[
-        'flex items-center gap-3 rounded-[14px] border px-4 py-3 transition-colors',
-        presente
-          ? 'border-[var(--color-status-ok)]/40 bg-[var(--color-status-ok)]/8'
-          : esProximo
-            ? 'border-[var(--color-interactive)]/40 bg-[var(--color-surface)]'
-            : 'border-[var(--color-border)] bg-[var(--color-surface)]',
+        'rounded-[14px] border px-4 py-3 transition-colors',
+        mostrandoCancelConfirm
+          ? 'flex flex-col gap-3 border-[var(--color-border)] bg-[var(--color-surface)]'
+          : [
+              'flex items-center gap-3',
+              presente
+                ? 'border-[var(--color-status-ok)]/40 bg-[var(--color-status-ok)]/8'
+                : esProximo
+                  ? 'border-[var(--color-interactive)]/40 bg-[var(--color-surface)]'
+                  : 'border-[var(--color-border)] bg-[var(--color-surface)]',
+            ].join(' '),
       ].join(' ')}
     >
-      {/* Indicador del próximo + hora */}
-      <div className="flex min-w-[68px] shrink-0 items-center gap-2">
-        <span
-          aria-hidden="true"
-          className={[
-            'inline-block h-2.5 w-2.5 shrink-0 rounded-full',
-            esProximo && !presente
-              ? 'bg-[var(--color-interactive)]'
-              : 'bg-transparent',
-          ].join(' ')}
-        />
-        <span className="flex items-center gap-1 text-[16px] font-bold leading-none text-[var(--color-text-primary)]">
-          <Clock aria-hidden="true" className="h-4 w-4 text-[var(--color-text-secondary)]" />
-          {horaTexto}
-        </span>
-      </div>
-
-      {/* Paciente + servicio · profesional */}
-      <div className={['min-w-0 flex-1', presente ? 'opacity-60' : ''].join(' ')}>
-        <p className="truncate text-[15px] font-semibold text-[var(--color-text-primary)]">
-          {nombrePaciente}
-        </p>
-        {(nombreServicio ?? nombreProfesional) && (
-          <p className="truncate text-[13px] text-[var(--color-text-secondary)]">
-            {[nombreServicio, nombreProfesional].filter(Boolean).join(' · ')}
+      {mostrandoCancelConfirm ? (
+        // ── Confirmación inline de cancelación ──
+        <>
+          <p className="text-[14px] font-semibold text-[var(--color-text-primary)]">
+            {nombrePaciente} · {horaTexto}
           </p>
-        )}
-      </div>
-
-      {/* Acción primaria */}
-      {presente ? (
-        <span className="flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-[10px] bg-[var(--color-status-ok)]/15 px-3 text-[14px] font-semibold text-[var(--color-status-ok)]">
-          <CheckCircle2 aria-hidden="true" className="h-4 w-4" />
-          Presente
-        </span>
+          <CancelConfirmInline
+            patientName={nombrePaciente}
+            onConfirm={() => void handleCancelConfirm()}
+            onClose={() => {
+              actions.setCancelTarget(null)
+              actions.clearCancelError()
+            }}
+            isLoading={actions.cancelLoading}
+            error={actions.cancelError}
+          />
+        </>
       ) : (
-        <button
-          type="button"
-          onClick={handleLlego}
-          disabled={enviando}
-          className={[
-            'flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-[10px] px-4 text-[14px] font-semibold',
-            'bg-[var(--color-status-ok)] text-white transition-opacity',
-            'hover:opacity-90 focus:outline-none focus-visible:ring-4 focus-visible:ring-[var(--color-status-ok)]/30',
-            enviando ? 'cursor-not-allowed opacity-50' : '',
-          ].join(' ')}
-          aria-label={`Marcar que ${nombrePaciente} llegó`}
-        >
-          <Check aria-hidden="true" className="h-4 w-4" />
-          Llegó
-        </button>
+        <>
+          {/* Indicador del próximo + hora */}
+          <div className="flex min-w-[68px] shrink-0 items-center gap-2">
+            <span
+              aria-hidden="true"
+              className={[
+                'inline-block h-2.5 w-2.5 shrink-0 rounded-full',
+                esProximo && !presente
+                  ? 'bg-[var(--color-interactive)]'
+                  : 'bg-transparent',
+              ].join(' ')}
+            />
+            <span className="flex items-center gap-1 text-[16px] font-bold leading-none text-[var(--color-text-primary)]">
+              <Clock aria-hidden="true" className="h-4 w-4 text-[var(--color-text-secondary)]" />
+              {horaTexto}
+            </span>
+          </div>
+
+          {/* Paciente + servicio · profesional */}
+          <div className={['min-w-0 flex-1', presente ? 'opacity-60' : ''].join(' ')}>
+            {fichaHref ? (
+              <Link
+                href={fichaHref}
+                className="block truncate text-[15px] font-semibold text-[var(--color-text-primary)] hover:underline"
+              >
+                {nombrePaciente}
+              </Link>
+            ) : (
+              <p className="truncate text-[15px] font-semibold text-[var(--color-text-primary)]">
+                {nombrePaciente}
+              </p>
+            )}
+            {(nombreServicio ?? nombreProfesional) && (
+              <p className="truncate text-[13px] text-[var(--color-text-secondary)]">
+                {[nombreServicio, nombreProfesional].filter(Boolean).join(' · ')}
+              </p>
+            )}
+          </div>
+
+          {/* Acción primaria */}
+          {presente ? (
+            <span className="flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-[10px] bg-[var(--color-status-ok)]/15 px-3 text-[14px] font-semibold text-[var(--color-status-ok)]">
+              <CheckCircle2 aria-hidden="true" className="h-4 w-4" />
+              Presente
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={handleLlego}
+              disabled={disabled}
+              className={[
+                'flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-[10px] px-4 text-[14px] font-semibold',
+                'bg-[var(--color-status-ok)] text-white transition-opacity',
+                'hover:opacity-90 focus:outline-none focus-visible:ring-4 focus-visible:ring-[var(--color-status-ok)]/30',
+                disabled ? 'cursor-not-allowed opacity-50' : '',
+              ].join(' ')}
+              aria-label={`Marcar que ${nombrePaciente} llegó`}
+            >
+              <Check aria-hidden="true" className="h-4 w-4" />
+              Llegó
+            </button>
+          )}
+
+          {/* Acción secundaria: kebab con No vino / Reprogramar / Cancelar */}
+          {!presente && (
+            <KebabMenu
+              nombrePaciente={nombrePaciente}
+              abierto={menuAbierto}
+              onToggle={() => setMenuAbierto((v) => !v)}
+              onClose={() => setMenuAbierto(false)}
+              onNoVino={() => void handleNoVino()}
+              onReprogramar={() => {
+                setMenuAbierto(false)
+                onReschedule()
+              }}
+              onCancelar={handleCancelarClick}
+              disabled={disabled}
+            />
+          )}
+        </>
       )}
 
-      {/* Acción secundaria: deshacer (cuando ya está presente) o kebab. */}
-      {presente ? (
-        <button
-          type="button"
-          onClick={handleDeshacer}
-          disabled={enviando}
-          className="min-h-[44px] shrink-0 px-2 text-[13px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:underline disabled:opacity-50"
-        >
-          Deshacer
-        </button>
-      ) : (
-        <KebabMenu
-          nombrePaciente={nombrePaciente}
-          abierto={menuAbierto}
-          onToggle={() => setMenuAbierto((v) => !v)}
-          onClose={() => setMenuAbierto(false)}
-          onNoVino={handleNoVino}
-          onReprogramar={() => {
-            setMenuAbierto(false)
-            onReschedule()
-          }}
-          disabled={enviando}
+      {/* AbsenceDecisionDialog — usa position:fixed, no afecta el layout del <li> */}
+      {actions.absenceTarget?.appointment.appointment_id === turno.appointment_id && (
+        <AbsenceDecisionDialog
+          appointment={actions.absenceTarget.appointment}
+          action={actions.absenceTarget.action}
+          onConfirm={(decision, note) => void handleAbsenceConfirm(decision, note)}
+          onClose={actions.clearAbsenceTarget}
+          isLoading={actions.absenceLoading}
+          error={actions.absenceError}
         />
       )}
     </li>
@@ -378,6 +417,8 @@ interface KebabMenuProps {
   onClose: () => void
   onNoVino: () => void
   onReprogramar: () => void
+  /** Nueva acción: cancelar el turno. */
+  onCancelar: () => void
   disabled: boolean
 }
 
@@ -388,6 +429,7 @@ function KebabMenu({
   onClose,
   onNoVino,
   onReprogramar,
+  onCancelar,
   disabled,
 }: KebabMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
@@ -438,6 +480,17 @@ function KebabMenu({
           >
             <CalendarClock aria-hidden="true" className="h-4 w-4 text-[var(--color-text-secondary)]" />
             Reprogramar
+          </button>
+          <div className="border-t border-[var(--color-border)]" />
+          <button
+            type="button"
+            role="menuitem"
+            onClick={onCancelar}
+            disabled={disabled}
+            className="flex min-h-[44px] w-full items-center gap-2.5 px-4 text-left text-[14px] text-[#ef4444] hover:bg-[var(--color-surface)] disabled:opacity-50"
+          >
+            <Ban aria-hidden="true" className="h-4 w-4" />
+            Cancelar turno
           </button>
         </div>
       )}

@@ -8,9 +8,11 @@ import {
   CalendarDays,
   CalendarOff,
   ArrowRight,
+  Users,
 } from 'lucide-react'
 import { AgendaDayView } from '@/components/agenda/AgendaDayView'
 import { ProximosTurnos } from '@/components/recepcion/ProximosTurnos'
+import { ResumenHoy } from '@/components/mi-jornada/ResumenHoy'
 import { useCurrentUser } from '@/hooks/use-current-user'
 import { useMyAgenda } from '@/hooks/use-my-agenda'
 import { useMyAgendaRealtime } from '@/hooks/use-my-agenda-realtime'
@@ -95,9 +97,12 @@ export default function MiJornadaPage() {
           </div>
         ) : (
           <>
-            {/* Próximos turnos con asistencia de un toque (Llegó / No vino /
-                Reprogramar). Mismo componente que el Modo recepción, pero
-                alimentado con MI agenda en lugar de la de toda la clínica. */}
+            {/* ── Resumen de hoy — derivado de los turnos ya en memoria ─── */}
+            <ResumenHoy appointments={misTurnos} />
+
+            {/* Próximos turnos con CTA clínico: el nombre del paciente enlaza
+                a /pacientes/[id]?tab=notas (rol doctor) gracias a Story A.
+                Mismo componente que el Modo recepción pero con MI agenda. */}
             <div data-tour="mi-jornada-proximos">
               <ProximosTurnos
                 appointments={misTurnos}
@@ -135,12 +140,42 @@ export default function MiJornadaPage() {
         )}
       </section>
 
-      {/* ── Accesos rápidos ───────────────────────────────────────────────── */}
+      {/* ── Accesos clínicos rápidos ──────────────────────────────────────── */}
       <section aria-label="Accesos rápidos">
         <h2 className="mb-4 text-[20px] font-bold tracking-tight text-[var(--color-text-primary)]">
           Accesos rápidos
         </h2>
         <div data-tour="mi-jornada-accesos" className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {/* Mis pacientes — fichas clínicas, evolución, historial */}
+          <Link
+            href="/pacientes"
+            className={[
+              'group flex min-h-[44px] items-center gap-4 rounded-[18px] border p-5 text-left',
+              'border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm',
+              'transition-all hover:-translate-y-0.5 hover:border-[var(--color-interactive)] hover:shadow-md',
+              'focus:outline-none focus-visible:ring-4 focus-visible:ring-[var(--color-interactive)]/30',
+            ].join(' ')}
+          >
+            <span
+              aria-hidden="true"
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-interactive)] text-white shadow-sm transition-transform group-hover:scale-105"
+            >
+              <Users className="h-6 w-6" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[17px] font-semibold text-[var(--color-text-primary)]">
+                Mis pacientes
+              </p>
+              <p className="text-[13px] leading-snug text-[var(--color-text-secondary)]">
+                Fichas clínicas, evoluciones e historial de turnos
+              </p>
+            </div>
+            <ArrowRight
+              aria-hidden="true"
+              className="h-5 w-5 shrink-0 text-[var(--color-text-secondary)]"
+            />
+          </Link>
+
           {/* Mi disponibilidad */}
           <Link
             href="/mi-disponibilidad"
@@ -153,7 +188,7 @@ export default function MiJornadaPage() {
           >
             <span
               aria-hidden="true"
-              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-interactive)] text-white shadow-sm transition-transform group-hover:scale-105"
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-status-ok)] text-white shadow-sm transition-transform group-hover:scale-105"
             >
               <CalendarClock className="h-6 w-6" />
             </span>
@@ -162,7 +197,7 @@ export default function MiJornadaPage() {
                 Mi disponibilidad
               </p>
               <p className="text-[13px] leading-snug text-[var(--color-text-secondary)]">
-                Definí tus horarios y bloqueos para los turnos
+                Configurá tus horarios y bloqueos de atención
               </p>
             </div>
             <ArrowRight
@@ -183,7 +218,7 @@ export default function MiJornadaPage() {
           >
             <span
               aria-hidden="true"
-              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-status-ok)] text-white shadow-sm transition-transform group-hover:scale-105"
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-text-secondary)]/20 text-[var(--color-text-primary)] shadow-sm transition-transform group-hover:scale-105"
             >
               <CalendarDays className="h-6 w-6" />
             </span>
@@ -192,7 +227,7 @@ export default function MiJornadaPage() {
                 Mi agenda completa
               </p>
               <p className="text-[13px] leading-snug text-[var(--color-text-secondary)]">
-                Mirá la semana entera y los próximos días
+                Semana entera y próximos días
               </p>
             </div>
             <ArrowRight

@@ -4,6 +4,27 @@ import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { AgendaDayView } from './AgendaDayView'
 import type { Appointment } from '@/types/appointments'
 
+// TurnoCard (renderizado dentro de AgendaDayView) usa next/link y useUserRole.
+// Ambos deben mockearse para que los tests de AgendaDayView no dependan de
+// la infraestructura de Next.js Router ni de Supabase.
+vi.mock('next/link', async () => {
+  const React = await import('react')
+  return {
+    default: ({ href, children, ...props }: { href: string; children: React.ReactNode; [key: string]: unknown }) =>
+      React.createElement('a', { href, ...props }, children),
+  }
+})
+
+vi.mock('@/hooks/use-user-role', () => ({
+  useUserRole: vi.fn(() => null),
+}))
+
+vi.mock('@/lib/supabase/client', () => ({
+  createSupabaseBrowserClient: vi.fn(() => ({
+    auth: { getSession: vi.fn(() => Promise.resolve({ data: { session: null } })) },
+  })),
+}))
+
 const mockRefetch = vi.fn()
 
 const SAMPLE_APPOINTMENTS: Appointment[] = [

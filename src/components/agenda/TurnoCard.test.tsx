@@ -1,7 +1,29 @@
 import { render, screen } from '@testing-library/react'
-import { describe, it, expect } from 'vitest'
+import { vi, describe, it, expect } from 'vitest'
 import { TurnoCard } from './TurnoCard'
 import type { Appointment } from '@/types/appointments'
+
+// next/link necesita mock en jsdom — sin contexto de Next.js Router, <Link> fallaría.
+vi.mock('next/link', async () => {
+  const React = await import('react')
+  return {
+    default: ({ href, children, ...props }: { href: string; children: React.ReactNode; [key: string]: unknown }) =>
+      React.createElement('a', { href, ...props }, children),
+  }
+})
+
+// useUserRole devuelve null en el estado de carga — el link se renderiza con
+// la ruta genérica /pacientes/{id} (sin tab deeplink), comportamiento compatible
+// con los tests existentes que solo buscan el texto del paciente.
+vi.mock('@/hooks/use-user-role', () => ({
+  useUserRole: vi.fn(() => null),
+}))
+
+vi.mock('@/lib/supabase/client', () => ({
+  createSupabaseBrowserClient: vi.fn(() => ({
+    auth: { getSession: vi.fn(() => Promise.resolve({ data: { session: null } })) },
+  })),
+}))
 
 const BASE_APT: Appointment = {
   appointment_id: 'apt-1',
