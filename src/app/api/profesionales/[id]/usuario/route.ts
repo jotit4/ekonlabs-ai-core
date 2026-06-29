@@ -69,6 +69,7 @@ export async function POST(
     .from('dashboard_users')
     .select('user_id, email')
     .eq('professional_id', professionalId)
+    .eq('tenant_id', tenantId) // service_role bypasea RLS → filtro de tenant explícito (defensa en profundidad)
     .single()
 
   if (existingLink) {

@@ -23,6 +23,12 @@ export async function GET(): Promise<Response> {
     )
   }
 
+  // Extraer tenant_id del JWT — necesario para filtrar la query service_role (seguridad multi-tenant)
+  const tenantId = claims?.tenant_id as string
+  if (!tenantId) {
+    return Response.json({ error: 'tenant_id no disponible en el JWT' }, { status: 400 })
+  }
+
   // 3. Query con RLS automático — no agregar .eq('tenant_id', ...) (AR14)
   const { data, error } = await supabase
     .from('professionals')
@@ -49,10 +55,13 @@ export async function GET(): Promise<Response> {
   // que admin y receptionist obtengan los datos correctamente (Story 10-6)
   const { createServiceRoleClient } = await import('@/lib/supabase/admin')
   const supabaseAdmin = createServiceRoleClient()
+  // Filtro de tenant OBLIGATORIO: la query usa service_role (bypasea RLS) → el filtro
+  // debe aplicarse manualmente para garantizar que solo se devuelven datos del tenant del caller.
   const { data: linkedUsers } = await supabaseAdmin
     .from('dashboard_users')
     .select('professional_id, email')
     .not('professional_id', 'is', null)
+    .eq('tenant_id', tenantId)
 
   const linkedMap = new Map(
     (linkedUsers ?? []).map((u: { professional_id: string; email: string }) => [u.professional_id, u.email])

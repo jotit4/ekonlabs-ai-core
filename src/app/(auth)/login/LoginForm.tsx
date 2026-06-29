@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -18,12 +18,25 @@ export default function LoginForm() {
   const router = useRouter()
   const [authError, setAuthError] = useState<string | null>(null)
 
+  // El botón de demo solo aparece con ?demo=1 en la URL — así NO se ve en el login
+  // normal de producción (ISADI); solo cuando el vendedor entra con la URL del demo.
+  const [showDemo, setShowDemo] = useState(false)
+  useEffect(() => {
+    setShowDemo(new URLSearchParams(window.location.search).get('demo') === '1')
+  }, [])
+
   const {
     register,
     handleSubmit,
+    setValue,
     formState: { errors, isSubmitting },
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } = useForm<LoginFormValues>({ resolver: zodResolver(loginSchema as any) })
+
+  const fillDemoCredentials = () => {
+    setValue('email', 'demo@clinicademo.ar', { shouldValidate: false })
+    setValue('password', 'DemoClinica2026!', { shouldValidate: false })
+  }
 
   const onSubmit = async ({ email, password }: LoginFormValues) => {
     setAuthError(null)
@@ -120,6 +133,20 @@ export default function LoginForm() {
       >
         {isSubmitting ? 'Iniciando sesión...' : 'Iniciar sesión'}
       </Button>
+
+      {showDemo && (
+        <button
+          type="button"
+          onClick={fillDemoCredentials}
+          className={
+            'mt-1 w-full rounded-[8px] border border-[rgba(0,0,0,0.12)] bg-transparent px-3 py-2 ' +
+            'text-[13px] text-[var(--color-text-secondary)] hover:bg-[rgba(0,0,0,0.04)] ' +
+            'focus:outline-none focus:ring-2 focus:ring-[#0071e3]/30 transition-colors'
+          }
+        >
+          Completar credenciales demo
+        </button>
+      )}
     </form>
   )
 }
