@@ -1,5 +1,6 @@
 'use client'
 
+import { useMemo } from 'react'
 import Link from 'next/link'
 import { startOfMonth } from 'date-fns'
 import { formatISO, format } from 'date-fns'
@@ -55,7 +56,9 @@ export default function InicioPage() {
   // ── Pulso del negocio (mismos endpoints que /metricas) ──────────────────────
   // Reusamos exactamente los hooks de la pantalla de Métricas, con el rango del
   // mes en curso. Así los números de acá coinciden con los de "Ver métricas".
-  const { desde, hasta } = rangoDelMes()
+  // useMemo garantiza que el rango no cambia en cada render (evita re-fetch por
+  // queryKey inestable — rangoDelMes() incluye segundos en `hasta`).
+  const { desde, hasta } = useMemo(() => rangoDelMes(), [])
   const { kpis: clinicKpis, isPending: clinicCargando } = useClinicKPIs({ desde, hasta })
   const { kpis: agentKpis, isPending: agentCargando } = useAgentKPIs({ desde, hasta })
 
@@ -83,9 +86,11 @@ export default function InicioPage() {
     refetch: recargarMiAgenda,
   } = useMyAgenda(hoyISO)
 
-  // El usuario no tiene un profesional propio (es solo administrador, no atiende):
-  // el endpoint responde 404. No es un error real — mostramos un estado amable.
-  const sinAgendaPropia = miAgendaError && miAgendaStatus === 404
+  // El usuario no tiene un profesional propio (admin/recepción, o doctor sin
+  // professional_id vinculado): el handler responde 403 y el hook devuelve 404
+  // sintético para no-doctores. Ambos casos = sin agenda propia, estado amable.
+  const sinAgendaPropia =
+    miAgendaError && (miAgendaStatus === 404 || miAgendaStatus === 403)
 
   const misTurnosVigentes = misTurnos.filter((t) => t.status !== 'cancelled')
 

@@ -2,10 +2,11 @@ import { vi, describe, it, expect, beforeEach } from 'vitest'
 
 // ── vi.hoisted — variables referenciadas en factories de vi.mock ───────────────
 
-const { mockGetUser, mockGetSession, mockFrom, mockParseJwt } = vi.hoisted(() => ({
+const { mockGetUser, mockGetSession, mockFrom, mockRpc, mockParseJwt } = vi.hoisted(() => ({
   mockGetUser: vi.fn(),
   mockGetSession: vi.fn(),
   mockFrom: vi.fn(),
+  mockRpc: vi.fn(),
   mockParseJwt: vi.fn(),
 }))
 
@@ -20,7 +21,7 @@ vi.mock('next/headers', () => ({
   }),
 }))
 
-// Mock createSupabaseServerClient
+// Mock createSupabaseServerClient — incluye rpc para get_agent_kpis
 vi.mock('@/lib/supabase/server', () => ({
   createSupabaseServerClient: vi.fn(() =>
     Promise.resolve({
@@ -29,6 +30,7 @@ vi.mock('@/lib/supabase/server', () => ({
         getSession: mockGetSession,
       },
       from: mockFrom,
+      rpc: mockRpc,
     })
   ),
 }))
@@ -42,68 +44,35 @@ import { GET } from './route'
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Chain para SELECT con count + eq + gte + lte:
- * audit_logs escalaciones / contención
+ * Configura la respuesta del RPC get_agent_kpis.
+ * Siempre retorna 1 fila (aggregates).
  */
-function makeAuditCountChain(count: number | null, error: unknown = null) {
+function makeRpcAgentKpisResult(
+  total_conversaciones: number = 0,
+  response_time_avg_ms: number | null = null,
+  error: unknown = null
+) {
+  return Promise.resolve({
+    data: error ? null : [{ total_conversaciones, response_time_avg_ms }],
+    error: error ?? null,
+  })
+}
+
+/**
+ * Chain para la query unificada de audit_logs:
+ * .select('entity_id', { count: 'exact' }).eq().gte().lte()
+ * Devuelve data (entity_id rows) + count (escalaciones totales).
+ */
+function makeTakeoverChain(
+  data: { entity_id: string }[] = [],
+  count: number = 0,
+  error: unknown = null
+) {
   return {
     select: vi.fn().mockReturnValue({
       eq: vi.fn().mockReturnValue({
         gte: vi.fn().mockReturnValue({
-          lte: vi.fn().mockResolvedValue({ count, error }),
-        }),
-      }),
-    }),
-  }
-}
-
-/**
- * Chain para SELECT de datos con eq + gte + lte + range (conversations phone_number):
- */
-function makeDataChain(data: unknown[], error: unknown = null) {
-  return {
-    select: vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({
-        gte: vi.fn().mockReturnValue({
-          lte: vi.fn().mockReturnValue({
-            range: vi.fn().mockResolvedValue({ data, error }),
-          }),
-        }),
-      }),
-    }),
-  }
-}
-
-/**
- * Chain para SELECT de datos con eq + gte + lte SIN range (audit_logs entity_id — takeoverLogs):
- */
-function makeAuditDataChain(data: unknown[], error: unknown = null) {
-  return {
-    select: vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({
-        gte: vi.fn().mockReturnValue({
-          lte: vi.fn().mockResolvedValue({ data, error }),
-        }),
-      }),
-    }),
-  }
-}
-
-/**
- * Chain para SELECT de mensajes con in + gte + lte + range + order + order (response time):
- */
-function makeMessagesChain(data: unknown[], error: unknown = null) {
-  return {
-    select: vi.fn().mockReturnValue({
-      in: vi.fn().mockReturnValue({
-        gte: vi.fn().mockReturnValue({
-          lte: vi.fn().mockReturnValue({
-            range: vi.fn().mockReturnValue({
-              order: vi.fn().mockReturnValue({
-                order: vi.fn().mockResolvedValue({ data, error }),
-              }),
-            }),
-          }),
+          lte: vi.fn().mockResolvedValue({ data, count, error: error ?? null }),
         }),
       }),
     }),
@@ -126,26 +95,18 @@ function setupAdminAuth() {
 }
 
 /**
- * Configura las 4 chains para las queries de fetchAgentKPIs en orden:
- * 1. escalaciones (count) → audit_logs .select().eq().gte().lte()
- * 2. phone_numbers únicos → conversations .select().eq().gte().lte().range() → data
- * 3. takeover phones → audit_logs .select().eq().gte().lte() → data (SIN range)
- * 4. mensajes response time → conversations .select().in().gte().lte().range().order().order() → data
+ * Configura las 2 fuentes de datos del handler refactorizado:
+ *   1. mockRpc → simula get_agent_kpis(desde, hasta)
+ *   2. mockFrom → simula la query unificada de audit_logs (escalaciones + takeover phones)
  */
 function setupAgentKPIChains(
-  escalaciones = 2,
-  phoneRows: { phone_number: string }[] = [{ phone_number: '+54911' }, { phone_number: '+54912' }],
+  totalConversaciones = 2,
+  responseTimeAvgMs: number | null = null,
   takeoverLogs: { entity_id: string }[] = [{ entity_id: '+54911' }],
-  mensajes: { phone_number: string; role: string; created_at: string }[] = []
+  escalaciones = 2
 ) {
-  let callCount = 0
-  mockFrom.mockImplementation(() => {
-    callCount++
-    if (callCount === 1) return makeAuditCountChain(escalaciones)
-    if (callCount === 2) return makeDataChain(phoneRows)
-    if (callCount === 3) return makeAuditDataChain(takeoverLogs)
-    return makeMessagesChain(mensajes)
-  })
+  mockRpc.mockReturnValue(makeRpcAgentKpisResult(totalConversaciones, responseTimeAvgMs))
+  mockFrom.mockReturnValue(makeTakeoverChain(takeoverLogs, escalaciones))
 }
 
 function makeRequest(
@@ -251,10 +212,10 @@ describe('GET /api/metricas/agente-kpis', () => {
   it('retorna 200 con { data: AgentKPIs } cuando todo es válido', async () => {
     setupAdminAuth()
     setupAgentKPIChains(
-      2,
-      [{ phone_number: '+54911' }, { phone_number: '+54912' }],
+      2,     // total_conversaciones
+      null,  // response_time_avg_ms
       [{ entity_id: '+54911' }],
-      []
+      2      // escalaciones count
     )
 
     const res = await GET(makeRequest())
@@ -269,10 +230,10 @@ describe('GET /api/metricas/agente-kpis', () => {
   it('calcula containment_rate correctamente (50% cuando 1 de 2 tuvo takeover)', async () => {
     setupAdminAuth()
     setupAgentKPIChains(
-      1,
-      [{ phone_number: '+54911' }, { phone_number: '+54912' }],
+      2,     // total_conversaciones
+      null,
       [{ entity_id: '+54911' }],
-      []
+      1
     )
 
     const res = await GET(makeRequest())
@@ -283,7 +244,7 @@ describe('GET /api/metricas/agente-kpis', () => {
 
   it('containment_rate es null cuando no hay conversaciones', async () => {
     setupAdminAuth()
-    setupAgentKPIChains(0, [], [], [])
+    setupAgentKPIChains(0, null, [], 0)
 
     const res = await GET(makeRequest())
     expect(res.status).toBe(200)
@@ -302,9 +263,9 @@ describe('GET /api/metricas/agente-kpis', () => {
     expect(body.data.fallback_rate).toBeNull()
   })
 
-  it('response_time_avg_ms es null cuando no hay pares user→assistant', async () => {
+  it('response_time_avg_ms es null cuando la RPC no tiene pares user→assistant válidos', async () => {
     setupAdminAuth()
-    setupAgentKPIChains(0, [], [], [])
+    setupAgentKPIChains(0, null, [], 0)
 
     const res = await GET(makeRequest())
     expect(res.status).toBe(200)
@@ -312,18 +273,29 @@ describe('GET /api/metricas/agente-kpis', () => {
     expect(body.data.response_time_avg_ms).toBeNull()
   })
 
-  it('calcula response_time_avg_ms correctamente con pares válidos', async () => {
+  it('response_time_avg_ms pasa el valor de la RPC redondeado a ms enteros', async () => {
     setupAdminAuth()
-    const mensajes = [
-      { phone_number: '+54911', role: 'user', created_at: '2026-05-01T10:00:00Z' },
-      { phone_number: '+54911', role: 'assistant', created_at: '2026-05-01T10:00:02Z' }, // 2000ms
-    ]
-    setupAgentKPIChains(0, [], [], mensajes)
+    setupAgentKPIChains(
+      1,
+      2000,  // RPC devuelve 2000ms (pares user→assistant a 2s de diferencia)
+      [],
+      0
+    )
 
     const res = await GET(makeRequest())
     expect(res.status).toBe(200)
     const body = (await res.json()) as { data: Record<string, unknown> }
     expect(body.data.response_time_avg_ms).toBe(2000)
+  })
+
+  it('response_time_avg_ms se redondea a entero cuando la RPC devuelve decimal', async () => {
+    setupAdminAuth()
+    setupAgentKPIChains(1, 1234.7, [], 0)
+
+    const res = await GET(makeRequest())
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { data: Record<string, unknown> }
+    expect(body.data.response_time_avg_ms).toBe(1235)
   })
 
   it('incluye periodo_desde y periodo_hasta en la respuesta', async () => {
@@ -338,49 +310,38 @@ describe('GET /api/metricas/agente-kpis', () => {
     expect(body.data.periodo_hasta).toBe(hasta)
   })
 
+  it('containment_rate es 100% cuando no hay takeovers con conversaciones', async () => {
+    setupAdminAuth()
+    setupAgentKPIChains(
+      2, // 2 conversaciones
+      null,
+      [],  // 0 takeovers
+      0
+    )
+
+    const res = await GET(makeRequest())
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { data: Record<string, unknown> }
+    expect(body.data.containment_rate).toBe(100)
+  })
+
   // ── Errores de DB ──────────────────────────────────────────────────────────
 
-  it('retorna 500 si falla la query de escalaciones (audit_logs)', async () => {
+  it('retorna 500 si falla la RPC get_agent_kpis', async () => {
     setupAdminAuth()
-    let callCount = 0
-    mockFrom.mockImplementation(() => {
-      callCount++
-      if (callCount === 1) return makeAuditCountChain(null, { message: 'DB error' })
-      if (callCount === 2) return makeDataChain([])
-      if (callCount === 3) return makeAuditDataChain([])
-      return makeMessagesChain([])
-    })
+    mockRpc.mockResolvedValue({ data: null, error: { message: 'RPC error' } })
+    mockFrom.mockReturnValue(makeTakeoverChain([], 0))
 
     const res = await GET(makeRequest())
     expect(res.status).toBe(500)
     const body = (await res.json()) as { error: string }
-    expect(body.error).toContain('escalaciones')
+    expect(body.error).toContain('KPIs del agente')
   })
 
-  it('retorna 500 si falla la query de phone_numbers (conversations)', async () => {
+  it('retorna 500 si falla la query unificada de audit_logs (escalaciones/contención)', async () => {
     setupAdminAuth()
-    let callCount = 0
-    mockFrom.mockImplementation(() => {
-      callCount++
-      if (callCount === 1) return makeAuditCountChain(2)
-      return makeDataChain([], { message: 'DB error' })
-    })
-
-    const res = await GET(makeRequest())
-    expect(res.status).toBe(500)
-    const body = (await res.json()) as { error: string }
-    expect(body.error).toContain('conversaciones')
-  })
-
-  it('retorna 500 si falla la query de takeover phones (audit_logs)', async () => {
-    setupAdminAuth()
-    let callCount = 0
-    mockFrom.mockImplementation(() => {
-      callCount++
-      if (callCount === 1) return makeAuditCountChain(2)
-      if (callCount === 2) return makeDataChain([{ phone_number: '+54911' }])
-      return makeAuditDataChain([], { message: 'DB error' })
-    })
+    mockRpc.mockReturnValue(makeRpcAgentKpisResult(2, null))
+    mockFrom.mockReturnValue(makeTakeoverChain([], 0, { message: 'DB error' }))
 
     const res = await GET(makeRequest())
     expect(res.status).toBe(500)
@@ -388,18 +349,14 @@ describe('GET /api/metricas/agente-kpis', () => {
     expect(body.error).toContain('contención')
   })
 
-  it('containment_rate es 100% cuando no hay takevers con conversaciones', async () => {
+  it('llama al RPC con los parámetros desde y hasta correctos', async () => {
     setupAdminAuth()
-    setupAgentKPIChains(
-      0,
-      [{ phone_number: '+54911' }, { phone_number: '+54912' }],
-      [],
-      []
-    )
+    setupAgentKPIChains()
 
-    const res = await GET(makeRequest())
-    expect(res.status).toBe(200)
-    const body = (await res.json()) as { data: Record<string, unknown> }
-    expect(body.data.containment_rate).toBe(100)
+    const desde = '2026-05-01T00:00:00-03:00'
+    const hasta = '2026-05-13T12:00:00-03:00'
+    await GET(makeRequest(desde, hasta))
+
+    expect(mockRpc).toHaveBeenCalledWith('get_agent_kpis', { desde, hasta })
   })
 })

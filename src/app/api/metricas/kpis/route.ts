@@ -104,5 +104,8 @@ export async function GET(request: Request): Promise<Response> {
     periodo_hasta: hasta,
   }
 
-  return Response.json({ data: kpis })
+  return Response.json(
+    { data: kpis },
+    { headers: { 'Cache-Control': 'private, max-age=60, stale-while-revalidate=300' } }
+  )
 }

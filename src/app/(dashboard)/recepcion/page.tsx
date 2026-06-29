@@ -59,7 +59,7 @@ export default function RecepcionPage() {
     useQuery<ConversationSummary[]>({
       queryKey: ['conversations', 'list', { status: 'all' }],
       queryFn: fetchConversations,
-      staleTime: 0,
+      staleTime: 30_000,
       refetchInterval: 30_000,
     })
 

@@ -3,57 +3,6 @@ import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 import type { AgentKPIs } from '@/types/metricas'
 
-type SupabaseClient = Awaited<ReturnType<typeof createSupabaseServerClient>>
-
-/**
- * Calcula el tiempo de respuesta promedio (ms) entre mensajes user → assistant.
- * Retorna null si no hay pares válidos en el período.
- */
-async function calcularTiempoRespuestaAvg(
-  supabase: SupabaseClient,
-  desde: string,
-  hasta: string
-): Promise<number | null> {
-  const { data: mensajes } = await supabase
-    .from('conversations')
-    .select('phone_number, role, created_at')
-    .in('role', ['user', 'assistant'])
-    .gte('created_at', desde)
-    .lte('created_at', hasta)
-    .range(0, 9999)
-    .order('phone_number', { ascending: true })
-    .order('created_at', { ascending: true })
-
-  if (!mensajes?.length) return null
-
-  // Agrupar por phone_number
-  const mensajesPorPhone = new Map<string, typeof mensajes>()
-  for (const msg of mensajes) {
-    if (!mensajesPorPhone.has(msg.phone_number)) {
-      mensajesPorPhone.set(msg.phone_number, [])
-    }
-    mensajesPorPhone.get(msg.phone_number)!.push(msg)
-  }
-
-  const tiemposMs: number[] = []
-  for (const msgs of mensajesPorPhone.values()) {
-    for (let i = 0; i < msgs.length - 1; i++) {
-      if (msgs[i].role === 'user' && msgs[i + 1].role === 'assistant') {
-        const diffMs =
-          new Date(msgs[i + 1].created_at).getTime() -
-          new Date(msgs[i].created_at).getTime()
-        // Ignorar pares > 5 minutos (no son respuestas reales del agente)
-        if (diffMs > 0 && diffMs < 5 * 60 * 1000) {
-          tiemposMs.push(diffMs)
-        }
-      }
-    }
-  }
-
-  if (tiemposMs.length === 0) return null
-  return Math.round(tiemposMs.reduce((a, b) => a + b, 0) / tiemposMs.length)
-}
-
 export async function GET(request: Request): Promise<Response> {
   const supabase = await createSupabaseServerClient()
 
@@ -103,61 +52,45 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json({ error: 'El rango de fechas es inválido' }, { status: 400 })
   }
 
-  // 4-8. Todos los KPIs en paralelo — RLS filtra por tenant automáticamente (AR14)
-  const [
-    escalacionesResult,
-    phoneRowsResult,
-    takeoverLogsResult,
-    responseTimeResult,
-  ] = await Promise.all([
+  // 4. KPIs en paralelo:
+  //   - RPC get_agent_kpis: calcula total_conversaciones + response_time_avg_ms en SQL
+  //     (evita two full-scans de `conversations` con .range(0, 9999) en Node)
+  //   - audit_logs unificado: una sola query devuelve count (escalaciones) Y data (takeover phones)
+  //     para calcular containment_rate — reemplaza la doble query anterior
+  //
+  // IMPORTANTE: get_agent_kpis (migración 045) debe estar aplicada en Supabase antes del deploy.
+  const [agentKpisResult, takeoverResult] = await Promise.all([
+    supabase.rpc('get_agent_kpis', { desde, hasta }),
     supabase
       .from('audit_logs')
-      .select('id', { count: 'exact', head: true })
+      .select('entity_id', { count: 'exact' })
       .eq('action', 'conversation_takeover')
       .gte('created_at', desde)
       .lte('created_at', hasta),
-    supabase
-      .from('conversations')
-      .select('phone_number')
-      .eq('role', 'user')
-      .gte('created_at', desde)
-      .lte('created_at', hasta)
-      .range(0, 9999),
-    supabase
-      .from('audit_logs')
-      .select('entity_id')
-      .eq('action', 'conversation_takeover')
-      .gte('created_at', desde)
-      .lte('created_at', hasta),
-    calcularTiempoRespuestaAvg(supabase, desde, hasta).catch(() => null),
   ])
 
-  const { count: escalacionesCount, error: escalacionesError } = escalacionesResult
-  const { data: phoneRows, error: phonesError } = phoneRowsResult
-  const { data: takeoverLogs, error: takeoverError } = takeoverLogsResult
-  const response_time_avg_ms = responseTimeResult
+  const { data: agentKpisData, error: agentKpisError } = agentKpisResult
+  const { data: takeoverLogs, count: escalacionesCount, error: takeoverError } = takeoverResult
 
-  if (escalacionesError) {
-    return Response.json({ error: 'Error al obtener escalaciones' }, { status: 500 })
-  }
-
-  if (phonesError) {
-    return Response.json({ error: 'Error al obtener conversaciones' }, { status: 500 })
+  if (agentKpisError) {
+    return Response.json({ error: 'Error al obtener KPIs del agente' }, { status: 500 })
   }
 
   if (takeoverError) {
     return Response.json({ error: 'Error al obtener datos de contención' }, { status: 500 })
   }
 
-  if ((phoneRows ?? []).length === 10000) {
-    console.warn('[agente-kpis] Se alcanzó el límite de 10000 registros en phoneRows — los datos pueden estar incompletos')
-  }
+  // La RPC retorna siempre exactamente 1 fila (aggregates, never empty)
+  const kpisRow = agentKpisData?.[0]
+  const totalConversaciones = Number(kpisRow?.total_conversaciones ?? 0)
+  // response_time_avg_ms viene como numeric de Postgres; puede ser null si no hay pares válidos
+  const response_time_avg_ms =
+    kpisRow?.response_time_avg_ms != null
+      ? Math.round(Number(kpisRow.response_time_avg_ms))
+      : null
 
-  const uniquePhones = new Set((phoneRows ?? []).map((r) => r.phone_number))
-  const totalConversaciones = uniquePhones.size
-
+  // Containment rate: % de conversaciones que NO escalaron a humano
   const takeoverPhones = new Set((takeoverLogs ?? []).map((l) => l.entity_id))
-
   const containment_rate =
     totalConversaciones > 0
       ? Math.round(
@@ -175,5 +108,8 @@ export async function GET(request: Request): Promise<Response> {
     periodo_hasta: hasta,
   }
 
-  return Response.json({ data: agentKpis })
+  return Response.json(
+    { data: agentKpis },
+    { headers: { 'Cache-Control': 'private, max-age=60, stale-while-revalidate=300' } }
+  )
 }

@@ -1,5 +1,6 @@
 'use client'
 
+import { useMemo } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { startOfMonth } from 'date-fns'
 import { format } from 'date-fns'
@@ -53,8 +54,10 @@ export function MetricasClientWrapper() {
   const desdeURL = searchParams.get('desde')
   const hastaURL = searchParams.get('hasta')
 
-  // Usar URL params si presentes y válidos, sino rango por defecto
-  const rangoPorDefecto = calcularRangoPorDefecto()
+  // Usar URL params si presentes y válidos, sino rango por defecto.
+  // useMemo evita que calcularRangoPorDefecto() cambie en cada render
+  // (incluye segundos en `hasta` → queryKey inestable → re-fetch constante).
+  const rangoPorDefecto = useMemo(() => calcularRangoPorDefecto(), [])
   const periodoDesde = desdeURL && isValidISO(desdeURL) ? desdeURL : rangoPorDefecto.desde
   const periodoHasta = hastaURL && isValidISO(hastaURL) ? hastaURL : rangoPorDefecto.hasta
 

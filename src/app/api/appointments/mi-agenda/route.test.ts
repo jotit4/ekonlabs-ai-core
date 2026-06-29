@@ -100,14 +100,14 @@ describe('GET /api/appointments/mi-agenda', () => {
     expect(res.status).toBe(401)
   })
 
-  it('retorna 404 si el usuario no tiene professional_id vinculado en dashboard_users', async () => {
+  it('retorna 403 si el usuario no tiene professional_id vinculado en dashboard_users', async () => {
     setupAuth()
     mockFrom.mockReturnValueOnce(setupProfessionalNotFound())
 
     const res = await GET(makeRequest('2026-05-14'))
-    expect(res.status).toBe(404)
+    expect(res.status).toBe(403)
     const body = await res.json() as { error: string }
-    expect(body.error).toBe('Profesional no encontrado para este usuario')
+    expect(body.error).toBe('Esta vista es solo para profesionales vinculados')
   })
 
   it('retorna 400 si fecha tiene formato inválido', async () => {

@@ -5,11 +5,18 @@ import React from 'react'
 
 // ── vi.hoisted ─────────────────────────────────────────────────────────────────
 
-const { mockFetch } = vi.hoisted(() => ({
+const { mockFetch, mockUseUserRole } = vi.hoisted(() => ({
   mockFetch: vi.fn(),
+  mockUseUserRole: vi.fn<[], string | null>().mockReturnValue('doctor'),
 }))
 
 vi.stubGlobal('fetch', mockFetch)
+
+// Mock useUserRole: por defecto retorna 'doctor' (caso feliz).
+// Los tests individuales pueden sobreescribir con mockUseUserRole.mockReturnValue(...)
+vi.mock('@/hooks/use-user-role', () => ({
+  useUserRole: mockUseUserRole,
+}))
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -46,6 +53,8 @@ import { useMyAgenda } from './use-my-agenda'
 describe('useMyAgenda', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Rol por defecto: doctor (habilita el fetch)
+    mockUseUserRole.mockReturnValue('doctor')
   })
 
   it('llama GET /api/appointments/mi-agenda?fecha={date} correctamente', async () => {
@@ -85,7 +94,7 @@ describe('useMyAgenda', () => {
     unmount()
   })
 
-  it('isPending es true mientras carga', () => {
+  it('isPending es true mientras carga (rol doctor, fetch en vuelo)', () => {
     // fetch nunca resuelve durante este test
     mockFetch.mockReturnValueOnce(new Promise(() => {}))
 
@@ -93,6 +102,18 @@ describe('useMyAgenda', () => {
     const { result, unmount } = renderHook(() => useMyAgenda('2026-05-14'), { wrapper: Wrapper })
 
     expect(result.current.isPending).toBe(true)
+    unmount()
+  })
+
+  it('isPending es true mientras el rol aún carga (role === null)', () => {
+    mockUseUserRole.mockReturnValue(null)
+
+    const { Wrapper } = makeWrapper()
+    const { result, unmount } = renderHook(() => useMyAgenda('2026-05-14'), { wrapper: Wrapper })
+
+    expect(result.current.isPending).toBe(true)
+    // La query no debería haberse disparado
+    expect(mockFetch).not.toHaveBeenCalled()
     unmount()
   })
 
@@ -121,6 +142,37 @@ describe('useMyAgenda', () => {
     }, { timeout: 5000 })
 
     expect(result.current.errorStatus).toBe(404)
+    unmount()
+  })
+
+  // ── Gateo por rol ──────────────────────────────────────────────────────────
+
+  it('NO dispara fetch cuando el rol es admin', () => {
+    mockUseUserRole.mockReturnValue('admin')
+
+    const { Wrapper } = makeWrapper()
+    const { result, unmount } = renderHook(() => useMyAgenda('2026-05-14'), { wrapper: Wrapper })
+
+    // Sin fetch — la query está deshabilitada
+    expect(mockFetch).not.toHaveBeenCalled()
+    // isError: true + errorStatus: 404 para que `sinAgendaPropia` funcione
+    expect(result.current.isError).toBe(true)
+    expect(result.current.errorStatus).toBe(404)
+    expect(result.current.isPending).toBe(false)
+    expect(result.current.appointments).toHaveLength(0)
+    unmount()
+  })
+
+  it('NO dispara fetch cuando el rol es recepcionista', () => {
+    mockUseUserRole.mockReturnValue('receptionist')
+
+    const { Wrapper } = makeWrapper()
+    const { result, unmount } = renderHook(() => useMyAgenda('2026-05-14'), { wrapper: Wrapper })
+
+    expect(mockFetch).not.toHaveBeenCalled()
+    expect(result.current.isError).toBe(true)
+    expect(result.current.errorStatus).toBe(404)
+    expect(result.current.isPending).toBe(false)
     unmount()
   })
 })

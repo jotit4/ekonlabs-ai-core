@@ -45,8 +45,10 @@ export default function MiJornadaPage() {
   } = useMyAgenda(hoyISO)
 
   // El usuario no tiene un profesional propio vinculado (no atiende turnos):
-  // el endpoint responde 404. No es un error real — mostramos un estado amable.
-  const sinAgendaPropia = miAgendaError && miAgendaStatus === 404
+  // el handler responde 403 (sin professional_id) y el hook devuelve 404 sintético
+  // para no-doctores. Ambos casos = sin agenda propia, estado amable.
+  const sinAgendaPropia =
+    miAgendaError && (miAgendaStatus === 404 || miAgendaStatus === 403)
 
   return (
     <section className="mx-auto w-full max-w-4xl px-6 py-10 sm:py-12">

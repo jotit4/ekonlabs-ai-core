@@ -22,8 +22,8 @@ export async function GET(request: Request): Promise<Response> {
 
   if (profError || !dashboardUser?.professional_id) {
     return Response.json(
-      { error: 'Profesional no encontrado para este usuario' },
-      { status: 404 }
+      { error: 'Esta vista es solo para profesionales vinculados' },
+      { status: 403 }
     )
   }
 
