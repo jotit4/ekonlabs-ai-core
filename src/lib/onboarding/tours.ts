@@ -413,6 +413,14 @@ const PACIENTE_FICHA: TourDefinition = {
 }
 
 // ─── Historia clínica — doctor + admin (HCE, Epics 13/14) ────────────────────
+//
+// La ficha del paciente usa URL params para cambiar de pestaña (router.push con
+// ?tab=...), lo que desmonta el contenido de las pestañas inactivas del DOM.
+// Por eso hce-contexto-clinico, hce-nueva-nota y hce-historial-notas solo existen
+// en el DOM cuando activeTab === 'notas'. Anclarlos directamente era el bug original.
+//
+// Fix: anclar al botón de la pestaña "notas" ([data-tab="notas"]), que siempre
+// está visible en el nav tablist, y describir el contenido en el popover.
 
 const PACIENTE_HCE: TourDefinition = {
   id: 'paciente-hce',
@@ -420,44 +428,30 @@ const PACIENTE_HCE: TourDefinition = {
   screen: 'Historia clínica',
   steps: [
     {
+      // Paso 1: el nav de pestañas — siempre en el DOM
       element: '[data-tour="patient-tabs"]',
       popover: {
-        title: 'La historia clínica vive acá',
+        title: 'Las secciones de la ficha',
         description:
-          'El agente no toca esto: es tuyo. En "Notas clínicas" cargás antecedentes y la evolución; ' +
-          'en "Paquetes" está el plan de tratamiento y el alta. Abrí "Notas clínicas" para seguir.',
+          'Datos personales, historial de turnos, paquetes, conversaciones y documentos. ' +
+          'Para la historia clínica completa, abrí "Notas clínicas".',
         side: 'bottom',
         align: 'center',
       },
     },
     {
-      element: '[data-tour="hce-contexto-clinico"]',
+      // Paso 2: botón de la pestaña "notas" — siempre visible en el nav tablist.
+      // El contenido (hce-contexto-clinico, hce-nueva-nota, hce-historial-notas)
+      // solo existe en el DOM con ?tab=notas, así que se describe en el popover.
+      element: '[data-tab="notas"]',
       popover: {
-        title: 'Antecedentes, alergias y medicación',
+        title: 'Notas clínicas: la historia clínica',
         description:
-          'El contexto clínico de base del paciente. Se guarda solo mientras escribís.',
-        side: 'right',
-        align: 'start',
-      },
-    },
-    {
-      element: '[data-tour="hce-nueva-nota"]',
-      popover: {
-        title: 'Evolución de cada sesión',
-        description:
-          'Después de atender, dejá tu nota. Queda en el historial, ordenada por fecha.',
-        side: 'right',
-        align: 'start',
-      },
-    },
-    {
-      element: '[data-tour="hce-historial-notas"]',
-      popover: {
-        title: 'Todo el historial',
-        description:
-          'Las notas anteriores, para repasar cómo viene el tratamiento del paciente.',
-        side: 'right',
-        align: 'start',
+          'El agente no toca esto: es tuyo. ' +
+          'Acá cargás antecedentes, alergias y medicación de base, ' +
+          'la evolución de cada sesión y el historial queda ordenado por fecha.',
+        side: 'bottom',
+        align: 'center',
       },
     },
   ],
@@ -527,6 +521,15 @@ const DOCTOR_MI_AGENDA: TourDefinition = {
 }
 
 // ─── Admin — Configuración del agente ────────────────────────────────────────
+//
+// Enfoque: anclar cada paso al BOTÓN DE PESTAÑA de la TabList (siempre visible),
+// no a los campos internos de las pestañas (que viven dentro de TabPanel y pueden
+// estar con display:none si la pestaña no está activa).
+//
+// El paso 2 usa onHighlightStarted para resetear a "personalidad" y garantizar
+// un estado conocido al iniciar el tour.
+// El paso 6 (Guardar) usa onHighlightStarted para salir de "conocimiento" si
+// corresponde, ya que el botón Guardar no se renderiza en esa pestaña.
 
 const ADMIN_CONFIG_AGENTE: TourDefinition = {
   id: 'admin-configuracion-agente',
@@ -534,66 +537,70 @@ const ADMIN_CONFIG_AGENTE: TourDefinition = {
   screen: 'Configuración del agente',
   steps: [
     {
+      // Paso 1: intro general — sin element
       popover: {
         title: 'Así se comporta el agente',
         description:
-          'Todo lo que definas acá cambia cómo responde y qué puede hacer. Cambiá de a poco y probá.',
+          'Todo lo que definás acá cambia cómo responde y qué puede hacer. ' +
+          'Las cuatro pestañas cubren identidad, capacidades, conocimiento y configuración avanzada.',
       },
     },
     {
-      element: '#agent_name',
+      // Paso 2: Personalidad — botón de pestaña, siempre visible en la TabList
+      element: '[data-tab="personalidad"]',
       popover: {
         title: 'Nombre e identidad',
         description:
-          'Cómo se presenta el agente y con qué tono habla. Que suene a tu clínica.',
+          'Definís cómo se llama el agente, con qué tono habla, su personalidad y qué debe evitar. ' +
+          'Que suene a tu clínica.',
+        side: 'bottom',
+        align: 'start',
+      },
+      onHighlightStarted: () => {
+        // Resetear a la primera pestaña para garantizar un estado conocido al abrir el tour
+        document.querySelector<HTMLElement>('[data-tab="personalidad"]')?.click()
+      },
+    },
+    {
+      // Paso 3: Capacidades — botón de pestaña, siempre visible
+      element: '[data-tab="capacidades"]',
+      popover: {
+        title: 'Qué puede hacer',
+        description:
+          'Activás o desactivás si puede agendar turnos nuevos, cancelar, ' +
+          'y si requiere DNI u obra social antes de agendar.',
         side: 'bottom',
         align: 'start',
       },
     },
     {
-      element: '[id="operations_config.future_window_days"]',
-      popover: {
-        title: 'Ventanas de operación',
-        description:
-          'Con cuánta anticipación mínima agenda y hasta cuántos días hacia adelante. ' +
-          'Acotá la ventana futura para no llenar la agenda de meses.',
-        side: 'bottom',
-        align: 'start',
-      },
-    },
-    {
-      element: '#prompt_rules',
-      popover: {
-        title: 'Reglas de tu clínica',
-        description:
-          'Lo que el agente siempre debe respetar: políticas, qué no ofrecer, cómo derivar. En lenguaje natural.',
-        side: 'top',
-        align: 'start',
-      },
-    },
-    {
-      element: '[data-tour="shadow-mode-toggle"]',
-      popover: {
-        title: 'Probá sin riesgo',
-        description:
-          'Con Shadow Mode el agente piensa pero no le escribe al paciente. ' +
-          'Ideal para probar cambios antes de soltarlo de verdad.',
-        side: 'bottom',
-        align: 'start',
-      },
-    },
-    {
-      element: '#kb-content',
+      // Paso 4: Conocimiento — botón de pestaña, siempre visible
+      element: '[data-tab="conocimiento"]',
       popover: {
         title: 'Base de conocimiento',
         description:
-          'Cargá info de la clínica (precios, preparaciones, preguntas frecuentes). ' +
-          'El agente la usa para responder mejor.',
-        side: 'top',
+          'Cargá info de la clínica: precios, preparaciones para estudios, preguntas frecuentes. ' +
+          'El agente la usa para responder con precisión.',
+        side: 'bottom',
         align: 'start',
       },
     },
     {
+      // Paso 5: Avanzado — botón de pestaña, siempre visible
+      element: '[data-tab="avanzado"]',
+      popover: {
+        title: 'Avanzado: ventanas y Shadow Mode',
+        description:
+          'Configurás la anticipación mínima para reservar y hasta cuántos días hacia adelante ofrece. ' +
+          'El Shadow Mode deja que el agente piense pero no le escriba al paciente: ' +
+          'ideal para probar cambios sin riesgo.',
+        side: 'bottom',
+        align: 'start',
+      },
+    },
+    {
+      // Paso 6: Guardar — el botón NO se renderiza en la pestaña "conocimiento";
+      // onHighlightStarted navega a "personalidad" si corresponde para que esté en el DOM.
       element: '[data-tour="agent-save-btn"]',
       popover: {
         title: 'Guardá los cambios',
@@ -601,6 +608,13 @@ const ADMIN_CONFIG_AGENTE: TourDefinition = {
           'Nada impacta hasta que guardás. Y si algo sale mal, tenés el historial de versiones para volver atrás.',
         side: 'top',
         align: 'end',
+      },
+      onHighlightStarted: () => {
+        const knowledgeTab = document.querySelector('[data-tab="conocimiento"]')
+        if (knowledgeTab?.getAttribute('aria-selected') === 'true') {
+          // "conocimiento" activa → el botón Guardar no está en el DOM; ir a "personalidad"
+          document.querySelector<HTMLElement>('[data-tab="personalidad"]')?.click()
+        }
       },
     },
   ],

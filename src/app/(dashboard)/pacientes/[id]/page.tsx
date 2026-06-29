@@ -325,6 +325,7 @@ export default function PacienteFichaPage() {
             return (
               <button
                 key={tab.id}
+                data-tab={tab.id}
                 role="tab"
                 aria-selected={isActive}
                 onClick={() => changeTab(tab.param)}

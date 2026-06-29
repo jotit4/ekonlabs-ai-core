@@ -95,9 +95,12 @@ describe('getTourForRoute — mapeo rol + ruta → tour', () => {
     expect(semaforo?.popover?.description).toMatch(/amarillo = atendé/i)
   })
 
-  // ── Anclas estables: data-tour, #id o [id="..."] — nunca clases de Tailwind ──
-  it('todos los pasos anclados usan selectores estables (data-tour / id), nunca clases', () => {
-    const stableSelector = /^(\[data-tour="[a-z-]+"\]|#[a-zA-Z_-]+|\[id="[a-zA-Z0-9_.-]+"\])$/
+  // ── Anclas estables: data-tour, data-tab, #id o [id="..."] — nunca clases de Tailwind ──
+  it('todos los pasos anclados usan selectores estables (data-tour / data-tab / id), nunca clases', () => {
+    // data-tab se usa para anclar tours a botones de pestaña (siempre visibles en la TabList),
+    // evitando anclar a campos dentro de TabPanels que pueden estar ocultos con display:none.
+    const stableSelector =
+      /^(\[data-tour="[a-z-]+"\]|\[data-tab="[a-z]+"\]|#[a-zA-Z_-]+|\[id="[a-zA-Z0-9_.-]+"\])$/
     for (const tour of ALL_TOURS) {
       for (const step of tour.steps) {
         if (typeof step.element === 'string') {
@@ -117,5 +120,47 @@ describe('getTourForRoute — mapeo rol + ruta → tour', () => {
   it('los ids de tour son únicos', () => {
     const ids = ALL_TOURS.map((t) => t.id)
     expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  // ── Tour del Config del Agente: ancla a pestañas, no a campos internos ──
+  it('admin-configuracion-agente: 6 pasos, intro sin element + 4 data-tab + botón guardar', () => {
+    const tour = getTourForRoute('admin', '/configuracion/agente')
+    expect(tour?.id).toBe('admin-configuracion-agente')
+    expect(tour?.steps).toHaveLength(6)
+    // Paso 1: intro general, sin element
+    expect(tour?.steps[0]?.element).toBeUndefined()
+    expect(tour?.steps[0]?.popover?.title).toMatch(/así se comporta/i)
+    // Pasos 2-5: anclas a data-tab (botones de pestaña siempre visibles)
+    expect(tour?.steps[1]?.element).toBe('[data-tab="personalidad"]')
+    expect(tour?.steps[2]?.element).toBe('[data-tab="capacidades"]')
+    expect(tour?.steps[3]?.element).toBe('[data-tab="conocimiento"]')
+    expect(tour?.steps[4]?.element).toBe('[data-tab="avanzado"]')
+    // Paso 6: botón Guardar
+    expect(tour?.steps[5]?.element).toBe('[data-tour="agent-save-btn"]')
+  })
+
+  it('admin-configuracion-agente: NO contiene anclas a #prompt_rules ni a campos de pestañas ocultas', () => {
+    const tour = getTourForRoute('admin', '/configuracion/agente')
+    const elements = tour?.steps.map((s) => s.element).filter(Boolean)
+    expect(elements).not.toContain('#prompt_rules')
+    expect(elements).not.toContain('#kb-content')
+    expect(elements).not.toContain('[id="operations_config.future_window_days"]')
+    expect(elements).not.toContain('[data-tour="shadow-mode-toggle"]')
+  })
+
+  // ── Tour HCE: ancla al botón de la pestaña "notas", no a contenido interno ──
+  it('paciente-hce: 2 pasos, sin anclas a elementos dentro de pestañas ocultas', () => {
+    const tour = getTourForRoute('doctor', '/pacientes/abc123')
+    expect(tour?.id).toBe('paciente-hce')
+    expect(tour?.steps).toHaveLength(2)
+    // Paso 1: nav de pestañas (siempre en DOM)
+    expect(tour?.steps[0]?.element).toBe('[data-tour="patient-tabs"]')
+    // Paso 2: botón de pestaña "notas" (siempre visible en el navtablist)
+    expect(tour?.steps[1]?.element).toBe('[data-tab="notas"]')
+    // No debe haber anclas a elementos dentro de la pestaña inactiva
+    const elements = tour?.steps.map((s) => s.element).filter(Boolean)
+    expect(elements).not.toContain('[data-tour="hce-contexto-clinico"]')
+    expect(elements).not.toContain('[data-tour="hce-nueva-nota"]')
+    expect(elements).not.toContain('[data-tour="hce-historial-notas"]')
   })
 })

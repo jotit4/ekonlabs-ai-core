@@ -101,6 +101,7 @@ export function TabList({ tabs, className }: TabListProps) {
           <button
             key={tab.id}
             id={`${baseId}-tab-${tab.id}`}
+            data-tab={tab.id}
             role="tab"
             aria-selected={isActive}
             aria-controls={`${baseId}-panel-${tab.id}`}

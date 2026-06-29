@@ -14,9 +14,11 @@ const PAUSED_STATUSES: ConversationSummary['status'][] = ['needs_intervention', 
 
 // Filtros disponibles en la barra. "attention" agrupa los estados accionables
 // (needs_intervention + human_takeover); los demás filtran por un status único.
-const FILTERS: { mode: FilterMode; label: string }[] = [
+// `dataTour` se usa para anclar el tour guiado; siempre está presente en el DOM
+// (no es condicional) para que el selector [data-tour="filter-attention"] funcione.
+const FILTERS: { mode: FilterMode; label: string; dataTour?: string }[] = [
   { mode: 'all', label: 'Todas' },
-  { mode: 'attention', label: 'Requiere atención' },
+  { mode: 'attention', label: 'Requiere atención', dataTour: 'filter-attention' },
   { mode: 'human_takeover', label: 'En control humano' },
   { mode: 'resolved', label: 'Resueltas' },
 ]
@@ -223,7 +225,7 @@ export function ConversationListSidebar() {
           borderBottom: '1px solid var(--color-border)',
         }}
       >
-        {FILTERS.map(({ mode, label }) => {
+        {FILTERS.map(({ mode, label, dataTour }) => {
           const isActive = filterMode === mode
           const isAttention = mode === 'attention'
           // "Requiere atención" usa naranja; los demás usan el color interactivo del dashboard
@@ -232,7 +234,7 @@ export function ConversationListSidebar() {
             <button
               key={mode}
               type="button"
-              data-tour={isAttention ? 'filter-attention' : undefined}
+              data-tour={dataTour}
               aria-pressed={isActive}
               onClick={() => setFilterMode(mode)}
               style={{
