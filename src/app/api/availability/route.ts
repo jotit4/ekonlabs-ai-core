@@ -52,6 +52,11 @@ export async function GET(request: Request): Promise<Response> {
   const serviceId = searchParams.get('service_id')
   const professionalId = searchParams.get('professional_id')
   const summary = searchParams.get('summary') === 'true'
+  // P0.1 — "Cualquier profesional disponible": cuando se pide un servicio sin
+  // profesional concreto, iterar TODOS los profesionales del servicio y unir sus
+  // huecos (sin colapsar por hora) para que cada hueco conserve su profesional.
+  const allProfessionals =
+    searchParams.get('all_professionals') === 'true' && !!serviceId && !professionalId
 
   // 5. Validación de params
   if (!dateFrom || !dateTo) {
@@ -80,31 +85,88 @@ export async function GET(request: Request): Promise<Response> {
     formatISO(d, { representation: 'date' }),
   )
 
-  // 7. Iterar server-side — una llamada a la RPC por día
+  // 6.b. Modo "todos los profesionales": resolver la lista de profesionales del
+  // servicio UNA sola vez (no por día). RLS filtra service_professionals por
+  // tenant vía el JOIN a professionals → no agregar .eq('tenant_id', ...) (AR14).
+  let serviceProfessionalIds: string[] | null = null
+  if (allProfessionals) {
+    const { data: spData, error: spError } = await supabase
+      .from('service_professionals')
+      .select('professional_id, professionals ( professional_id, active )')
+      .eq('service_id', serviceId as string)
+
+    if (spError) {
+      console.error('[availability/GET] service_professionals error:', spError)
+      return Response.json({ error: 'Error al calcular la disponibilidad' }, { status: 500 })
+    }
+
+    type ProfRow = { professional_id: string; active: boolean } | null
+    serviceProfessionalIds = (spData ?? [])
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((row: any) => row.professionals as ProfRow)
+      .filter((p): p is { professional_id: string; active: boolean } => p != null && p.active === true)
+      .map((p) => p.professional_id)
+  }
+
+  // 7. Iterar server-side — una llamada a la RPC por día (y por profesional en
+  // modo "todos los profesionales").
   const daysShifts: Record<string, DayShifts> = {}
   const daysSummary: Record<string, DaySummary> = {}
 
   for (const isoDay of isoDays) {
-    const { data, error } = await supabase.rpc('check_clinic_availability', {
-      p_org_id: tenantId,
-      p_date: isoDay,
-      // p_timezone se omite → usa el DEFAULT de la RPC (America/Argentina/Buenos_Aires)
-      p_service_id: serviceId ?? undefined,
-      p_professional_id: professionalId ?? undefined,
-    })
+    let shifts: AvailabilityShift[]
+    let available: boolean
 
-    if (error) {
-      console.error('[availability/GET] rpc error:', error)
-      return Response.json({ error: 'Error al calcular la disponibilidad' }, { status: 500 })
+    if (serviceProfessionalIds) {
+      // Unir los huecos de cada profesional del servicio. Cada llamada filtra por
+      // un profesional → la RPC NO colapsa por hora, así cada hueco mantiene su
+      // professional_id/professional_name.
+      const merged: AvailabilityShift[] = []
+      for (const profId of serviceProfessionalIds) {
+        const { data, error } = await supabase.rpc('check_clinic_availability', {
+          p_org_id: tenantId,
+          p_date: isoDay,
+          p_service_id: serviceId ?? undefined,
+          p_professional_id: profId,
+        })
+        if (error) {
+          console.error('[availability/GET] rpc error:', error)
+          return Response.json({ error: 'Error al calcular la disponibilidad' }, { status: 500 })
+        }
+        const row = (Array.isArray(data) ? data[0] : data) as RpcRow | undefined
+        merged.push(...((row?.shifts ?? []) as AvailabilityShift[]))
+      }
+      // Ordenar por hora de inicio y, a igualdad, por nombre del profesional.
+      merged.sort(
+        (a, b) =>
+          a.slot_start_iso.localeCompare(b.slot_start_iso) ||
+          a.professional_name.localeCompare(b.professional_name),
+      )
+      shifts = merged
+      available = merged.length > 0
+    } else {
+      const { data, error } = await supabase.rpc('check_clinic_availability', {
+        p_org_id: tenantId,
+        p_date: isoDay,
+        // p_timezone se omite → usa el DEFAULT de la RPC (America/Argentina/Buenos_Aires)
+        p_service_id: serviceId ?? undefined,
+        p_professional_id: professionalId ?? undefined,
+      })
+
+      if (error) {
+        console.error('[availability/GET] rpc error:', error)
+        return Response.json({ error: 'Error al calcular la disponibilidad' }, { status: 500 })
+      }
+
+      const row = (Array.isArray(data) ? data[0] : data) as RpcRow | undefined
+      shifts = (row?.shifts ?? []) as AvailabilityShift[]
+      available = row?.available ?? false
     }
-
-    const row = (Array.isArray(data) ? data[0] : data) as RpcRow | undefined
-    const shifts = (row?.shifts ?? []) as AvailabilityShift[]
 
     if (summary) {
       daysSummary[isoDay] = { free_count: shifts.length }
     } else {
-      daysShifts[isoDay] = { available: row?.available ?? false, shifts }
+      daysShifts[isoDay] = { available, shifts }
     }
   }
 

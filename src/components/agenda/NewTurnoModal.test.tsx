@@ -92,6 +92,9 @@ vi.mock('@tanstack/react-query', () => ({
 }))
 
 // Mock @refinedev/core
+// Nota P0.2: el mock ignora los `filters` del useList, así que incluimos un
+// servicio 'cycle' para verificar que el filtro CLIENTE del modal (booking_mode
+// === 'appointment') lo oculta.
 vi.mock('@refinedev/core', () => ({
   useList: () => ({
     result: {
@@ -101,12 +104,21 @@ vi.mock('@refinedev/core', () => ({
           name: 'Kinesiología',
           professional_name: 'Patricia Pérez',
           duration_minutes: 60,
+          booking_mode: 'appointment',
         },
         {
           service_id: 'svc-2',
           name: 'Fisioterapia',
           professional_name: null,
           duration_minutes: 30,
+          booking_mode: 'appointment',
+        },
+        {
+          service_id: 'svc-cycle',
+          name: 'Aquagym',
+          professional_name: null,
+          duration_minutes: 60,
+          booking_mode: 'cycle',
         },
       ],
     },
@@ -156,24 +168,24 @@ describe('NewTurnoModal', () => {
   describe('renderizado', () => {
     it('renderiza el campo de búsqueda y botón Buscar cuando open=true', () => {
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
-      expect(screen.getByPlaceholderText('DNI, nombre o teléfono...')).toBeInTheDocument()
+      expect(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…')).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /buscar/i })).toBeInTheDocument()
     })
 
-    it('el input tiene placeholder "DNI, nombre o teléfono..."', () => {
+    it('el input tiene placeholder "Buscá por nombre, DNI o teléfono…"', () => {
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
-      const input = screen.getByPlaceholderText('DNI, nombre o teléfono...')
+      const input = screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…')
       expect(input).toBeInTheDocument()
     })
 
     it('no renderiza nada cuando open=false', () => {
       render(<NewTurnoModal open={false} onClose={mockOnClose} date="2026-05-08" />)
-      expect(screen.queryByPlaceholderText('DNI, nombre o teléfono...')).not.toBeInTheDocument()
+      expect(screen.queryByPlaceholderText('Buscá por nombre, DNI o teléfono…')).not.toBeInTheDocument()
     })
 
-    it('tiene el título "Nuevo turno"', () => {
+    it('tiene el título "Dar un turno"', () => {
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
-      expect(screen.getByText('Nuevo turno')).toBeInTheDocument()
+      expect(screen.getByText('Dar un turno')).toBeInTheDocument()
     })
 
     it('tiene el botón Cancelar', () => {
@@ -197,7 +209,7 @@ describe('NewTurnoModal', () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), 'Juan')
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), 'Juan')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => {
@@ -221,7 +233,7 @@ describe('NewTurnoModal', () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '12345678')
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '12345678')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => {
@@ -251,7 +263,7 @@ describe('NewTurnoModal', () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), 'Juan')
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), 'Juan')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => {
@@ -282,7 +294,7 @@ describe('NewTurnoModal', () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), 'Juan')
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), 'Juan')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => {
@@ -305,7 +317,7 @@ describe('NewTurnoModal', () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), 'NoExiste')
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), 'NoExiste')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => {
@@ -320,7 +332,7 @@ describe('NewTurnoModal', () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), 'a')
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), 'a')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => {
@@ -342,7 +354,7 @@ describe('NewTurnoModal', () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '11223344')
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '11223344')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => {
@@ -371,7 +383,7 @@ describe('NewTurnoModal', () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => {
@@ -387,7 +399,7 @@ describe('NewTurnoModal', () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => {
@@ -408,7 +420,7 @@ describe('NewTurnoModal', () => {
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
 
       // Buscar paciente
-      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
       await waitFor(() => screen.getByLabelText('Servicio'))
 
@@ -435,7 +447,7 @@ describe('NewTurnoModal', () => {
       })
     })
 
-    it('carga el selector de profesionales filtrado por servicio y exige elegir uno', async () => {
+    it('carga el selector de profesionales filtrado por servicio y por defecto "cualquiera" (P0.1)', async () => {
       mockFetch.mockImplementation((url: string) => {
         if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
         if (url.includes('/profesionales'))
@@ -451,7 +463,7 @@ describe('NewTurnoModal', () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
 
-      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
       await waitFor(() => screen.getByLabelText('Servicio'))
 
@@ -462,12 +474,98 @@ describe('NewTurnoModal', () => {
         expect(mockFetch).toHaveBeenCalledWith('/api/services/svc-1/profesionales')
       })
 
-      // Con dos profesionales no se preselecciona — ambas opciones disponibles
+      // Con dos profesionales aparece la opción "Cualquier profesional disponible"
+      // + ambos profesionales, y "cualquiera" queda preseleccionada por defecto.
       await waitFor(() => {
+        expect(screen.getByRole('option', { name: 'Cualquier profesional disponible' })).toBeInTheDocument()
         expect(screen.getByRole('option', { name: 'Patricia Pérez' })).toBeInTheDocument()
         expect(screen.getByRole('option', { name: 'Aldo Luque' })).toBeInTheDocument()
       })
-      expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('')
+      await waitFor(() => {
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
+      })
+    })
+
+    it('P0.2 — oculta los servicios no agendables (booking_mode ≠ appointment)', async () => {
+      mockFetch.mockResolvedValueOnce(makeSearchResponse([singlePatient]))
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
+
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
+      await user.click(screen.getByRole('button', { name: /buscar/i }))
+      await waitFor(() => screen.getByLabelText('Servicio'))
+
+      // Los servicios 'appointment' están; el 'cycle' (Aquagym) NO.
+      expect(screen.getByRole('option', { name: /Kinesiología/ })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: /Fisioterapia/ })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: /Aquagym/ })).not.toBeInTheDocument()
+    })
+
+    it('P0.1 — en modo "cualquiera" los horarios se etiquetan con el profesional y guardar fija ese profesional', async () => {
+      // Disponibilidad "todos los profesionales": el hook devuelve huecos de dos
+      // profesionales distintos con la misma etiqueta compuesta.
+      vi.mocked(useAvailability).mockImplementation(({ enabled }) => {
+        const shifts: AvailabilityShift[] = enabled
+          ? [
+              { ...makeShift('09:00'), professional_id: 'prof-1', professional_name: 'Patricia Pérez' },
+              { ...makeShift('10:00'), professional_id: 'prof-2', professional_name: 'Aldo Luque' },
+            ]
+          : []
+        return {
+          daysShifts: {},
+          daysSummary: {},
+          isLoading: false,
+          isError: false,
+          refetch: vi.fn(),
+          shiftsForDate: () => shifts,
+        }
+      })
+      mockFetch.mockImplementation((url: string, init?: { method?: string }) => {
+        if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
+        if (url.includes('/profesionales'))
+          return Promise.resolve(
+            makeProfessionalsResponse([
+              { professional_id: 'prof-1', name: 'Patricia Pérez' },
+              { professional_id: 'prof-2', name: 'Aldo Luque' },
+            ]),
+          )
+        if (url === '/api/appointments' && init?.method === 'POST')
+          return Promise.resolve(makeAppointmentResponse())
+        return Promise.resolve(makeSearchResponse([]))
+      })
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
+
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
+      await user.click(screen.getByRole('button', { name: /buscar/i }))
+      await waitFor(() => screen.getByLabelText('Servicio'))
+
+      await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+      await waitFor(() => {
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
+      })
+
+      // Cada hueco está etiquetado con su profesional
+      await waitFor(() => {
+        expect(screen.getByRole('option', { name: '09:00 · Patricia Pérez' })).toBeInTheDocument()
+        expect(screen.getByRole('option', { name: '10:00 · Aldo Luque' })).toBeInTheDocument()
+      })
+
+      // Elegir el hueco de Aldo (prof-2) y guardar → el POST fija professional_id prof-2
+      await user.selectOptions(screen.getByLabelText('Horario'), 'prof-2__10:00')
+      await user.click(screen.getByRole('button', { name: /guardar turno/i }))
+
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find(
+          (c) => c[0] === '/api/appointments' && (c[1] as { method?: string })?.method === 'POST',
+        )
+        expect(call).toBeTruthy()
+        const body = JSON.parse((call![1] as { body: string }).body)
+        expect(body.professional_id).toBe('prof-2')
+        expect(body.appointment_time).toContain('T10:00:00')
+      })
     })
 
     it('el input de fecha tiene atributo min (fix M-10)', async () => {
@@ -476,7 +574,7 @@ describe('NewTurnoModal', () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
 
-      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => {
@@ -504,7 +602,7 @@ describe('NewTurnoModal', () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
 
-      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => screen.getByLabelText('Horario'))
@@ -530,7 +628,7 @@ describe('NewTurnoModal', () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
 
-      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
       await waitFor(() => screen.getByLabelText('Servicio'))
 
@@ -561,7 +659,7 @@ describe('NewTurnoModal', () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
 
-      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
       await waitFor(() => screen.getByLabelText('Servicio'))
 
@@ -633,7 +731,7 @@ describe('NewTurnoModal', () => {
         />,
       )
 
-      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => screen.getByLabelText('Servicio'))
@@ -652,7 +750,7 @@ describe('NewTurnoModal', () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-06-04" />)
 
-      await user.type(screen.getByPlaceholderText('DNI, nombre o teléfono...'), '87654321')
+      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
       await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => screen.getByLabelText('Servicio'))

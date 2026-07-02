@@ -1,11 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
+import { SlidersHorizontal } from 'lucide-react'
 import {
-  formatISO, parseISO, addDays, addWeeks, addMonths,
+  formatISO, parseISO, addDays, addMonths,
   isToday, format, isValid,
-  startOfWeek, endOfWeek, startOfMonth, endOfMonth,
+  startOfMonth, endOfMonth,
 } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { CalendarView } from '@/components/agenda/CalendarView'
@@ -17,6 +18,7 @@ import { NewTurnoModal } from '@/components/agenda/NewTurnoModal'
 import { NewPaqueteModal } from '@/components/paquetes/NewPaqueteModal'
 import { RescheduleTurnoModal } from '@/components/agenda/RescheduleTurnoModal'
 import { AgendaFilters, type AvailabilityMode, type AreaFocus } from '@/components/agenda/AgendaFilters'
+import { AgendaLegend } from '@/components/agenda/AgendaLegend'
 import { isRehabService } from '@/lib/agenda/service-visuals'
 import { SyncStatusBanner } from '@/components/agenda/SyncStatusBanner'
 import { GCalDegradationBanner } from '@/components/agenda/GCalDegradationBanner'
@@ -47,12 +49,37 @@ export function AgendaView() {
   const professionalId = searchParams.get('professional_id') ?? null
   const serviceId = searchParams.get('service_id') ?? null
 
-  // Foco de área (rediseño foco rehabilitación). Default = 'rehab': la agenda
-  // arranca mostrando solo los servicios de rehabilitación. Estado local (no
-  // URL) — es una preferencia de vista, no un filtro persistible/compartible.
-  // Cuando el usuario elige un servicio puntual (serviceId), ese filtro manda y
-  // el foco de área no recorta nada adicional.
+  // ── Modo turnero (recepción) vs agenda completa (admin) ─────────────────────
+  // La recepcionista se abruma con demasiados controles: su flujo es "abrir y ver
+  // todo" (como su turnero de Excel). Para el rol 'receptionist' arrancamos en un
+  // modo mínimo — solo título + navegación + "Dar turno" + un botón "Filtrar" que
+  // despliega el resto. El admin conserva la agenda completa (todo visible).
+  const isReceptionist = role === 'receptionist'
+
+  // Panel "Filtrar" (solo recepción). Estado local, cerrado por defecto. Al
+  // abrirlo se revelan los controles secundarios (selector de vista, dropdowns +
+  // Limpiar, "Nuevo paquete"). Para admin no aplica: todo está siempre visible.
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const secondaryVisible = isReceptionist ? filtersOpen : true
+
+  // Foco de área (rediseño foco rehabilitación). Estado local (no URL) — es una
+  // preferencia de vista, no un filtro persistible/compartible. Cuando el usuario
+  // elige un servicio puntual (serviceId), ese filtro manda y el foco de área no
+  // recorta nada adicional.
+  //   - admin  → default 'rehab' (arranca viendo solo servicios de rehabilitación).
+  //   - recepción → default 'todos' (modo turnero: ve TODOS los servicios, sin
+  //     recortes; odontología, pediatría, etc. deben aparecer).
   const [areaFocus, setAreaFocus] = useState<AreaFocus>('rehab')
+
+  // El rol se resuelve async (getSession). Fijamos el foco por defecto la primera
+  // vez que el rol se conoce; después respetamos los toggles manuales del usuario.
+  const areaDefaultApplied = useRef(false)
+  useEffect(() => {
+    if (role && !areaDefaultApplied.current) {
+      areaDefaultApplied.current = true
+      setAreaFocus(role === 'receptionist' ? 'todos' : 'rehab')
+    }
+  }, [role])
 
   // Determinar vista activa desde query param.
   // AC6 (Story 10.7): vista default = Semana. Sin ?vista → 'semana'.
@@ -63,9 +90,12 @@ export function AgendaView() {
     : vistaParam === 'mes' ? 'mes'
     : 'semana'
 
-  // Calcular rangos para vista semana y mes
-  const weekStart = formatISO(startOfWeek(selectedDate, { weekStartsOn: 1 }), { representation: 'date' })
-  const weekEnd = formatISO(endOfWeek(selectedDate, { weekStartsOn: 1 }), { representation: 'date' })
+  // Calcular rangos para vista semana y mes.
+  // Vista Semana: ventana de 7 días DESDE la fecha ancla (por defecto hoy). El
+  // día ancla queda como PRIMERA columna; nunca se muestran días previos al
+  // ancla (decisión del usuario — turnero hacia adelante).
+  const weekStart = isoDate
+  const weekEnd = formatISO(addDays(selectedDate, 6), { representation: 'date' })
   const monthStart = formatISO(startOfMonth(selectedDate), { representation: 'date' })
   const monthEnd = formatISO(endOfMonth(selectedDate), { representation: 'date' })
 
@@ -171,8 +201,10 @@ export function AgendaView() {
   let nextISO: string
 
   if (vistaActiva === 'semana') {
-    prevISO = formatISO(addWeeks(selectedDate, -1), { representation: 'date' })
-    nextISO = formatISO(addWeeks(selectedDate, 1), { representation: 'date' })
+    // Semana = ventana de 7 días desde el ancla → navegar de a ±7 días (no de a
+    // semana calendario). "Hoy" (abajo) resetea el ancla a hoy.
+    prevISO = formatISO(addDays(selectedDate, -7), { representation: 'date' })
+    nextISO = formatISO(addDays(selectedDate, 7), { representation: 'date' })
   } else if (vistaActiva === 'mes') {
     prevISO = formatISO(addMonths(selectedDate, -1), { representation: 'date' })
     nextISO = formatISO(addMonths(selectedDate, 1), { representation: 'date' })
@@ -189,8 +221,9 @@ export function AgendaView() {
     if (vistaActiva === 'dia') {
       title = format(selectedDate, "EEEE d 'de' MMMM", { locale: es })
     } else if (vistaActiva === 'semana') {
-      const wStart = startOfWeek(selectedDate, { weekStartsOn: 1 })
-      const wEnd = endOfWeek(selectedDate, { weekStartsOn: 1 })
+      // Rango [ancla .. ancla+6] (ej. "1 de jul – 7 de jul 2026").
+      const wStart = selectedDate
+      const wEnd = addDays(selectedDate, 6)
       title = `${format(wStart, "d 'de' MMM", { locale: es })} – ${format(wEnd, "d 'de' MMM yyyy", { locale: es })}`
     } else {
       title = format(selectedDate, 'MMMM yyyy', { locale: es })
@@ -245,17 +278,30 @@ export function AgendaView() {
     handleOpenReschedule(appointment)
   }
 
+  // Exclusión mutua (professional_id ⊕ service_id): nunca se mandan los dos a la
+  // vez. Antes vivía en el radiogroup "Ver disponibilidad de" (eliminado); ahora
+  // se dispara desde el onChange de cada dropdown. Se resuelve en un ÚNICO push
+  // (set uno + delete el opuesto) — llamar a los dos handlers por separado
+  // provocaría dos navegaciones que se pisan (cada una lee el searchParams viejo).
   function handleProfessionalChange(id: string | null) {
     const params = new URLSearchParams(searchParams.toString())
-    if (id) params.set('professional_id', id)
-    else params.delete('professional_id')
+    if (id) {
+      params.set('professional_id', id)
+      params.delete('service_id')
+    } else {
+      params.delete('professional_id')
+    }
     router.push(`/agenda?${params.toString()}`)
   }
 
   function handleServiceChange(id: string | null) {
     const params = new URLSearchParams(searchParams.toString())
-    if (id) params.set('service_id', id)
-    else params.delete('service_id')
+    if (id) {
+      params.set('service_id', id)
+      params.delete('professional_id')
+    } else {
+      params.delete('service_id')
+    }
     router.push(`/agenda?${params.toString()}`)
   }
 
@@ -271,15 +317,6 @@ export function AgendaView() {
   // mostrar una agenda vacía con un filtro fuera de foco.
   function handleAreaFocusChange(focus: AreaFocus) {
     setAreaFocus(focus)
-  }
-
-  // Modo de disponibilidad — exclusión mutua entre professional_id y service_id.
-  // El cambio efectivo de filtros lo hace AgendaFilters vía
-  // onProfessionalChange/onServiceChange (que ya limpian el opuesto). El modo se
-  // deriva de los params en cada render (availabilityMode), así que el callback
-  // es un no-op explícito que solo habilita el radiogroup en AgendaFilters.
-  function handleAvailabilityModeChange() {
-    // No-op intencional — ver comentario arriba.
   }
 
   // Agendar desde un hueco libre (Story 10.7, AC5).
@@ -312,11 +349,16 @@ export function AgendaView() {
     setNewTurnoPrefill(null)
   }
 
-  // La recepcionista es la usuaria principal del módulo → ve los filtros también.
+  // La recepcionista es la usuaria principal del módulo → tiene acceso a los
+  // filtros (aunque en modo turnero arrancan plegados tras "Filtrar").
   const showFilters = role === 'admin' || role === 'receptionist'
 
+  // Botón primario: en recepción se llama "Dar turno" (lenguaje del turnero);
+  // para admin se conserva "Nuevo turno".
+  const turnoLabel = isReceptionist ? 'Dar turno' : 'Nuevo turno'
+
   return (
-    <section className="mx-auto w-full max-w-6xl px-6 py-8">
+    <section className="w-full h-full flex flex-col px-4 lg:px-6 py-4">
       <header className="flex items-start justify-between mb-6">
         <div>
           <p className="text-sm text-[var(--color-text-secondary)]">Agenda</p>
@@ -325,19 +367,45 @@ export function AgendaView() {
           </h1>
         </div>
         <div className="flex items-center gap-3 mt-2 flex-wrap justify-end">
-          <CalendarViewSelector activeView={vistaActiva} onChange={handleVistaChange} />
+          {/* Selector de vista: en modo turnero (recepción) vive detrás de
+              "Filtrar"; para admin siempre visible. */}
+          {secondaryVisible && (
+            <CalendarViewSelector activeView={vistaActiva} onChange={handleVistaChange} />
+          )}
+          {/* Botón "Filtrar" — solo recepción. Despliega el selector de vista, los
+              dropdowns Profesional/Servicio (+ Limpiar) y "Nuevo paquete". */}
+          {isReceptionist && (
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((v) => !v)}
+              aria-expanded={filtersOpen}
+              aria-controls="agenda-secondary-controls"
+              aria-label="Filtrar"
+              data-tour="agenda-filtrar-btn"
+              className={[
+                'min-h-[44px] min-w-[44px] flex items-center gap-2 rounded-[var(--radius-sm)] px-4 text-sm border transition-colors',
+                filtersOpen
+                  ? 'border-[var(--color-interactive)] text-[var(--color-interactive)] bg-[var(--color-surface)]'
+                  : 'border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-surface)]',
+              ].join(' ')}
+            >
+              <SlidersHorizontal size={16} aria-hidden="true" />
+              Filtrar
+            </button>
+          )}
           <div className="flex items-center gap-2">
-            {(vistaActiva === 'dia' || vistaActiva === 'semana') && (
-              <button
-                onClick={() => { setNewTurnoPrefill(null); setShowNewTurnoModal(true) }}
-                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-[var(--radius-sm)] px-4 text-sm text-white bg-[var(--color-interactive)] hover:opacity-90 transition-opacity"
-                aria-label="Nuevo turno"
-                data-tour="new-appointment-btn"
-              >
-                + Nuevo turno
-              </button>
-            )}
-            {showFilters && (vistaActiva === 'dia' || vistaActiva === 'semana') && (
+            {/* Disponible en todas las vistas (día, semana y mes). Desde Mes el
+                turno se crea con la fecha ancla como prefill (newTurnoPrefill=null
+                → NewTurnoModal usa date={isoDate}). */}
+            <button
+              onClick={() => { setNewTurnoPrefill(null); setShowNewTurnoModal(true) }}
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-[var(--radius-sm)] px-4 text-sm text-white bg-[var(--color-interactive)] hover:opacity-90 transition-opacity"
+              aria-label={turnoLabel}
+              data-tour="new-appointment-btn"
+            >
+              + {turnoLabel}
+            </button>
+            {showFilters && secondaryVisible && (
               <button
                 onClick={() => setShowNewPaqueteModal(true)}
                 className="min-h-[44px] flex items-center justify-center rounded-[var(--radius-sm)] px-4 text-sm text-[var(--color-interactive)] border border-[var(--color-interactive)] hover:bg-[var(--color-surface)] transition-colors"
@@ -378,23 +446,30 @@ export function AgendaView() {
         </div>
       </header>
 
-      {showFilters && (
-        <div className="mb-4">
-          <AgendaFilters
-            professionalId={professionalId}
-            serviceId={serviceId}
-            onProfessionalChange={handleProfessionalChange}
-            onServiceChange={handleServiceChange}
-            onClear={handleClearFilters}
-            showFilters={showFilters}
-            availabilityMode={availabilityMode}
-            onAvailabilityModeChange={handleAvailabilityModeChange}
-            areaFocus={areaFocus}
-            onAreaFocusChange={handleAreaFocusChange}
-          />
-        </div>
-      )}
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+        {/* Contenedor de los filtros. En modo turnero (recepción) se revela con
+            "Filtrar" (secondaryVisible); para admin siempre visible. La leyenda de
+            ESTADOS queda SIEMPRE a la vista (es informativa, no un control). */}
+        {showFilters && (
+          <div id="agenda-secondary-controls">
+            {secondaryVisible && (
+              <AgendaFilters
+                professionalId={professionalId}
+                serviceId={serviceId}
+                onProfessionalChange={handleProfessionalChange}
+                onServiceChange={handleServiceChange}
+                onClear={handleClearFilters}
+                showFilters={showFilters}
+                areaFocus={areaFocus}
+                onAreaFocusChange={handleAreaFocusChange}
+              />
+            )}
+          </div>
+        )}
+        <AgendaLegend />
+      </div>
 
+      <div className="flex-1 min-h-0 overflow-auto">
       {vistaActiva === 'dia' ? (
         <>
           <KPIStrip appointments={focusedAppointments} isLoading={isLoading} isError={isError} />
@@ -449,6 +524,8 @@ export function AgendaView() {
           />
         </>
       )}
+
+      </div>
 
       <NewTurnoModal
         open={showNewTurnoModal}

@@ -1,10 +1,11 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 
-const { mockGetUser, mockGetSession, mockRpc, mockParseJwt } = vi.hoisted(() => ({
+const { mockGetUser, mockGetSession, mockRpc, mockParseJwt, mockFrom } = vi.hoisted(() => ({
   mockGetUser: vi.fn(),
   mockGetSession: vi.fn(),
   mockRpc: vi.fn(),
   mockParseJwt: vi.fn().mockReturnValue({ app_role: 'admin', tenant_id: 'tenant-1' }),
+  mockFrom: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -18,6 +19,7 @@ vi.mock('@/lib/supabase/server', () => ({
     Promise.resolve({
       auth: { getUser: mockGetUser, getSession: mockGetSession },
       rpc: mockRpc,
+      from: mockFrom,
     }),
   ),
 }))
@@ -144,5 +146,74 @@ describe('GET /api/availability', () => {
     mockRpc.mockResolvedValue({ data: null, error: { message: 'rpc fail' } })
     const res = await GET(makeRequest('date_from=2026-06-04&date_to=2026-06-04'))
     expect(res.status).toBe(500)
+  })
+
+  describe('all_professionals=true (P0.1 — cualquier profesional)', () => {
+    beforeEach(() => {
+      // service_professionals → dos profesionales activos del servicio + uno inactivo
+      // (que debe filtrarse). RLS filtra por tenant vía el JOIN a professionals.
+      mockFrom.mockReturnValue({
+        select: () => ({
+          eq: () =>
+            Promise.resolve({
+              data: [
+                { professional_id: 'prof-1', professionals: { professional_id: 'prof-1', active: true } },
+                { professional_id: 'prof-2', professionals: { professional_id: 'prof-2', active: true } },
+                { professional_id: 'prof-3', professionals: { professional_id: 'prof-3', active: false } },
+              ],
+              error: null,
+            }),
+        }),
+      })
+      // La RPC devuelve un hueco distinto por profesional consultado.
+      mockRpc.mockImplementation((_fn: string, args: { p_professional_id?: string }) => {
+        const prof = args.p_professional_id ?? 'unknown'
+        return Promise.resolve({
+          data: [
+            {
+              available: true,
+              shifts: [{ ...SAMPLE_SHIFT, professional_id: prof, professional_name: `Prof ${prof}` }],
+            },
+          ],
+          error: null,
+        })
+      })
+    })
+
+    it('itera los profesionales ACTIVOS del servicio y une sus huecos', async () => {
+      const res = await GET(
+        makeRequest('date_from=2026-06-04&date_to=2026-06-04&service_id=svc-1&all_professionals=true'),
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      const shifts = body.days['2026-06-04'].shifts
+      // Solo prof-1 y prof-2 (prof-3 inactivo se filtra) → 2 huecos.
+      expect(shifts).toHaveLength(2)
+      const profs = shifts.map((s: { professional_id: string }) => s.professional_id).sort()
+      expect(profs).toEqual(['prof-1', 'prof-2'])
+      // Una llamada a la RPC por profesional activo (no una sola con undefined).
+      expect(mockRpc).toHaveBeenCalledWith(
+        'check_clinic_availability',
+        expect.objectContaining({ p_professional_id: 'prof-1', p_service_id: 'svc-1' }),
+      )
+      expect(mockRpc).toHaveBeenCalledWith(
+        'check_clinic_availability',
+        expect.objectContaining({ p_professional_id: 'prof-2', p_service_id: 'svc-1' }),
+      )
+    })
+
+    it('ignora all_professionals si viene professional_id (no itera)', async () => {
+      await GET(
+        makeRequest(
+          'date_from=2026-06-04&date_to=2026-06-04&service_id=svc-1&professional_id=prof-9&all_professionals=true',
+        ),
+      )
+      // No consulta service_professionals: respeta el profesional concreto.
+      expect(mockFrom).not.toHaveBeenCalled()
+      expect(mockRpc).toHaveBeenCalledWith(
+        'check_clinic_availability',
+        expect.objectContaining({ p_professional_id: 'prof-9' }),
+      )
+    })
   })
 })

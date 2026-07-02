@@ -1,13 +1,13 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
 import { useQueryClient } from '@tanstack/react-query'
 import { format, parseISO } from 'date-fns'
 import { Dialog } from '@base-ui/react/dialog'
 import { rescheduleSchema, type RescheduleFormValues } from '@/lib/schemas/reschedule.schema'
-import { generateTimeSlots } from '@/lib/utils/time-slots'
+import { useAvailability } from '@/hooks/use-availability'
 import type { Appointment } from '@/types/appointments'
 
 interface ProfessionalOption {
@@ -68,7 +68,6 @@ export function RescheduleTurnoModal({
   }, [open, serviceId])
 
   const durationMinutes = appointment?.services?.duration_minutes ?? 60
-  const timeSlots = generateTimeSlots(durationMinutes)
   const today = new Date().toLocaleDateString('en-CA')
 
   // Calcular valores por defecto a partir del appointment actual
@@ -119,6 +118,48 @@ export function RescheduleTurnoModal({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profesionales, appointment?.professional_id])
+
+  // P0.3 (BUG) — Reprogramar debe usar la disponibilidad REAL (RPC
+  // check_clinic_availability vía /api/availability), no un rango 08–20 inventado.
+  // El profesional a considerar es el elegido en el form (default = el actual del
+  // turno). Solo se ofrecen huecos reales de ese profesional+servicio+fecha.
+  const watchedDate = useWatch({ control: form.control, name: 'appointment_date' })
+  const watchedProfessional = useWatch({ control: form.control, name: 'professional_id' })
+  const effectiveProfessionalId =
+    watchedProfessional && watchedProfessional.length > 0
+      ? watchedProfessional
+      : appointment?.professional_id ?? null
+
+  const availabilityEnabled = !!serviceId && !!effectiveProfessionalId && !!watchedDate
+  const {
+    shiftsForDate,
+    isLoading: isLoadingAvailability,
+    isError: isAvailabilityError,
+  } = useAvailability({
+    dateFrom: watchedDate || '',
+    dateTo: watchedDate || '',
+    serviceId,
+    professionalId: effectiveProfessionalId,
+    enabled: availabilityEnabled,
+  })
+
+  // Huecos libres (HH:MM) reales. Nota: el propio turno ocupa su slot actual, por
+  // lo que la hora original NO aparece como libre (reprogramar = mover a otra hora).
+  const availableTimes = availabilityEnabled
+    ? shiftsForDate(watchedDate).map((shift) => shift.open)
+    : []
+
+  // Limpiar la hora elegida si dejó de estar disponible (cambió fecha/profesional
+  // o el hueco se ocupó). Solo cuando ya hay datos cargados para no borrar antes de
+  // resolver la consulta.
+  const watchedTime = useWatch({ control: form.control, name: 'appointment_time_hhmm' })
+  useEffect(() => {
+    if (!availabilityEnabled || isLoadingAvailability || isAvailabilityError) return
+    if (watchedTime && !availableTimes.includes(watchedTime)) {
+      form.setValue('appointment_time_hhmm', '')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availabilityEnabled, isLoadingAvailability, isAvailabilityError, watchedTime, availableTimes.join(',')])
 
   const handleClose = () => {
     setSlotConflictError(null)
@@ -260,6 +301,7 @@ export function RescheduleTurnoModal({
                 <select
                   id="reschedule-time"
                   {...form.register('appointment_time_hhmm')}
+                  disabled={!availabilityEnabled || isLoadingAvailability || availableTimes.length === 0}
                   className={inputClass(
                     !!form.formState.errors.appointment_time_hhmm || !!slotConflictError,
                   )}
@@ -274,13 +316,28 @@ export function RescheduleTurnoModal({
                         : undefined
                   }
                 >
-                  <option value="">Seleccioná un horario</option>
-                  {timeSlots.map((slot) => (
+                  <option value="">
+                    {!availabilityEnabled
+                      ? 'Elegí una fecha'
+                      : isLoadingAvailability
+                        ? 'Cargando horarios disponibles...'
+                        : isAvailabilityError
+                          ? 'No se pudo cargar la disponibilidad'
+                          : availableTimes.length === 0
+                            ? 'Sin horarios libres para esta fecha'
+                            : 'Seleccioná un horario'}
+                  </option>
+                  {availableTimes.map((slot) => (
                     <option key={slot} value={slot}>
                       {slot}
                     </option>
                   ))}
                 </select>
+                {isAvailabilityError && (
+                  <p role="alert" className="mt-1 text-xs text-red-600">
+                    No se pudo cargar la disponibilidad. Probá de nuevo.
+                  </p>
+                )}
                 {form.formState.errors.appointment_time_hhmm && !slotConflictError && (
                   <p id="reschedule-time-error" role="alert" className="mt-1 text-xs text-red-600">
                     {form.formState.errors.appointment_time_hhmm.message}

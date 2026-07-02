@@ -3,7 +3,7 @@
 // CSS imports — react-big-calendar base only (month view), no DnD styles
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Calendar, dateFnsLocalizer, Views } from 'react-big-calendar'
 import {
   format,
@@ -12,7 +12,6 @@ import {
   getDay,
   parseISO,
   addDays,
-  isSameDay,
   isToday,
   startOfMonth,
   endOfMonth,
@@ -22,12 +21,22 @@ import {
 import { es } from 'date-fns/locale'
 import {
   type Appointment,
-  type AppointmentStatus,
   type CalendarEvent,
   appointmentToCalendarEvent,
 } from '@/types/appointments'
 import type { AvailabilityShift, DaySummary } from '@/types/availability'
-import { getServiceColor } from '@/lib/agenda/service-visuals'
+import { getStatusColor } from '@/lib/agenda/status-colors'
+import {
+  buildCellMap,
+  computeHourRows,
+  floorToStep,
+  hhmmFromDate,
+  makeGetCell,
+  type ApptEntry,
+  type FreeEntry,
+  type TurneroColumn,
+} from '@/lib/agenda/turnero-grid'
+import { TurneroGrid } from './TurneroGrid'
 import { AgendaDayViewSkeleton } from './AgendaDayView'
 import { SesionSerieBadge } from './SesionSerieBadge'
 
@@ -41,50 +50,16 @@ const localizer = dateFnsLocalizer({
   locales,
 })
 
-// Color de estado SOLO para la vista Mes (chips de RBC sobre fondo de color
-// sólido con texto blanco, donde la identidad por servicio no se usa). La vista
-// Semana usa color por servicio (getServiceColor) — ver WeekColumnsView.
-// Hex codes so they compose cleanly with alpha suffix in JS (e.g. `${color}18`)
-function getEventColor(status: AppointmentStatus): string {
-  switch (status) {
-    case 'confirmed':
-      return '#0071e3'
-    case 'rescheduled':
-      return '#f97316'
-    case 'cancelled':
-      return '#8e8e93'
-    case 'no_show':
-      return '#ef4444'
-    case 'pending':
-    case 'pending_calendar':
-    default:
-      return '#8b5cf6'
-  }
-}
+// Paso de la grilla semanal: 60 min (igual que la vista Día).
+const WEEK_STEP_MIN = 60
 
-// Nombre de profesional para agrupar dentro de una columna-día.
-const NO_PROFESSIONAL_LABEL = 'Sin profesional'
+// ─── Vista Semana: grilla HORA × DÍA ──────────────────────────────────────────
+// Reemplaza las listas apiladas por una planilla tipo Excel: filas = franjas
+// horarias, columnas = 7 días. Una celda día×hora = chip(s) compacto(s) con el
+// profesional indicado. Los huecos libres se muestran individualmente si son
+// pocos, o colapsados a "N libres" si son muchos (menos ruido).
 
-function eventProfessionalName(event: CalendarEvent): string {
-  return (
-    event.resource.professionals?.name ??
-    event.resource.services?.professional_name ??
-    NO_PROFESSIONAL_LABEL
-  )
-}
-
-// ─── Vista Semana custom ──────────────────────────────────────────────────────
-// Reemplaza el time-grid de react-big-calendar, que colapsa cuando hay
-// múltiples profesionales con turnos en el mismo horario (columnas angostas
-// ilegibles). Esta vista muestra 7 columnas, una por día, con eventos
-// apilados en orden cronológico y scroll independiente por columna.
-
-// Item unificado de una columna-día: turno ocupado o hueco libre.
-type WeekItem =
-  | { kind: 'event'; sortKey: number; event: CalendarEvent }
-  | { kind: 'free'; sortKey: number; shift: AvailabilityShift }
-
-function WeekColumnsView({
+function WeekGridView({
   weekDate,
   events,
   onEventClick,
@@ -97,286 +72,88 @@ function WeekColumnsView({
   freeShiftsByDate?: Record<string, AvailabilityShift[]>
   onFreeSlotClick?: (shift: AvailabilityShift) => void
 }) {
-  const weekStart = startOfWeek(weekDate, { weekStartsOn: 1 })
-  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
+  const grid = useMemo(() => {
+    // Ventana de 7 días DESDE la fecha ancla (weekDate). El ancla es la PRIMERA
+    // columna; no se muestran días previos. Coherente con el rango que arma
+    // AgendaView ([ancla .. ancla+6]).
+    const days = Array.from({ length: 7 }, (_, i) => addDays(weekDate, i))
+    const dayIsos = new Set(days.map((d) => formatISO(d, { representation: 'date' })))
+
+    const apptEntries: ApptEntry[] = []
+    const perDayCount = new Map<string, number>()
+    for (const event of events) {
+      const dayIso = formatISO(event.start, { representation: 'date' })
+      if (!dayIsos.has(dayIso)) continue
+      apptEntries.push({
+        colId: dayIso,
+        hour: floorToStep(hhmmFromDate(event.start), WEEK_STEP_MIN),
+        apt: event.resource,
+      })
+      perDayCount.set(dayIso, (perDayCount.get(dayIso) ?? 0) + 1)
+    }
+
+    const freeEntries: FreeEntry[] = []
+    for (const [dayIso, shifts] of Object.entries(freeShiftsByDate ?? {})) {
+      if (!dayIsos.has(dayIso)) continue
+      for (const shift of shifts) {
+        freeEntries.push({
+          colId: dayIso,
+          hour: floorToStep(shift.open, WEEK_STEP_MIN),
+          shift,
+        })
+      }
+    }
+
+    const columns: TurneroColumn[] = days.map((day) => {
+      const dayIso = formatISO(day, { representation: 'date' })
+      const count = perDayCount.get(dayIso) ?? 0
+      return {
+        id: dayIso,
+        label: format(day, 'EEE d', { locale: es }),
+        sublabel:
+          count === 0
+            ? 'Sin turnos'
+            : `${count} ${count === 1 ? 'turno agendado' : 'turnos agendados'}`,
+        isHighlighted: isToday(day),
+      }
+    })
+
+    const times = [...apptEntries.map((e) => e.hour), ...freeEntries.map((e) => e.hour)]
+    const hourRows = computeHourRows(times, { stepMin: WEEK_STEP_MIN })
+
+    const cellMap = buildCellMap(hourRows, apptEntries, freeEntries)
+    const getCell = makeGetCell(cellMap)
+
+    return { columns, hourRows, getCell }
+  }, [weekDate, events, freeShiftsByDate])
+
+  // "Ahora": en la columna del día de hoy, las horas pasadas se atenúan y una
+  // línea marca la hora actual. Solo si hoy cae dentro de la semana mostrada.
+  const now = new Date()
+  const todayIso = formatISO(now, { representation: 'date' })
+  const nowHHMM = format(now, 'HH:mm')
+  const todayInWeek = grid.columns.some((c) => c.id === todayIso)
+  const isPastCell = todayInWeek
+    ? (colId: string, hour: string) => colId === todayIso && hour < nowHHMM
+    : undefined
+  const nowAtHour = todayInWeek ? grid.hourRows.find((h) => h >= nowHHMM) : undefined
+  const nowLine = nowAtHour
+    ? { atHour: nowAtHour, appliesToColumn: (colId: string) => colId === todayIso }
+    : undefined
 
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(7, 1fr)',
-        height: 'calc(100vh - 240px)',
-        minHeight: '500px',
-        border: '1px solid var(--color-border)',
-        borderRadius: '8px',
-        overflow: 'hidden',
-      }}
-    >
-      {days.map((day, idx) => {
-        const dayEvents = events
-          .filter((e) => isSameDay(e.start, day))
-          .sort((a, b) => a.start.getTime() - b.start.getTime())
-        const isCurrentDay = isToday(day)
-
-        // Story 10.7 — huecos libres de este día, indexados por la clave `date`
-        // del response (fecha local consultada), no recomputados desde el ISO UTC.
-        const dayIso = formatISO(day, { representation: 'date' })
-        const dayFreeShifts = freeShiftsByDate?.[dayIso] ?? []
-
-        // Lista unificada ordenada cronológicamente (ocupados + libres).
-        const dayItems: WeekItem[] = [
-          ...dayEvents.map((event): WeekItem => ({
-            kind: 'event',
-            sortKey: event.start.getTime(),
-            event,
-          })),
-          ...dayFreeShifts.map((shift): WeekItem => ({
-            kind: 'free',
-            sortKey: parseISO(shift.slot_start_iso).getTime(),
-            shift,
-          })),
-        ].sort((a, b) => a.sortKey - b.sortKey)
-
-        // Agrupar por profesional dentro de la columna-día (cambio "agrupar por
-        // profesional"). Orden cronológico preservado dentro de cada grupo;
-        // grupos ordenados alfabéticamente por nombre.
-        const dayGroupsMap = new Map<string, WeekItem[]>()
-        for (const item of dayItems) {
-          const name =
-            item.kind === 'event'
-              ? eventProfessionalName(item.event)
-              : item.shift.professional_name || NO_PROFESSIONAL_LABEL
-          const bucket = dayGroupsMap.get(name)
-          if (bucket) bucket.push(item)
-          else dayGroupsMap.set(name, [item])
-        }
-        const dayGroups = Array.from(dayGroupsMap.entries()).sort((a, b) =>
-          a[0].localeCompare(b[0], 'es'),
-        )
-
-        return (
-          <div
-            key={day.toISOString()}
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              borderRight: idx < 6 ? '1px solid var(--color-border)' : 'none',
-              backgroundColor: isCurrentDay
-                ? 'rgba(0,113,227,0.03)'
-                : 'var(--color-bg)',
-            }}
-          >
-            {/* Cabecera del día */}
-            <div
-              style={{
-                flexShrink: 0,
-                padding: '8px 6px 6px',
-                textAlign: 'center',
-                borderBottom: '1px solid var(--color-border)',
-              }}
-            >
-              <span
-                style={{
-                  display: 'block',
-                  fontSize: 11,
-                  letterSpacing: '0.04em',
-                  textTransform: 'uppercase',
-                  color: isCurrentDay ? '#0071e3' : 'var(--color-text-secondary)',
-                  marginBottom: 2,
-                }}
-              >
-                {format(day, 'EEE', { locale: es })}
-              </span>
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  width: 28,
-                  height: 28,
-                  borderRadius: '50%',
-                  fontSize: 15,
-                  fontWeight: isCurrentDay ? 700 : 400,
-                  color: isCurrentDay ? '#fff' : 'var(--color-text-primary)',
-                  backgroundColor: isCurrentDay ? '#0071e3' : 'transparent',
-                }}
-              >
-                {format(day, 'd')}
-              </span>
-              {dayEvents.length > 0 && (
-                <span
-                  style={{
-                    display: 'block',
-                    fontSize: 10,
-                    color: 'var(--color-text-secondary)',
-                    marginTop: 3,
-                  }}
-                >
-                  {dayEvents.length} {dayEvents.length === 1 ? 'turno' : 'turnos'}
-                </span>
-              )}
-            </div>
-
-            {/* Lista de turnos (scrollable), agrupada por profesional */}
-            <div
-              style={{
-                flex: 1,
-                overflowY: 'auto',
-                padding: 4,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 8,
-              }}
-            >
-              {dayGroups.map(([profName, groupItems]) => (
-                <div
-                  key={`group-${profName}`}
-                  role="group"
-                  aria-label={`${profName}`}
-                  style={{ display: 'flex', flexDirection: 'column', gap: 3 }}
-                >
-                  {/* Sub-cabecera por profesional dentro de la columna del día */}
-                  <div
-                    style={{
-                      fontSize: 9,
-                      fontWeight: 600,
-                      letterSpacing: '0.03em',
-                      textTransform: 'uppercase',
-                      color: 'var(--color-text-secondary)',
-                      padding: '2px 2px 1px',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                    title={profName}
-                  >
-                    {profName}
-                  </div>
-                  {groupItems.map((item, idx) => {
-                    if (item.kind === 'free') {
-                      const shift = item.shift
-                      // Tinte muy tenue del color de servicio para el hueco.
-                      const svcColor = getServiceColor(shift.service_id)
-                      return (
-                        <button
-                          key={`free-${shift.slot_start_iso}-${shift.professional_id}-${shift.service_id}-${idx}`}
-                          onClick={() => onFreeSlotClick?.(shift)}
-                          aria-label={`Agendar a las ${shift.open} con ${shift.professional_name}`}
-                          style={{
-                            display: 'block',
-                            width: '100%',
-                            textAlign: 'left',
-                            background: `${svcColor}08`,
-                            border: `1px dashed ${svcColor}66`,
-                            borderRadius: 4,
-                            padding: '4px 6px',
-                            cursor: 'pointer',
-                            flexShrink: 0,
-                            color: 'var(--color-text-secondary)',
-                            opacity: 0.85,
-                            transition: 'background 0.12s',
-                          }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = `${svcColor}14` }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = `${svcColor}08` }}
-                        >
-                          <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.3 }}>
-                            {shift.open}
-                          </div>
-                          <div style={{ fontSize: 10, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            + Libre
-                            {shift.service_name ? ` · ${shift.service_name}` : ''}
-                          </div>
-                        </button>
-                      )
-                    }
-
-                    const event = item.event
-                    // Color por SERVICIO (identidad). El estado queda
-                    // distinguible por la opacidad de cancelado/no-show.
-                    const color = getServiceColor(event.resource.service_id)
-                    const status = event.resource.status
-                    const isDimmed = status === 'cancelled' || status === 'no_show'
-                    const serviceName = event.resource.services?.name ?? null
-
-                    return (
-                      <button
-                        key={event.id}
-                        onClick={() => onEventClick?.(event.resource)}
-                        style={{
-                          display: 'block',
-                          width: '100%',
-                          textAlign: 'left',
-                          background: `${color}18`,
-                          border: 'none',
-                          borderLeft: `3px solid ${color}`,
-                          borderRadius: '0 4px 4px 0',
-                          padding: '4px 6px',
-                          cursor: 'pointer',
-                          flexShrink: 0,
-                          opacity: isDimmed ? 0.55 : 1,
-                          textDecoration: status === 'cancelled' ? 'line-through' : 'none',
-                          transition: 'background 0.12s',
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = `${color}30`
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = `${color}18`
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: 11,
-                            fontWeight: 700,
-                            color,
-                            lineHeight: 1.3,
-                          }}
-                        >
-                          {format(event.start, 'HH:mm')}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: 11,
-                            color: 'var(--color-text-primary)',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            lineHeight: 1.3,
-                          }}
-                        >
-                          {event.resource.patients?.full_name ?? 'Paciente'}
-                        </div>
-                        {serviceName && (
-                          <div
-                            style={{
-                              fontSize: 10,
-                              color: 'var(--color-text-secondary)',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                              lineHeight: 1.3,
-                            }}
-                          >
-                            {serviceName}
-                          </div>
-                        )}
-                        {event.resource.session_index != null && (
-                          <div style={{ marginTop: 3 }}>
-                            <SesionSerieBadge
-                              sessionIndex={event.resource.session_index}
-                              totalSessions={event.resource.treatments?.total_sessions}
-                            />
-                          </div>
-                        )}
-                      </button>
-                    )
-                  })}
-                </div>
-              ))}
-            </div>
-          </div>
-        )
-      })}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <TurneroGrid
+        columns={grid.columns}
+        hourRows={grid.hourRows}
+        getCell={grid.getCell}
+        onAppointmentClick={onEventClick}
+        onFreeSlotClick={onFreeSlotClick}
+        showProfessionalOnChip
+        isPastCell={isPastCell}
+        nowLine={nowLine}
+        ariaLabel="Grilla semanal de turnos"
+      />
     </div>
   )
 }
@@ -496,7 +273,7 @@ function DayEventsModal({ date, events, onClose, onAppointmentClick }: DayEvents
 
         <ul style={{ overflowY: 'auto', padding: '8px 0', margin: 0, listStyle: 'none' }} role="list">
           {sorted.map((ev) => {
-            const color = getEventColor(ev.resource.status)
+            const color = getStatusColor(ev.resource.status)
             const profName =
               ev.resource.professionals?.name ??
               ev.resource.services?.professional_name ??
@@ -711,10 +488,10 @@ export function CalendarViewRangeReadOnly({
     .filter((apt) => apt && apt.start_at && apt.end_at)
     .map(appointmentToCalendarEvent)
 
-  // Vista Semana: componente custom (sin time-grid de RBC)
+  // Vista Semana: grilla HORA × DÍA (planilla, sin time-grid de RBC)
   if (view === 'week') {
     return (
-      <WeekColumnsView
+      <WeekGridView
         weekDate={parseISO(date)}
         events={events}
         onEventClick={onAppointmentClick}
@@ -753,14 +530,25 @@ export function CalendarViewRangeReadOnly({
             month: 'Mes',
             showMore: (total: number) => `+${total} más`,
           }}
-          eventPropGetter={(event: CalendarEvent) => ({
-            style: {
-              backgroundColor: getEventColor(event.resource.status),
-              border: 'none',
-              borderRadius: '4px',
-              color: 'white',
-            },
-          })}
+          eventPropGetter={(event: CalendarEvent) => {
+            // Mismo lenguaje visual que el chip de la grilla (Semana/Día): fondo
+            // tenue del color de estado + barra de color a la izquierda + texto
+            // oscuro. NO fondo sólido (se leía distinto y peor).
+            const color = getStatusColor(event.resource.status)
+            const isCancelled = event.resource.status === 'cancelled'
+            return {
+              style: {
+                backgroundColor: `${color}1a`,
+                borderTop: 'none',
+                borderRight: 'none',
+                borderBottom: 'none',
+                borderLeft: `3px solid ${color}`,
+                borderRadius: '0 6px 6px 0',
+                color: 'var(--color-text-primary)',
+                opacity: isCancelled ? 0.55 : 1,
+              },
+            }
+          }}
           components={{
             event: (props: { event: CalendarEvent }) => <RangeEvent event={props.event} />,
           }}

@@ -3,6 +3,40 @@ import userEvent from '@testing-library/user-event'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { RescheduleTurnoModal } from './RescheduleTurnoModal'
 import type { Appointment } from '@/types/appointments'
+import type { AvailabilityShift } from '@/types/availability'
+
+// P0.3 — Reprogramar ahora usa la disponibilidad REAL (useAvailability), no un
+// rango 08–20 inventado. Mockeamos el hook para controlar los huecos ofrecidos.
+vi.mock('@/hooks/use-availability', () => ({
+  useAvailability: vi.fn(),
+}))
+import { useAvailability } from '@/hooks/use-availability'
+
+function makeShift(open: string): AvailabilityShift {
+  return {
+    open,
+    close: open,
+    slot_start_iso: '2026-05-07T12:00:00.000Z',
+    slot_end_iso: '2026-05-07T13:00:00.000Z',
+    service_id: 'svc-1',
+    service_name: 'Fisioterapia',
+    require_referral: false,
+    professional_id: 'prof-1',
+    professional_name: 'Rocío González',
+  }
+}
+
+// Huecos libres reales cuando hay servicio+profesional+fecha (enabled).
+function mockAvailability(times: string[] = ['08:00', '09:00', '10:00']) {
+  vi.mocked(useAvailability).mockImplementation(({ enabled }) => ({
+    daysShifts: {},
+    daysSummary: {},
+    isLoading: false,
+    isError: false,
+    refetch: vi.fn(),
+    shiftsForDate: () => (enabled ? times.map(makeShift) : []),
+  }))
+}
 
 // Mock @base-ui/react/dialog
 vi.mock('@base-ui/react/dialog', () => ({
@@ -99,6 +133,7 @@ describe('RescheduleTurnoModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockFetch.mockImplementation(defaultFetchImpl)
+    mockAvailability()
   })
 
   describe('renderizado', () => {

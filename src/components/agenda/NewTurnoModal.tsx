@@ -28,12 +28,18 @@ interface ServiceOption {
   name: string
   professional_name: string | null
   duration_minutes: number
+  booking_mode?: 'appointment' | 'walk_in' | 'gated' | 'cycle'
 }
 
 interface ProfessionalOption {
   professional_id: string
   name: string
 }
+
+// P0.1 — valor centinela del selector de profesional para "Cualquier profesional
+// disponible". No es un UUID: al guardar se resuelve al profesional del hueco
+// elegido. Un UUID nunca contiene '_', así que es inconfundible.
+const ANY_PROFESSIONAL = '__any__'
 
 interface NewTurnoModalProps {
   open: boolean
@@ -63,6 +69,10 @@ export function NewTurnoModal({
   const [patientResults, setPatientResults] = useState<PatientResult[] | null>(null)
   const [patientSearchError, setPatientSearchError] = useState<string | null>(null)
   const [isSearching, setIsSearching] = useState(false)
+  // P0.1 — typeahead: última query ya buscada. Evita re-disparar la misma
+  // búsqueda desde el debounce tras un disparo manual/automático; al ser estado,
+  // su cambio limpia el timer pendiente (cleanup del effect) sin doble fetch.
+  const [lastSearchedQuery, setLastSearchedQuery] = useState('')
 
   // Inline patient creation state
   const [showCreatePatient, setShowCreatePatient] = useState(false)
@@ -106,16 +116,27 @@ export function NewTurnoModal({
     },
   })
 
-  // Services list
+  // Services list — P0.2: solo servicios agendables por turno (booking_mode
+  // 'appointment'). Los modos cycle/gated/walk_in NO generan huecos en este flujo
+  // (se gestionan por su propio circuito), así que elegirlos sería un callejón
+  // silencioso ("Sin horarios libres" sin explicación).
   const { result: servicesResult } = useList<ServiceOption>({
     resource: 'services',
-    filters: [{ field: 'active', operator: 'eq', value: true }],
+    filters: [
+      { field: 'active', operator: 'eq', value: true },
+      { field: 'booking_mode', operator: 'eq', value: 'appointment' },
+    ],
     pagination: { mode: 'off' },
     queryOptions: {
       enabled: open,
     },
   })
-  const services = (servicesResult?.data ?? []) as ServiceOption[]
+  // Defensa adicional en cliente por si el provider ignorara el filtro: solo se
+  // listan los servicios que traen booking_mode 'appointment' (o sin el campo,
+  // para no romper datos legacy/tests que no lo incluyen).
+  const services = ((servicesResult?.data ?? []) as ServiceOption[]).filter(
+    (s) => s.booking_mode === undefined || s.booking_mode === 'appointment',
+  )
 
   // Watch selección de servicio / profesional / fecha para calcular la
   // disponibilidad REAL (no horarios inventados). El horario solo se elige
@@ -126,9 +147,19 @@ export function NewTurnoModal({
   const selectedService = services.find((s) => s.service_id === selectedServiceId)
   const durationMinutes = selectedService?.duration_minutes ?? 60
 
+  // P0.1 — "Cualquier profesional disponible": cuando está elegido el centinela,
+  // la disponibilidad se pide para TODOS los profesionales del servicio y cada
+  // hueco conserva su profesional. El profesional concreto se fija al guardar.
+  const isAnyProfessional = selectedProfessionalId === ANY_PROFESSIONAL
+
+  // Hueco elegido en modo "cualquier profesional": clave compuesta
+  // `${professional_id}__${HH:MM}` (un UUID no contiene '_', el separador es
+  // inconfundible). En modo profesional concreto no se usa.
+  const [anySlotKey, setAnySlotKey] = useState<string>('')
+
   // Disponibilidad real (RPC check_clinic_availability vía /api/availability).
-  // Solo se consulta cuando hay servicio + profesional + fecha elegidos; si falta
-  // alguno, no se muestran horarios inventados.
+  // Solo se consulta cuando hay servicio + profesional (o "cualquiera") + fecha;
+  // si falta alguno, no se muestran horarios inventados.
   const availabilityEnabled =
     !!selectedServiceId && !!selectedProfessionalId && !!selectedDate
   const {
@@ -139,15 +170,16 @@ export function NewTurnoModal({
     dateFrom: selectedDate || '',
     dateTo: selectedDate || '',
     serviceId: selectedServiceId || null,
-    professionalId: selectedProfessionalId || null,
+    professionalId: isAnyProfessional ? null : selectedProfessionalId || null,
+    allProfessionals: isAnyProfessional,
     enabled: availabilityEnabled,
   })
 
-  // Horarios libres (HH:MM local) para la fecha elegida. La RPC ya considera
-  // el horario del profesional y los turnos ocupados.
-  const availableTimes = availabilityEnabled
-    ? shiftsForDate(selectedDate).map((shift) => shift.open)
-    : []
+  // Huecos libres para la fecha elegida. La RPC ya considera el horario del
+  // profesional y los turnos ocupados. En modo "cualquiera" trae los de todos
+  // los profesionales del servicio (uno por hueco real, no colapsado por hora).
+  const availableShifts = availabilityEnabled ? shiftsForDate(selectedDate) : []
+  const availableTimes = availableShifts.map((shift) => shift.open)
 
   // Cargar profesionales del servicio elegido (modelo de turnos por profesional).
   // El paciente elige el profesional, por eso el selector se filtra por servicio.
@@ -160,6 +192,7 @@ export function NewTurnoModal({
       appointmentForm.setValue('professional_id', '')
       setProfessionals([])
       setProfessionalsError(null)
+      setAnySlotKey('')
 
       if (!selectedServiceId) return
 
@@ -203,7 +236,13 @@ export function NewTurnoModal({
       return
     }
     if (professionals.length === 1) {
+      // Un único profesional → se preselecciona (no tiene sentido "cualquiera").
       appointmentForm.setValue('professional_id', professionals[0].professional_id)
+    } else if (professionals.length >= 2) {
+      // P0.1 — varios profesionales: por defecto "Cualquier profesional
+      // disponible" para que la recepcionista pida el primer hueco libre con
+      // cualquiera sin tener que elegir de antemano.
+      appointmentForm.setValue('professional_id', ANY_PROFESSIONAL)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [professionals])
@@ -260,6 +299,8 @@ export function NewTurnoModal({
     setProfessionals([])
     setProfessionalsError(null)
     setIsLoadingProfessionals(false)
+    setAnySlotKey('')
+    setLastSearchedQuery('')
     searchForm.reset()
     createPatientForm.reset()
     appointmentForm.reset({
@@ -272,7 +313,11 @@ export function NewTurnoModal({
     onClose()
   }
 
-  const handleSearchPatient = async (values: PatientSearchValues) => {
+  // Lógica de búsqueda compartida por el disparo manual (submit/Enter) y el
+  // typeahead con debounce. `query` ya viene validada (mín. 2 chars).
+  const performSearch = async (rawQuery: string) => {
+    const query = rawQuery.trim()
+    setLastSearchedQuery(query)
     setIsSearching(true)
     setPatientSearchError(null)
     setPatient(null)
@@ -282,7 +327,7 @@ export function NewTurnoModal({
 
     try {
       const res = await fetch(
-        `/api/patients/search?q=${encodeURIComponent(values.query)}`,
+        `/api/patients/search?q=${encodeURIComponent(query)}`,
       )
       const body = await res.json() as { patients?: PatientResult[]; error?: string }
 
@@ -294,11 +339,11 @@ export function NewTurnoModal({
       const results = body.patients ?? []
 
       if (results.length === 0) {
-        setPatientSearchError(`Sin resultados para '${values.query}'.`)
+        setPatientSearchError(`Sin resultados para '${query}'.`)
         setShowCreatePatient(true)
         // Pre-fill phone if query looks like a phone number
-        if (/^\+?\d[\d\s\-]{6,}$/.test(values.query.trim())) {
-          createPatientForm.setValue('phone_number', values.query.trim())
+        if (/^\+?\d[\d\s\-]{6,}$/.test(query)) {
+          createPatientForm.setValue('phone_number', query)
         }
         return
       }
@@ -323,6 +368,28 @@ export function NewTurnoModal({
       setIsSearching(false)
     }
   }
+
+  // Disparo manual (botón "Buscar" / Enter) — fallback explícito del typeahead.
+  const handleSearchPatient = async (values: PatientSearchValues) => {
+    await performSearch(values.query)
+  }
+
+  // P0.1 — typeahead: busca automáticamente con debounce (~300 ms) a partir de
+  // 2 caracteres, sin obligar a clickear "Buscar". El ref evita re-buscar lo ya
+  // buscado (p. ej. tras un disparo manual con la misma query).
+  const watchedQuery = useWatch({ control: searchForm.control, name: 'query' })
+  useEffect(() => {
+    const q = (watchedQuery ?? '').trim()
+    if (q.length < 2) return
+    if (q === lastSearchedQuery) return
+    const timer = setTimeout(() => {
+      void performSearch(q)
+    }, 300)
+    return () => clearTimeout(timer)
+    // performSearch es estable en la práctica (usa setState/forms estables);
+    // depende del valor tipeado y de la última query buscada (para dedup).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchedQuery, lastSearchedQuery])
 
   const handleSelectPatient = (selected: PatientResult) => {
     if (selected.deletion_requested_at) {
@@ -376,7 +443,25 @@ export function NewTurnoModal({
     setSlotConflictError(null)
     setSubmitError(null)
 
-    const appointmentTimeISO = `${values.appointment_date}T${values.appointment_time_hhmm}:00-03:00`
+    // P0.1 — en modo "cualquier profesional" el professional_id del form es el
+    // centinela; el profesional real es el del hueco elegido (anySlotKey).
+    let professionalId = values.professional_id
+    let timeHHmm = values.appointment_time_hhmm
+    if (values.professional_id === ANY_PROFESSIONAL) {
+      if (!anySlotKey) {
+        setSlotConflictError('Elegí un horario disponible')
+        return
+      }
+      const [profId, hhmm] = anySlotKey.split('__')
+      if (!profId || !hhmm) {
+        setSlotConflictError('Elegí un horario disponible')
+        return
+      }
+      professionalId = profId
+      timeHHmm = hhmm
+    }
+
+    const appointmentTimeISO = `${values.appointment_date}T${timeHHmm}:00-03:00`
 
     try {
       const response = await fetch('/api/appointments', {
@@ -385,7 +470,7 @@ export function NewTurnoModal({
         body: JSON.stringify({
           patient_id: values.patient_id,
           service_id: values.service_id,
-          professional_id: values.professional_id,
+          professional_id: professionalId,
           appointment_time: appointmentTimeISO,
           duration_minutes: durationMinutes,
         }),
@@ -411,6 +496,16 @@ export function NewTurnoModal({
     } catch {
       setSubmitError('Error de red. Verificá tu conexión e intentá de nuevo.')
     }
+  }
+
+  // P0.1 — selección de hueco en modo "cualquier profesional". El <select> de
+  // horario lleva la clave compuesta; sincronizamos appointment_time_hhmm para que
+  // la validación del form pase (el profesional real se resuelve al guardar).
+  const handleAnySlotChange = (key: string) => {
+    setAnySlotKey(key)
+    setSlotConflictError(null)
+    const hhmm = key ? key.split('__')[1] ?? '' : ''
+    appointmentForm.setValue('appointment_time_hhmm', hhmm)
   }
 
   const inputClass = (hasError: boolean) =>
@@ -442,7 +537,7 @@ export function NewTurnoModal({
                 id="new-turno-title"
                 className="text-lg font-semibold text-[var(--color-text-primary)]"
               >
-                Nuevo turno
+                Dar un turno
               </Dialog.Title>
             </div>
 
@@ -464,7 +559,7 @@ export function NewTurnoModal({
                   <input
                     id="patient-search-input"
                     type="text"
-                    placeholder="DNI, nombre o teléfono..."
+                    placeholder="Buscá por nombre, DNI o teléfono…"
                     {...searchForm.register('query')}
                     ref={(el) => {
                       searchForm.register('query').ref(el)
@@ -708,6 +803,13 @@ export function NewTurnoModal({
                     <select
                       id="professional-select"
                       {...appointmentForm.register('professional_id')}
+                      onChange={(e) => {
+                        // setValue actualiza el estado de RHF igual que el onChange
+                        // nativo; además reseteamos el hueco compuesto de "cualquiera"
+                        // al cambiar de profesional (incl. entrar/salir del modo).
+                        appointmentForm.setValue('professional_id', e.target.value, { shouldDirty: true })
+                        setAnySlotKey('')
+                      }}
                       disabled={!selectedServiceId || isLoadingProfessionals || professionals.length === 0}
                       className={inputClass(!!appointmentForm.formState.errors.professional_id)}
                       aria-invalid={!!appointmentForm.formState.errors.professional_id}
@@ -724,6 +826,10 @@ export function NewTurnoModal({
                               ? 'Sin profesionales para este servicio'
                               : 'Seleccioná un profesional'}
                       </option>
+                      {/* P0.1 — con 2+ profesionales, ofrecer "cualquiera" */}
+                      {professionals.length >= 2 && (
+                        <option value={ANY_PROFESSIONAL}>Cualquier profesional disponible</option>
+                      )}
                       {professionals.map((prof) => (
                         <option key={prof.professional_id} value={prof.professional_id}>
                           {prof.name}
@@ -755,6 +861,12 @@ export function NewTurnoModal({
                       type="date"
                       min={today}
                       {...appointmentForm.register('appointment_date')}
+                      onChange={(e) => {
+                        appointmentForm.setValue('appointment_date', e.target.value, { shouldDirty: true })
+                        // El hueco compuesto de "cualquiera" pertenece a la fecha
+                        // anterior: descartarlo al cambiar de día.
+                        setAnySlotKey('')
+                      }}
                       className={inputClass(!!appointmentForm.formState.errors.appointment_date)}
                       aria-invalid={!!appointmentForm.formState.errors.appointment_date}
                       aria-describedby={
@@ -776,41 +888,86 @@ export function NewTurnoModal({
                     >
                       Horario
                     </label>
-                    <select
-                      id="time-select"
-                      {...appointmentForm.register('appointment_time_hhmm')}
-                      disabled={!availabilityEnabled || isLoadingAvailability || availableTimes.length === 0}
-                      className={inputClass(
-                        !!appointmentForm.formState.errors.appointment_time_hhmm || !!slotConflictError,
-                      )}
-                      aria-invalid={
-                        !!appointmentForm.formState.errors.appointment_time_hhmm || !!slotConflictError
-                      }
-                      aria-describedby={
-                        slotConflictError
-                          ? 'slot-conflict-error'
-                          : appointmentForm.formState.errors.appointment_time_hhmm
-                            ? 'time-error'
-                            : undefined
-                      }
-                    >
-                      <option value="">
-                        {!availabilityEnabled
-                          ? 'Elegí servicio, profesional y fecha'
-                          : isLoadingAvailability
-                            ? 'Cargando horarios disponibles...'
-                            : isAvailabilityError
-                              ? 'No se pudo cargar la disponibilidad'
-                              : availableTimes.length === 0
-                                ? 'Sin horarios libres para esta fecha'
-                                : 'Seleccioná un horario'}
-                      </option>
-                      {availableTimes.map((slot) => (
-                        <option key={slot} value={slot}>
-                          {slot}
+                    {isAnyProfessional ? (
+                      // Modo "cualquier profesional": cada opción es un hueco real
+                      // de un profesional concreto, etiquetado "HH:MM · Profesional".
+                      // Controlado por anySlotKey (valor compuesto).
+                      <select
+                        id="time-select"
+                        value={anySlotKey}
+                        onChange={(e) => handleAnySlotChange(e.target.value)}
+                        disabled={!availabilityEnabled || isLoadingAvailability || availableShifts.length === 0}
+                        className={inputClass(
+                          !!appointmentForm.formState.errors.appointment_time_hhmm || !!slotConflictError,
+                        )}
+                        aria-invalid={
+                          !!appointmentForm.formState.errors.appointment_time_hhmm || !!slotConflictError
+                        }
+                        aria-describedby={
+                          slotConflictError
+                            ? 'slot-conflict-error'
+                            : appointmentForm.formState.errors.appointment_time_hhmm
+                              ? 'time-error'
+                              : undefined
+                        }
+                      >
+                        <option value="">
+                          {!availabilityEnabled
+                            ? 'Elegí servicio, profesional y fecha'
+                            : isLoadingAvailability
+                              ? 'Cargando horarios disponibles...'
+                              : isAvailabilityError
+                                ? 'No se pudo cargar la disponibilidad'
+                                : availableShifts.length === 0
+                                  ? 'Sin horarios libres para esta fecha'
+                                  : 'Seleccioná un horario'}
                         </option>
-                      ))}
-                    </select>
+                        {availableShifts.map((shift) => (
+                          <option
+                            key={`${shift.professional_id}__${shift.open}`}
+                            value={`${shift.professional_id}__${shift.open}`}
+                          >
+                            {shift.open} · {shift.professional_name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <select
+                        id="time-select"
+                        {...appointmentForm.register('appointment_time_hhmm')}
+                        disabled={!availabilityEnabled || isLoadingAvailability || availableTimes.length === 0}
+                        className={inputClass(
+                          !!appointmentForm.formState.errors.appointment_time_hhmm || !!slotConflictError,
+                        )}
+                        aria-invalid={
+                          !!appointmentForm.formState.errors.appointment_time_hhmm || !!slotConflictError
+                        }
+                        aria-describedby={
+                          slotConflictError
+                            ? 'slot-conflict-error'
+                            : appointmentForm.formState.errors.appointment_time_hhmm
+                              ? 'time-error'
+                              : undefined
+                        }
+                      >
+                        <option value="">
+                          {!availabilityEnabled
+                            ? 'Elegí servicio, profesional y fecha'
+                            : isLoadingAvailability
+                              ? 'Cargando horarios disponibles...'
+                              : isAvailabilityError
+                                ? 'No se pudo cargar la disponibilidad'
+                                : availableTimes.length === 0
+                                  ? 'Sin horarios libres para esta fecha'
+                                  : 'Seleccioná un horario'}
+                        </option>
+                        {availableTimes.map((slot) => (
+                          <option key={slot} value={slot}>
+                            {slot}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                     {isAvailabilityError && (
                       <p role="alert" className="mt-1 text-xs text-red-600">
                         No se pudo cargar la disponibilidad. Probá de nuevo.

@@ -119,8 +119,22 @@ vi.mock('@/components/paquetes/NewPaqueteModal', () => ({
 }))
 
 vi.mock('@/components/agenda/AgendaFilters', () => ({
-  AgendaFilters: ({ showFilters }: { showFilters: boolean }) =>
-    showFilters ? <div data-testid="agenda-filters" /> : null,
+  AgendaFilters: ({
+    showFilters,
+    onProfessionalChange,
+    onServiceChange,
+  }: {
+    showFilters: boolean
+    onProfessionalChange: (id: string | null) => void
+    onServiceChange: (id: string | null) => void
+  }) =>
+    showFilters ? (
+      <div data-testid="agenda-filters">
+        {/* Botones stub para ejercitar la exclusión mutua desde AgendaView */}
+        <button onClick={() => onProfessionalChange('prof-1')}>mock-pick-prof</button>
+        <button onClick={() => onServiceChange('svc-1')}>mock-pick-svc</button>
+      </div>
+    ) : null,
 }))
 
 import { AgendaView as AgendaPage } from './AgendaView'
@@ -248,16 +262,23 @@ describe('AgendaPage', () => {
     expect(screen.getByRole('button', { name: /nuevo turno/i })).toBeInTheDocument()
   })
 
-  it('el botón "+ Nuevo turno" NO aparece en vista mes', () => {
+  it('el botón "+ Nuevo turno" también aparece en vista mes (agendar desde Mes)', () => {
     mockSearchParamsData = { vista: 'mes' }
     render(<AgendaPage />)
-    expect(screen.queryByRole('button', { name: /nuevo turno/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /nuevo turno/i })).toBeInTheDocument()
   })
 
   // ── CTA secundario "+ Nuevo paquete" (Story 13.5) ──────────────────────────
   it('el CTA "+ Nuevo paquete" aparece para admin en vista día', () => {
     vi.mocked(useUserRole).mockReturnValue('admin')
     mockSearchParamsData = { vista: 'dia' }
+    render(<AgendaPage />)
+    expect(screen.getByRole('button', { name: /nuevo paquete/i })).toBeInTheDocument()
+  })
+
+  it('el CTA "+ Nuevo paquete" también aparece para admin en vista mes', () => {
+    vi.mocked(useUserRole).mockReturnValue('admin')
+    mockSearchParamsData = { vista: 'mes' }
     render(<AgendaPage />)
     expect(screen.getByRole('button', { name: /nuevo paquete/i })).toBeInTheDocument()
   })
@@ -270,29 +291,74 @@ describe('AgendaPage', () => {
   })
 
   it('al hacer click en "+ Nuevo paquete" abre el NewPaqueteModal (sin initialPatient)', () => {
-    vi.mocked(useUserRole).mockReturnValue('receptionist')
+    // Admin ve "Nuevo paquete" siempre visible (agenda completa).
+    vi.mocked(useUserRole).mockReturnValue('admin')
     mockSearchParamsData = { vista: 'dia' }
     render(<AgendaPage />)
     fireEvent.click(screen.getByRole('button', { name: /nuevo paquete/i }))
     expect(screen.getByTestId('new-paquete-modal')).toBeInTheDocument()
   })
 
-  it('muestra AgendaFilters cuando el rol es admin', () => {
-    vi.mocked(useUserRole).mockReturnValue('admin')
-    render(<AgendaPage />)
-    expect(screen.getByTestId('agenda-filters')).toBeInTheDocument()
+  // ── Modo turnero (recepción) vs agenda completa (admin) ────────────────────
+  describe('Modo turnero (receptionist) vs agenda completa (admin)', () => {
+    it('admin: muestra AgendaFilters y selector de vista por defecto, sin botón "Filtrar"', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      render(<AgendaPage />)
+      expect(screen.getByTestId('agenda-filters')).toBeInTheDocument()
+      expect(screen.getByTestId('calendar-view-selector')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /^filtrar$/i })).not.toBeInTheDocument()
+    })
+
+    it('receptionist: por defecto NO muestra filtros ni selector de vista, pero sí "Dar turno" + "Filtrar"', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      render(<AgendaPage />)
+      expect(screen.queryByTestId('agenda-filters')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('calendar-view-selector')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /nuevo paquete/i })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /dar turno/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /^filtrar$/i })).toBeInTheDocument()
+    })
+
+    it('receptionist: al hacer click en "Filtrar" se revelan filtros, selector de vista y "Nuevo paquete"', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      render(<AgendaPage />)
+      const filtrarBtn = screen.getByRole('button', { name: /^filtrar$/i })
+      expect(filtrarBtn).toHaveAttribute('aria-expanded', 'false')
+      fireEvent.click(filtrarBtn)
+      expect(filtrarBtn).toHaveAttribute('aria-expanded', 'true')
+      expect(screen.getByTestId('agenda-filters')).toBeInTheDocument()
+      expect(screen.getByTestId('calendar-view-selector')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /nuevo paquete/i })).toBeInTheDocument()
+    })
+
+    it('NO muestra AgendaFilters cuando el rol no está cargado (null)', () => {
+      vi.mocked(useUserRole).mockReturnValue(null)
+      render(<AgendaPage />)
+      expect(screen.queryByTestId('agenda-filters')).not.toBeInTheDocument()
+    })
   })
 
-  it('muestra AgendaFilters cuando el rol es receptionist (usuaria principal)', () => {
-    vi.mocked(useUserRole).mockReturnValue('receptionist')
-    render(<AgendaPage />)
-    expect(screen.getByTestId('agenda-filters')).toBeInTheDocument()
-  })
+  // ── Exclusión mutua professional_id ⊕ service_id ───────────────────────────
+  describe('Exclusión mutua profesional/servicio', () => {
+    it('elegir profesional (con service_id en URL) limpia el servicio en un solo push', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      mockSearchParamsData = { service_id: 'svc-1' }
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'mock-pick-prof' }))
+      const url = mockRouterPush.mock.calls.at(-1)![0] as string
+      expect(url).toContain('professional_id=prof-1')
+      expect(url).not.toContain('service_id')
+    })
 
-  it('NO muestra AgendaFilters cuando el rol no está cargado (null)', () => {
-    vi.mocked(useUserRole).mockReturnValue(null)
-    render(<AgendaPage />)
-    expect(screen.queryByTestId('agenda-filters')).not.toBeInTheDocument()
+    it('elegir servicio (con professional_id en URL) limpia el profesional en un solo push', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      mockSearchParamsData = { professional_id: 'prof-1' }
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'mock-pick-svc' }))
+      const url = mockRouterPush.mock.calls.at(-1)![0] as string
+      expect(url).toContain('service_id=svc-1')
+      expect(url).not.toContain('professional_id')
+    })
   })
 
   it('al hacer click en Anterior en vista día, navega preservando params de la URL', () => {

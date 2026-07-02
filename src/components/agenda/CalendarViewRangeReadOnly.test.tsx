@@ -1,6 +1,8 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
+import { format, addDays, parseISO } from 'date-fns'
+import { es } from 'date-fns/locale'
 import type { Appointment } from '@/types/appointments'
 
 // Mock CSS imports
@@ -75,20 +77,26 @@ describe('CalendarViewRangeReadOnly', () => {
     vi.clearAllMocks()
   })
 
-  it('renderiza la grilla de 7 días en vista Semana cuando isLoading=false', () => {
+  it('renderiza 7 días DESDE la fecha ancla en vista Semana (ancla = primera columna)', () => {
+    // La vista Semana ahora es una ventana de 7 días desde el ancla (date), no
+    // la semana calendario. Las cabeceras usan formato "EEE d" (ej. "mar 12").
+    // Los labels se computan del prop `date`, así el test es determinista
+    // independientemente de la fecha real de ejecución.
+    const anchor = '2026-05-12'
     render(
       <CalendarViewRangeReadOnly
         view="week"
-        date="2026-05-12"
+        date={anchor}
         appointments={[]}
         isLoading={false}
         isError={false}
         onRefetch={mockOnRefetch}
       />,
     )
-    // La vista Semana (WeekColumnsView) renderiza 7 cabeceras de día (lun-dom)
-    expect(screen.getByText('lun')).toBeInTheDocument()
-    expect(screen.getByText('dom')).toBeInTheDocument()
+    const firstLabel = format(parseISO(anchor), 'EEE d', { locale: es }) // "mar 12"
+    const lastLabel = format(addDays(parseISO(anchor), 6), 'EEE d', { locale: es }) // "lun 18"
+    expect(screen.getByText(firstLabel)).toBeInTheDocument()
+    expect(screen.getByText(lastLabel)).toBeInTheDocument()
   })
 
   it('renderiza el calendario con data-testid="rbc-calendar" en vista Mes', () => {

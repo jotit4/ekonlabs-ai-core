@@ -14,6 +14,14 @@ export interface UseAvailabilityOptions {
   professionalId?: string | null
   summary?: boolean
   enabled?: boolean
+  /**
+   * "Cualquier profesional disponible" (P0.1). Cuando es true y hay serviceId sin
+   * professionalId, la API itera TODOS los profesionales del servicio y devuelve
+   * los huecos de cada uno por separado (sin colapsar por hora), de modo que el
+   * hueco conserva su professional_id/professional_name. Sin esto, la RPC colapsa
+   * a un hueco por hora (primer profesional libre).
+   */
+  allProfessionals?: boolean
 }
 
 export interface UseAvailabilityResult {
@@ -37,6 +45,7 @@ export function useAvailability({
   professionalId,
   summary = false,
   enabled = true,
+  allProfessionals = false,
 }: UseAvailabilityOptions): UseAvailabilityResult {
   const query = useQuery<AvailabilityResponse>({
     queryKey: [
@@ -46,12 +55,14 @@ export function useAvailability({
       serviceId ?? '',
       professionalId ?? '',
       summary,
+      allProfessionals,
     ],
     queryFn: async () => {
       const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo })
       if (serviceId) params.set('service_id', serviceId)
       if (professionalId) params.set('professional_id', professionalId)
       if (summary) params.set('summary', 'true')
+      if (allProfessionals) params.set('all_professionals', 'true')
 
       const res = await fetch(`/api/availability?${params.toString()}`)
       if (!res.ok) {
