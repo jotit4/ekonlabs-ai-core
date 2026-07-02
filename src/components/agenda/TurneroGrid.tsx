@@ -31,13 +31,20 @@ export interface TurneroGridProps {
   isPastCell?: (columnId: string, hour: string) => boolean
   /** Línea de "ahora": se dibuja sobre la fila `atHour` en las columnas que matchean. */
   nowLine?: { atHour: string; appliesToColumn: (columnId: string) => boolean }
+  /**
+   * La disponibilidad ("N libres") aún se está cargando (RPC pesada, 2-3s). Mientras
+   * es true, las celdas dentro del horario, sin turno y sin huecos todavía muestran un
+   * skeleton tenue ("buscando horarios") en vez de quedar vacías y llenarse de golpe.
+   */
+  availabilityLoading?: boolean
   ariaLabel?: string
 }
 
-// A partir de esta cantidad de huecos en una misma celda, se colapsan a un
-// contador discreto ("N libres") en vez de listar cada uno (evita el ruido de
-// la vista Semana cuando muchos profesionales tienen el mismo horario libre).
-const MAX_INLINE_FREE = 2
+// Con más de esta cantidad de huecos en una celda — o cuando la celda YA tiene
+// un turno — se colapsan a un contador discreto ("N libres") en vez de listar
+// cada uno. Evita el ruido de "10:00" repetido y que una celda cargada agrande
+// toda su fila (las filas de la grilla comparten alto).
+const MAX_INLINE_FREE = 1
 
 const HOUR_COL_WIDTH = 60
 const ROW_MIN_HEIGHT = 56
@@ -213,7 +220,7 @@ function FreeCountButton({
     <button
       type="button"
       onClick={() => first && onClick?.(first)}
-      aria-label={`${count} horarios libres a las ${hour}`}
+      aria-label={count === 1 ? `1 horario libre a las ${hour}` : `${count} horarios libres a las ${hour}`}
       className="turnero-free-slot"
       style={{
         display: 'flex',
@@ -230,7 +237,7 @@ function FreeCountButton({
         transition: 'background 0.12s, border-color 0.12s',
       }}
     >
-      {count} libres
+      {count === 1 ? '1 libre' : `${count} libres`}
     </button>
   )
 }
@@ -243,6 +250,7 @@ function GridCell({
   showProfessionalOnChip,
   isPast = false,
   showNowLine = false,
+  availabilityLoading = false,
   onAppointmentClick,
   onFreeSlotClick,
 }: {
@@ -251,6 +259,7 @@ function GridCell({
   showProfessionalOnChip?: boolean
   isPast?: boolean
   showNowLine?: boolean
+  availabilityLoading?: boolean
   onAppointmentClick?: (apt: Appointment) => void
   onFreeSlotClick?: (shift: AvailabilityShift) => void
 }) {
@@ -296,9 +305,36 @@ function GridCell({
     )
   }
 
-  // Hueco dentro del horario pero sin turno ni disponibilidad calculada → gap
-  // muy sutil, no clickeable (no es "libre": no hay un shift real que ofrecer).
+  // Hueco dentro del horario, sin turno y sin huecos. Dos casos:
+  //  - La disponibilidad todavía se está cargando → skeleton tenue: comunica
+  //    "buscando horarios" y reserva el alto donde luego irían los "libres",
+  //    evitando el salto visual de llenarse de golpe.
+  //  - Ya cargó y no hay hueco real que ofrecer → gap muy sutil, no clickeable.
   if (isEmpty) {
+    if (availabilityLoading) {
+      return (
+        <div
+          aria-hidden="true"
+          style={{
+            minHeight: ROW_MIN_HEIGHT,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 3,
+            borderRight: '1px solid var(--color-border)',
+            borderBottom: '1px solid var(--color-border)',
+            borderTop: nowBorder,
+            background: 'var(--color-bg)',
+          }}
+        >
+          <span
+            data-testid="turnero-cell-skeleton"
+            className="turnero-skeleton"
+            style={{ width: '64%', height: 22, borderRadius: 6 }}
+          />
+        </div>
+      )
+    }
     return (
       <div
         style={{
@@ -312,7 +348,11 @@ function GridCell({
     )
   }
 
-  const collapseFree = !hasAppointments && freeShifts.length > MAX_INLINE_FREE
+  // Colapsar a "N libres" cuando la celda ya tiene un turno (para no inflar su
+  // alto) o cuando hay más de un hueco (varios profesionales a la misma hora →
+  // listarlos como "10:00" repetido no aporta). Solo se listan individualmente
+  // los huecos cuando la celda no tiene turno y hay exactamente uno.
+  const collapseFree = hasAppointments || freeShifts.length > MAX_INLINE_FREE
 
   return (
     <div
@@ -372,6 +412,7 @@ export function TurneroGrid({
   showProfessionalOnChip,
   isPastCell,
   nowLine,
+  availabilityLoading = false,
   ariaLabel = 'Grilla de turnos',
 }: TurneroGridProps) {
   const gridTemplateColumns = `${HOUR_COL_WIDTH}px repeat(${columns.length}, minmax(120px, 1fr))`
@@ -388,7 +429,9 @@ export function TurneroGrid({
 
   return (
     <>
-      {/* Estilos de interacción para huecos libres (hover → aparece el "+"). */}
+      {/* Estilos de interacción para huecos libres (hover → aparece el "+") y
+          skeleton de disponibilidad (barra gris tenue con pulso). El pulso lo
+          neutraliza el prefers-reduced-motion global de globals.css. */}
       <style>{`
         .turnero-free-slot:hover {
           background: var(--color-surface);
@@ -398,6 +441,15 @@ export function TurneroGrid({
         .turnero-free-slot:focus-visible {
           outline: 2px solid var(--color-interactive);
           outline-offset: -2px;
+        }
+        @keyframes turnero-skeleton-pulse {
+          0%, 100% { opacity: 0.4; }
+          50% { opacity: 0.75; }
+        }
+        .turnero-skeleton {
+          display: block;
+          background: var(--color-border);
+          animation: turnero-skeleton-pulse 1.4s ease-in-out infinite;
         }
       `}</style>
 
@@ -501,6 +553,7 @@ export function TurneroGrid({
                     showProfessionalOnChip={showProfessionalOnChip}
                     isPast={isPastCell?.(col.id, hour) ?? false}
                     showNowLine={isNowRow && nowLine!.appliesToColumn(col.id)}
+                    availabilityLoading={availabilityLoading}
                     onAppointmentClick={onAppointmentClick}
                     onFreeSlotClick={onFreeSlotClick}
                   />

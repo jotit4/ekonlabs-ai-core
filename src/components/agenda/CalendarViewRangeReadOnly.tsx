@@ -64,12 +64,14 @@ function WeekGridView({
   events,
   onEventClick,
   freeShiftsByDate,
+  availabilityLoading = false,
   onFreeSlotClick,
 }: {
   weekDate: Date
   events: CalendarEvent[]
   onEventClick?: (appointment: Appointment) => void
   freeShiftsByDate?: Record<string, AvailabilityShift[]>
+  availabilityLoading?: boolean
   onFreeSlotClick?: (shift: AvailabilityShift) => void
 }) {
   const grid = useMemo(() => {
@@ -152,6 +154,7 @@ function WeekGridView({
         showProfessionalOnChip
         isPastCell={isPastCell}
         nowLine={nowLine}
+        availabilityLoading={availabilityLoading}
         ariaLabel="Grilla semanal de turnos"
       />
     </div>
@@ -441,6 +444,8 @@ interface CalendarViewRangeReadOnlyProps {
   // Story 10.7 — disponibilidad (opcional, aditivo)
   freeShiftsByDate?: Record<string, AvailabilityShift[]> // clave 'YYYY-MM-DD' local
   availabilitySummary?: Record<string, DaySummary>
+  // Disponibilidad aún cargando → skeleton tenue en las celdas de la grilla Semana.
+  availabilityLoading?: boolean
   // Aceptado por compatibilidad de la llamada actual; el profesional ahora se
   // muestra en la cabecera de cada grupo dentro de la columna del día.
   showProfessionalName?: boolean
@@ -458,6 +463,7 @@ export function CalendarViewRangeReadOnly({
   onAppointmentClick,
   freeShiftsByDate,
   availabilitySummary,
+  availabilityLoading = false,
   onFreeSlotClick,
   onDayClick,
 }: CalendarViewRangeReadOnlyProps) {
@@ -496,6 +502,7 @@ export function CalendarViewRangeReadOnly({
         events={events}
         onEventClick={onAppointmentClick}
         freeShiftsByDate={freeShiftsByDate}
+        availabilityLoading={availabilityLoading}
         onFreeSlotClick={onFreeSlotClick}
       />
     )

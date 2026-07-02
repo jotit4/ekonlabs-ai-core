@@ -31,6 +31,9 @@ interface CalendarViewProps {
   // Aceptado por compatibilidad — la reprogramación vive ahora en TurnoDetailModal.
   onReschedule?: (appointment: Appointment) => void
   freeShifts?: AvailabilityShift[]
+  // Disponibilidad aún cargando (RPC pesada). Mientras es true, la grilla muestra
+  // un skeleton tenue en las celdas donde luego irían los "libres".
+  availabilityLoading?: boolean
   // Aceptado por compatibilidad — en la vista Día la columna ya es el profesional.
   showProfessionalName?: boolean
   onFreeSlotClick?: (shift: AvailabilityShift) => void
@@ -51,6 +54,7 @@ export function CalendarView({
   isError,
   onRefetch,
   freeShifts,
+  availabilityLoading = false,
   onFreeSlotClick,
   onAppointmentClick,
 }: CalendarViewProps) {
@@ -125,6 +129,12 @@ export function CalendarView({
   }
 
   if (grid.columns.length === 0) {
+    // Sin turnos aún, pero la disponibilidad sigue cargando: mostramos el skeleton
+    // del día en vez del vacío "Sin turnos" (que luego saltaría a una grilla con
+    // columnas de huecos libres al resolver la RPC).
+    if (availabilityLoading) {
+      return <AgendaDayViewSkeleton />
+    }
     return (
       <div
         style={{
@@ -162,6 +172,7 @@ export function CalendarView({
         onFreeSlotClick={onFreeSlotClick}
         isPastCell={isPastCell}
         nowLine={nowLine}
+        availabilityLoading={availabilityLoading}
         ariaLabel="Grilla de turnos por profesional"
       />
     </div>

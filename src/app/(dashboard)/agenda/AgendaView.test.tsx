@@ -338,6 +338,35 @@ describe('AgendaPage', () => {
     })
   })
 
+  // ── FIX A — rol del server (initialRole) evita el parpadeo de cabecera ──────
+  describe('initialRole (rol del server, sin parpadeo)', () => {
+    it('con initialRole="receptionist" arranca en modo turnero aunque useUserRole aún sea null', () => {
+      // Simula el primer frame: el hook cliente todavía no resolvió (null), pero
+      // el rol del server ya define el modo turnero → sin flash de agenda completa.
+      vi.mocked(useUserRole).mockReturnValue(null)
+      render(<AgendaPage initialRole="receptionist" />)
+      expect(screen.getByRole('button', { name: /^filtrar$/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /dar turno/i })).toBeInTheDocument()
+      expect(screen.queryByTestId('agenda-filters')).not.toBeInTheDocument()
+    })
+
+    it('con initialRole="admin" arranca en agenda completa aunque useUserRole aún sea null', () => {
+      vi.mocked(useUserRole).mockReturnValue(null)
+      render(<AgendaPage initialRole="admin" />)
+      expect(screen.getByTestId('agenda-filters')).toBeInTheDocument()
+      expect(screen.getByTestId('calendar-view-selector')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /^filtrar$/i })).not.toBeInTheDocument()
+    })
+
+    it('useUserRole (cliente) prevalece una vez resuelto sobre un initialRole ausente', () => {
+      // El server no determinó el rol (initialRole null) pero el cliente resuelve admin.
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      render(<AgendaPage initialRole={null} />)
+      expect(screen.getByTestId('agenda-filters')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /^filtrar$/i })).not.toBeInTheDocument()
+    })
+  })
+
   // ── Exclusión mutua professional_id ⊕ service_id ───────────────────────────
   describe('Exclusión mutua profesional/servicio', () => {
     it('elegir profesional (con service_id en URL) limpia el servicio en un solo push', () => {

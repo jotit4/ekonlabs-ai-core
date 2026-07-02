@@ -258,7 +258,7 @@ describe('CalendarView (grilla Día)', () => {
       expect(screen.queryByRole('button', { name: /agendar a las/i })).not.toBeInTheDocument()
     })
 
-    it('dos huecos del mismo profesional/hora con service_id distinto NO emiten warning de key duplicada', () => {
+    it('dos huecos del mismo profesional/hora se colapsan a "2 libres" sin warning de key', () => {
       const shiftA: AvailabilityShift = { ...FREE_SHIFT, service_id: 'svc-A', service_name: 'Kinesiología' }
       const shiftB: AvailabilityShift = { ...FREE_SHIFT, service_id: 'svc-B', service_name: 'Fisioterapia' }
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -275,14 +275,77 @@ describe('CalendarView (grilla Día)', () => {
         />,
       )
 
-      const slots = screen.getAllByRole('button', { name: /agendar a las 08:00 con dra\. pérez/i })
-      expect(slots).toHaveLength(2)
+      // Varios huecos a la misma hora colapsan a un contador ("2 libres"), no se
+      // listan individualmente (evita el ruido y que la celda agrande la fila).
+      const collapsed = screen.getByRole('button', { name: /2 horarios libres a las 08:00/i })
+      expect(collapsed).toBeInTheDocument()
 
       const duplicateKeyWarning = errorSpy.mock.calls.some((args) =>
         args.some((a) => typeof a === 'string' && (a.includes('same key') || a.includes('unique key'))),
       )
       expect(duplicateKeyWarning).toBe(false)
       errorSpy.mockRestore()
+    })
+  })
+
+  describe('FIX B — skeleton de disponibilidad', () => {
+    // Dos turnos en la MISMA columna (Sin profesional) a las 08:00 y 12:00 → la
+    // ventana activa 08–12 deja celdas vacías intermedias (09, 10, 11) dentro del
+    // horario, donde debe aparecer el skeleton mientras carga la disponibilidad.
+    const apt8: Appointment = {
+      ...BASE_APPOINTMENT,
+      appointment_id: 'a8',
+      start_at: '2026-05-07T08:00:00',
+      end_at: '2026-05-07T09:00:00',
+    }
+    const apt12: Appointment = {
+      ...BASE_APPOINTMENT,
+      appointment_id: 'a12',
+      start_at: '2026-05-07T12:00:00',
+      end_at: '2026-05-07T13:00:00',
+    }
+
+    it('muestra skeleton en celdas vacías dentro del horario cuando availabilityLoading=true', () => {
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[apt8, apt12]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+          availabilityLoading
+        />,
+      )
+      expect(screen.getAllByTestId('turnero-cell-skeleton').length).toBeGreaterThan(0)
+    })
+
+    it('NO muestra skeleton cuando availabilityLoading=false (huecos vacíos discretos)', () => {
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[apt8, apt12]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+          availabilityLoading={false}
+        />,
+      )
+      expect(screen.queryByTestId('turnero-cell-skeleton')).not.toBeInTheDocument()
+    })
+
+    it('con día vacío y disponibilidad cargando muestra el skeleton del día (no "Sin turnos")', () => {
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+          availabilityLoading
+        />,
+      )
+      expect(screen.getByLabelText('Cargando turnos')).toBeInTheDocument()
+      expect(screen.queryByText(/sin turnos para este día/i)).not.toBeInTheDocument()
     })
   })
 

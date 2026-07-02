@@ -31,6 +31,7 @@ import { useTenantConfig } from '@/hooks/use-tenant-config'
 import { useUserRole } from '@/hooks/use-user-role'
 import type { Appointment } from '@/types/appointments'
 import type { AvailabilityShift } from '@/types/availability'
+import type { UserRole } from '@/types'
 
 function parseValidDate(str: string | null): Date {
   if (!str || !/^\d{4}-\d{2}-\d{2}$/.test(str)) return new Date()
@@ -38,10 +39,24 @@ function parseValidDate(str: string | null): Date {
   return isValid(parsed) ? parsed : new Date()
 }
 
-export function AgendaView() {
+interface AgendaViewProps {
+  /**
+   * Rol resuelto server-side (page.tsx, desde el JWT de la sesión). Fija el rol
+   * del PRIMER frame para evitar el parpadeo de la cabecera: sin esto, useUserRole
+   * arranca en null y se pinta la agenda completa un instante antes de colapsar al
+   * modo turnero de recepción. useUserRole sigue usándose como sincronización en
+   * cliente y, una vez resuelto, prevalece.
+   */
+  initialRole?: UserRole | null
+}
+
+export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
   const searchParams = useSearchParams()
   const router = useRouter()
-  const role = useUserRole()
+  // El rol del cliente (async) tiene prioridad una vez resuelto; hasta entonces
+  // usamos el rol del server para que el primer render ya sea el correcto.
+  const clientRole = useUserRole()
+  const role = clientRole ?? initialRole
 
   const selectedDate = parseValidDate(searchParams.get('fecha'))
   const isoDate = formatISO(selectedDate, { representation: 'date' })
@@ -69,11 +84,17 @@ export function AgendaView() {
   //   - admin  → default 'rehab' (arranca viendo solo servicios de rehabilitación).
   //   - recepción → default 'todos' (modo turnero: ve TODOS los servicios, sin
   //     recortes; odontología, pediatría, etc. deben aparecer).
-  const [areaFocus, setAreaFocus] = useState<AreaFocus>('rehab')
+  // El estado inicial deriva del rol del server (initialRole) para que el primer
+  // frame ya use el foco correcto — sin parpadeo.
+  const [areaFocus, setAreaFocus] = useState<AreaFocus>(
+    initialRole === 'receptionist' ? 'todos' : 'rehab',
+  )
 
-  // El rol se resuelve async (getSession). Fijamos el foco por defecto la primera
-  // vez que el rol se conoce; después respetamos los toggles manuales del usuario.
-  const areaDefaultApplied = useRef(false)
+  // El rol se resuelve async (getSession). Si el server ya lo sabía (initialRole),
+  // el default de arriba ya es el correcto y marcamos "aplicado" para no pisar los
+  // toggles manuales. Si el server no lo determinó, fijamos el foco por defecto la
+  // primera vez que el rol se conoce en cliente.
+  const areaDefaultApplied = useRef(initialRole != null)
   useEffect(() => {
     if (role && !areaDefaultApplied.current) {
       areaDefaultApplied.current = true
@@ -130,6 +151,7 @@ export function AgendaView() {
     daysShifts,
     daysSummary,
     shiftsForDate,
+    isLoading: availabilityLoading,
   } = useAvailability({
     dateFrom: availFrom,
     dateTo: availTo,
@@ -487,6 +509,7 @@ export function AgendaView() {
             onRefetch={refetch}
             onReschedule={handleOpenReschedule}
             freeShifts={focusedDayFreeShifts}
+            availabilityLoading={availabilityLoading}
             showProfessionalName={showProfessionalName}
             onFreeSlotClick={handleFreeSlotClick}
             onAppointmentClick={handleAppointmentClick}
@@ -511,6 +534,7 @@ export function AgendaView() {
             onAppointmentClick={handleAppointmentClick}
             freeShiftsByDate={vistaActiva === 'semana' ? focusedFreeShiftsByDate : undefined}
             availabilitySummary={isMonth ? daysSummary : undefined}
+            availabilityLoading={availabilityLoading}
             showProfessionalName={showProfessionalName}
             onFreeSlotClick={handleFreeSlotClick}
             onDayClick={handleDayClick}

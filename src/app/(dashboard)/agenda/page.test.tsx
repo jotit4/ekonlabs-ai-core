@@ -23,7 +23,9 @@ vi.mock('next/navigation', () => ({
 }))
 
 vi.mock('./AgendaView', () => ({
-  AgendaView: () => <div data-testid="agenda-view">AgendaView</div>,
+  AgendaView: ({ initialRole }: { initialRole?: string | null }) => (
+    <div data-testid="agenda-view" data-initial-role={initialRole ?? ''}>AgendaView</div>
+  ),
 }))
 
 function makeJwt(role: string) {
@@ -59,7 +61,10 @@ describe('AgendaPage (guard de rol)', () => {
     const element = await AgendaPage()
     render(element)
 
-    expect(screen.getByTestId('agenda-view')).toBeInTheDocument()
+    const view = screen.getByTestId('agenda-view')
+    expect(view).toBeInTheDocument()
+    // FIX A: el rol del server se pasa como initialRole (sin parpadeo en cliente).
+    expect(view).toHaveAttribute('data-initial-role', 'admin')
   })
 
   it('renderiza la agenda global cuando el rol es receptionist', async () => {
@@ -72,6 +77,9 @@ describe('AgendaPage (guard de rol)', () => {
     const element = await AgendaPage()
     render(element)
 
-    expect(screen.getByTestId('agenda-view')).toBeInTheDocument()
+    const view = screen.getByTestId('agenda-view')
+    expect(view).toBeInTheDocument()
+    // FIX A: recepción arranca en modo turnero desde el primer frame gracias a initialRole.
+    expect(view).toHaveAttribute('data-initial-role', 'receptionist')
   })
 })

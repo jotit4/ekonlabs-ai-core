@@ -324,11 +324,11 @@ describe('CalendarViewRangeReadOnly', () => {
         />,
       )
 
-      // Se renderizan los DOS huecos clickeables (mismo aria-label: misma hora/prof).
-      const slots = screen.getAllByRole('button', {
-        name: /agendar a las 08:00 con dra\. pérez/i,
+      // Varios huecos a la misma hora colapsan a un contador ("2 libres").
+      const collapsed = screen.getByRole('button', {
+        name: /2 horarios libres a las 08:00/i,
       })
-      expect(slots).toHaveLength(2)
+      expect(collapsed).toBeInTheDocument()
 
       // Y React NO emitió el warning de key duplicada.
       const duplicateKeyWarning = errorSpy.mock.calls.some((args) =>
@@ -340,6 +340,42 @@ describe('CalendarViewRangeReadOnly', () => {
       expect(duplicateKeyWarning).toBe(false)
 
       errorSpy.mockRestore()
+    })
+  })
+
+  // ── FIX B — skeleton de disponibilidad en la grilla Semana ──────────────────
+  describe('FIX B — skeleton de disponibilidad (vista Semana)', () => {
+    it('muestra skeleton en las celdas de la grilla cuando availabilityLoading=true', () => {
+      render(
+        <CalendarViewRangeReadOnly
+          view="week"
+          date="2026-05-12"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+          availabilityLoading
+        />,
+      )
+      // El turno sigue visible y, además, las celdas vacías dentro del horario
+      // muestran el skeleton "buscando horarios".
+      expect(screen.getByText('María López')).toBeInTheDocument()
+      expect(screen.getAllByTestId('turnero-cell-skeleton').length).toBeGreaterThan(0)
+    })
+
+    it('NO muestra skeleton cuando availabilityLoading=false', () => {
+      render(
+        <CalendarViewRangeReadOnly
+          view="week"
+          date="2026-05-12"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+          availabilityLoading={false}
+        />,
+      )
+      expect(screen.queryByTestId('turnero-cell-skeleton')).not.toBeInTheDocument()
     })
   })
 
