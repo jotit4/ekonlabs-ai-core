@@ -87,7 +87,7 @@ describe('AgendarSesionModal', () => {
     await user.click(screen.getByRole('button', { name: 'slot-1000' }))
     await user.click(screen.getByRole('button', { name: 'slot-1001' }))
 
-    expect(screen.getByText(/Seleccionados \(2\)/)).toBeInTheDocument()
+    expect(screen.getByText(/Sesiones elegidas \(2\/8\)/)).toBeInTheDocument()
     // El botón pasa a "Agendar 2 sesiones".
     expect(screen.getByRole('button', { name: /agendar 2 sesiones/i })).toBeEnabled()
   })
@@ -132,7 +132,7 @@ describe('AgendarSesionModal', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(/ya no está disponible/i)
     })
     // La selección se limpió.
-    expect(screen.queryByText(/Seleccionados/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Sesiones elegidas/)).not.toBeInTheDocument()
   })
 
   it('no permite seleccionar más sesiones que el cupo (porAgendar)', async () => {
@@ -142,7 +142,7 @@ describe('AgendarSesionModal', () => {
     await user.click(screen.getByRole('button', { name: 'slot-1000' }))
     await user.click(screen.getByRole('button', { name: 'slot-1001' })) // se ignora (cupo=1)
 
-    expect(screen.getByText(/Seleccionados \(1\)/)).toBeInTheDocument()
-    expect(screen.getByText(/máximo de sesiones que faltan agendar \(1\)/i)).toBeInTheDocument()
+    expect(screen.getByText(/Sesiones elegidas \(1\/1\)/)).toBeInTheDocument()
+    expect(screen.getByText(/Completaste las 1/i)).toBeInTheDocument()
   })
 })

@@ -3,12 +3,8 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Dialog } from '@base-ui/react/dialog'
-import { format, parseISO, isValid } from 'date-fns'
-import { es } from 'date-fns/locale'
-import {
-  AvailabilitySlotPicker,
-  type SelectedSlot,
-} from '@/components/agenda/AvailabilitySlotPicker'
+import { MultiSessionScheduler } from '@/components/agenda/MultiSessionScheduler'
+import { type SelectedSlot } from '@/components/agenda/AvailabilitySlotPicker'
 
 interface AgendarSesionModalProps {
   open: boolean
@@ -30,12 +26,6 @@ interface AgendarSesionModalProps {
 // endpoint que crea los appointments con el camino estándar (RPC create_appointment
 // + UPDATE package_id/session_index) y refresca el contador (deriva de appointments).
 
-function fmtSlot(slot: SelectedSlot): string {
-  const parsed = parseISO(slot.start_at)
-  if (!isValid(parsed)) return `${slot.date} · ${slot.label}`
-  return format(parsed, "EEEE d/MM · HH:mm", { locale: es })
-}
-
 export function AgendarSesionModal({
   open,
   onClose,
@@ -52,17 +42,9 @@ export function AgendarSesionModal({
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const atCapacity = selected.length >= porAgendar
-
-  const handleToggle = (slot: SelectedSlot) => {
+  const handleSelectionChange = (slots: SelectedSlot[]) => {
     setSubmitError(null)
-    setSelected((prev) => {
-      const exists = prev.some((s) => s.start_at === slot.start_at)
-      if (exists) return prev.filter((s) => s.start_at !== slot.start_at)
-      // Tope: no permitir elegir más que el cupo libre del bono.
-      if (prev.length >= porAgendar) return prev
-      return [...prev, slot].sort((a, b) => a.start_at.localeCompare(b.start_at))
-    })
+    setSelected(slots)
   }
 
   const reset = () => {
@@ -153,45 +135,13 @@ export function AgendarSesionModal({
 
             {/* Body */}
             <div className="px-6 py-4 space-y-4">
-              <AvailabilitySlotPicker
+              <MultiSessionScheduler
                 serviceId={serviceId}
                 professionalId={professionalId}
+                total={porAgendar}
                 selected={selected}
-                onToggle={handleToggle}
+                onChange={handleSelectionChange}
               />
-
-              {atCapacity && (
-                <p className="text-xs text-amber-700">
-                  Llegaste al máximo de sesiones que faltan agendar ({porAgendar}).
-                </p>
-              )}
-
-              {/* Lista acumulada de horarios elegidos */}
-              {selected.length > 0 && (
-                <div className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-                  <p className="mb-2 text-xs font-medium text-[var(--color-text-secondary)]">
-                    Seleccionados ({selected.length})
-                  </p>
-                  <ul role="list" className="space-y-1">
-                    {selected.map((s) => (
-                      <li
-                        key={s.start_at}
-                        className="flex items-center justify-between gap-2 text-sm text-[var(--color-text-primary)]"
-                      >
-                        <span>{fmtSlot(s)}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleToggle(s)}
-                          aria-label={`Quitar ${fmtSlot(s)}`}
-                          className="text-xs font-medium text-red-600 hover:opacity-80"
-                        >
-                          Quitar
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
 
               {submitError && (
                 <p role="alert" className="text-sm text-red-600">

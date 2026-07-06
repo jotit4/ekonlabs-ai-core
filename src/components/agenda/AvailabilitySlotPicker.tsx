@@ -33,6 +33,14 @@ interface AvailabilitySlotPickerProps {
   onToggle: (slot: SelectedSlot) => void
   /** Fecha mínima seleccionable (YYYY-MM-DD). Default: hoy. */
   minDate?: string
+  /**
+   * Fecha visible (YYYY-MM-DD) controlada por el padre. Si se pasa junto con
+   * `onDateChange`, el padre es dueño de la fecha — necesario para el auto-avance
+   * del `MultiSessionScheduler`. Si se omite, el picker usa estado interno
+   * (comportamiento original).
+   */
+  date?: string
+  onDateChange?: (date: string) => void
 }
 
 function fmtDateLong(iso: string): string {
@@ -47,10 +55,16 @@ export function AvailabilitySlotPicker({
   selected,
   onToggle,
   minDate,
+  date: dateProp,
+  onDateChange,
 }: AvailabilitySlotPickerProps) {
   const today = new Date().toLocaleDateString('en-CA')
   const floor = minDate ?? today
-  const [date, setDate] = useState<string>('')
+  // Fecha controlada por el padre (auto-avance) o estado interno (uso original).
+  const [internalDate, setInternalDate] = useState<string>('')
+  const isControlled = dateProp !== undefined && onDateChange !== undefined
+  const date = isControlled ? dateProp : internalDate
+  const setDate = isControlled ? onDateChange! : setInternalDate
 
   const enabled = !!serviceId && !!professionalId && !!date
 

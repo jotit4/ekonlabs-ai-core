@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { NewTurnoModal } from './NewTurnoModal'
@@ -750,6 +750,147 @@ describe('NewTurnoModal', () => {
 
       await user.click(screen.getByRole('button', { name: /cancelar/i }))
       expect(mockOnClose).toHaveBeenCalledOnce()
+    })
+  })
+
+  describe('modo serie de sesiones (bonos x5/x10)', () => {
+    const singlePatient = {
+      patient_id: 'pat-uuid-1',
+      full_name: 'María López',
+      phone_number: '+5491111111111',
+      obra_social: null,
+      deletion_requested_at: null,
+    }
+
+    // Disponibilidad con UN hueco único por fecha (start_at deriva de la fecha),
+    // para poder acumular sesiones de días distintos sin colisión de start_at.
+    function mockUniqueDailyAvailability() {
+      vi.mocked(useAvailability).mockImplementation(({ enabled }) => ({
+        daysShifts: {},
+        daysSummary: {},
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+        shiftsForDate: (d: string) =>
+          enabled && d
+            ? [
+                {
+                  ...makeShift('12:00'),
+                  slot_start_iso: `${d}T15:00:00.000Z`,
+                  slot_end_iso: `${d}T16:00:00.000Z`,
+                },
+              ]
+            : [],
+      }))
+    }
+
+    it('muestra el selector de cantidad de sesiones (1 / 5 / 10)', () => {
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-07" />)
+      expect(screen.getByRole('button', { name: /1 turno/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /5 sesiones/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /10 sesiones/i })).toBeInTheDocument()
+    })
+
+    it('al elegir "10 sesiones" cambia a modo serie (botón Reservar, sin Fecha única)', async () => {
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-07" />)
+
+      await user.click(screen.getByRole('button', { name: /10 sesiones/i }))
+
+      const btn = screen.getByRole('button', { name: /reservar 10 sesiones/i })
+      expect(btn).toBeInTheDocument()
+      expect(btn).toBeDisabled()
+      expect(screen.getByText(/Serie de 10 sesiones/i)).toBeInTheDocument()
+      // El campo "Fecha" del turno único ya no se muestra (lo maneja el scheduler).
+      expect(screen.queryByLabelText('Fecha')).not.toBeInTheDocument()
+    })
+
+    it('en modo serie NO ofrece "Cualquier profesional disponible"', async () => {
+      setupFetch({
+        search: [singlePatient],
+        professionals: [
+          { professional_id: 'prof-1', name: 'Patricia Pérez' },
+          { professional_id: 'prof-2', name: 'Aldo Luque' },
+        ],
+      })
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-07" />)
+
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
+      await user.click(screen.getByRole('button', { name: /5 sesiones/i }))
+      await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+
+      await waitFor(() => {
+        expect(screen.getByRole('option', { name: 'Patricia Pérez' })).toBeInTheDocument()
+      })
+      expect(
+        screen.queryByRole('option', { name: 'Cualquier profesional disponible' }),
+      ).not.toBeInTheDocument()
+    })
+
+    it('reservar 5 sesiones: crea el bono y agenda las 5 en un solo flujo', async () => {
+      mockUniqueDailyAvailability()
+      mockFetch.mockImplementation((url: string, init?: { method?: string }) => {
+        if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
+        if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse([{ professional_id: 'prof-1', name: 'Patricia Pérez' }]))
+        if (url === '/api/treatments' && init?.method === 'POST') {
+          return Promise.resolve({ ok: true, status: 201, json: async () => ({ success: true, treatment_id: 'trt-new' }) })
+        }
+        if (url.includes('/api/treatments/trt-new/sessions') && init?.method === 'POST') {
+          return Promise.resolve({ ok: true, status: 201, json: async () => ({ success: true, creadas: 5, skipped: [] }) })
+        }
+        return Promise.resolve(makeSearchResponse([]))
+      })
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-07" />)
+
+      // Paciente + modo 5 sesiones + servicio (preselecciona el único profesional)
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
+      await user.click(screen.getByRole('button', { name: /5 sesiones/i }))
+      await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+      await waitFor(() => {
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('prof-1')
+      })
+
+      // Elegir la fecha inicial y acumular 5 huecos (el calendario se auto-adelanta).
+      fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: '2026-07-07' } })
+      for (let i = 0; i < 5; i++) {
+        const chip = await screen.findByRole('button', { name: '12:00' })
+        await user.click(chip)
+      }
+
+      const reservar = screen.getByRole('button', { name: /reservar 5 sesiones/i })
+      await waitFor(() => expect(reservar).toBeEnabled())
+      await user.click(reservar)
+
+      // 1) creó el bono con total_sessions = 5
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find(
+          (c) => c[0] === '/api/treatments' && (c[1] as { method?: string })?.method === 'POST',
+        )
+        expect(call).toBeTruthy()
+        const body = JSON.parse((call![1] as { body: string }).body)
+        expect(body.total_sessions).toBe(5)
+        expect(body.professional_id).toBe('prof-1')
+        expect(body.service_id).toBe('svc-1')
+      })
+
+      // 2) agendó las 5 sesiones en el bono creado
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find(
+          (c) =>
+            typeof c[0] === 'string' &&
+            c[0].includes('/api/treatments/trt-new/sessions') &&
+            (c[1] as { method?: string })?.method === 'POST',
+        )
+        expect(call).toBeTruthy()
+        const body = JSON.parse((call![1] as { body: string }).body)
+        expect(body.slots).toHaveLength(5)
+      })
     })
   })
 

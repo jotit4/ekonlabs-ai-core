@@ -14,6 +14,11 @@ import {
 } from '@/lib/schemas/appointment.schema'
 import { PatientFormSchema, type PatientFormValues } from '@/lib/schemas/patient.schema'
 import { useAvailability } from '@/hooks/use-availability'
+import { MultiSessionScheduler } from '@/components/agenda/MultiSessionScheduler'
+import { type SelectedSlot } from '@/components/agenda/AvailabilitySlotPicker'
+
+// Opciones del selector de cantidad: turno suelto o serie/bono de sesiones (x5/x10).
+const SESSION_OPTIONS = [1, 5, 10] as const
 
 interface PatientResult {
   patient_id: string
@@ -86,6 +91,19 @@ export function NewTurnoModal({
   // Slot conflict error
   const [slotConflictError, setSlotConflictError] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+
+  // Modo "serie de sesiones" (bono x5/x10). sessionCount = 1 → turno suelto (flujo
+  // clásico, sin cambios). 5/10 → crea un bono (treatment) y agenda las N sesiones
+  // que la recepcionista elige A MANO con el mismo motor que Paquetes. Nada
+  // automático (reclamo ISADI: los pacientes faltan, se decide turno por turno).
+  const [sessionCount, setSessionCount] = useState<number>(1)
+  const [multiSlots, setMultiSlots] = useState<SelectedSlot[]>([])
+  const [isSubmittingPackage, setIsSubmittingPackage] = useState(false)
+  // Si el bono se creó pero el agendado falló por conflicto, reusar ese bono en el
+  // reintento en vez de crear uno nuevo (evita bonos huérfanos duplicados). Se
+  // resetea al cambiar cualquier dato del bono (paciente/servicio/profesional/cantidad).
+  const [createdTreatmentId, setCreatedTreatmentId] = useState<string | null>(null)
+  const isPackageMode = sessionCount > 1
 
   // Profesionales del servicio elegido
   const [professionals, setProfessionals] = useState<ProfessionalOption[]>([])
@@ -197,6 +215,7 @@ export function NewTurnoModal({
       setProfessionals([])
       setProfessionalsError(null)
       setAnySlotKey('')
+      setCreatedTreatmentId(null)
 
       if (!selectedServiceId) return
 
@@ -245,8 +264,8 @@ export function NewTurnoModal({
     } else if (professionals.length >= 2) {
       // P0.1 — varios profesionales: por defecto "Cualquier profesional
       // disponible" para que la recepcionista pida el primer hueco libre con
-      // cualquiera sin tener que elegir de antemano.
-      appointmentForm.setValue('professional_id', ANY_PROFESSIONAL)
+      // cualquiera. En modo serie (bono) el profesional debe ser concreto → ''.
+      appointmentForm.setValue('professional_id', isPackageMode ? '' : ANY_PROFESSIONAL)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [professionals])
@@ -305,6 +324,10 @@ export function NewTurnoModal({
     setIsLoadingProfessionals(false)
     setAnySlotKey('')
     setLastSearchedQuery('')
+    setSessionCount(1)
+    setMultiSlots([])
+    setIsSubmittingPackage(false)
+    setCreatedTreatmentId(null)
     searchForm.reset()
     createPatientForm.reset()
     appointmentForm.reset({
@@ -327,6 +350,7 @@ export function NewTurnoModal({
     setShowCreatePatient(false)
     setCreatePatientError(null)
     setLastSearchedQuery('')
+    setCreatedTreatmentId(null)
     appointmentForm.setValue('patient_id', '')
     searchForm.reset({ query: '' })
     createPatientForm.reset()
@@ -529,6 +553,113 @@ export function NewTurnoModal({
     }
   }
 
+  // Cambio de cantidad de sesiones (1 / 5 / 10). Al entrar/salir del modo serie
+  // se descartan los huecos elegidos y el bono a medio crear; si el profesional
+  // estaba en "cualquiera", se fuerza a elegir uno concreto (un bono = un profesional).
+  const handleSessionCountChange = (n: number) => {
+    setSessionCount(n)
+    setMultiSlots([])
+    setSubmitError(null)
+    setSlotConflictError(null)
+    setCreatedTreatmentId(null)
+    if (n > 1 && appointmentForm.getValues('professional_id') === ANY_PROFESSIONAL) {
+      appointmentForm.setValue('professional_id', '')
+    }
+  }
+
+  // Reservar una SERIE (bono x5/x10): crea el treatment y agenda las N sesiones
+  // elegidas a mano, reusando el endpoint de lote de Paquetes. El bono se crea una
+  // sola vez (ref) para que un reintento tras conflicto no duplique bonos.
+  const handleSubmitPackage = async () => {
+    setSubmitError(null)
+    setSlotConflictError(null)
+
+    if (!patient) return
+    const values = appointmentForm.getValues()
+    const serviceId = values.service_id
+    const professionalId = values.professional_id
+
+    if (!serviceId) {
+      setSubmitError('Elegí un servicio')
+      return
+    }
+    if (!professionalId || professionalId === ANY_PROFESSIONAL) {
+      setSubmitError('Elegí un profesional para la serie de sesiones')
+      return
+    }
+    if (multiSlots.length !== sessionCount) {
+      setSubmitError(`Elegí las ${sessionCount} sesiones (llevás ${multiSlots.length})`)
+      return
+    }
+
+    setIsSubmittingPackage(true)
+    try {
+      // 1. Crear el bono (una sola vez; si ya existe de un intento previo, reusar).
+      let treatmentId = createdTreatmentId
+      if (!treatmentId) {
+        const tRes = await fetch('/api/treatments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            patient_id: patient.patient_id,
+            service_id: serviceId,
+            professional_id: professionalId,
+            total_sessions: sessionCount,
+          }),
+        })
+        if (!tRes.ok) {
+          const body = await tRes.json().catch(() => ({}))
+          setSubmitError((body as { error?: string }).error ?? 'No se pudo crear el paquete')
+          return
+        }
+        const tBody = (await tRes.json()) as { treatment_id?: string }
+        if (!tBody.treatment_id) {
+          setSubmitError('No se pudo crear el paquete')
+          return
+        }
+        treatmentId = tBody.treatment_id
+        setCreatedTreatmentId(treatmentId)
+      }
+
+      // 2. Agendar las N sesiones elegidas (mismo endpoint de lote que Paquetes).
+      const sRes = await fetch(`/api/treatments/${encodeURIComponent(treatmentId)}/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slots: multiSlots.map((s) => ({ start_at: s.start_at, end_at: s.end_at })),
+        }),
+      })
+
+      if (sRes.status === 409) {
+        // Alguno/todos los horarios se ocuparon. El bono queda creado (se reusa en
+        // el reintento); refrescar disponibilidad y que la recepcionista reelija.
+        queryClient.invalidateQueries({ queryKey: ['availability'], exact: false })
+        queryClient.invalidateQueries({ queryKey: ['agenda'], exact: false })
+        setSlotConflictError('Algunos horarios ya no están disponibles. Revisá y elegí de nuevo.')
+        setMultiSlots([])
+        return
+      }
+
+      if (!sRes.ok) {
+        const body = await sRes.json().catch(() => ({}))
+        setSubmitError((body as { error?: string }).error ?? 'No se pudieron agendar las sesiones')
+        return
+      }
+
+      // Éxito: invalidar agenda / disponibilidad / paquetes / ficha del paciente.
+      queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
+      queryClient.invalidateQueries({ queryKey: ['agenda'], exact: false })
+      queryClient.invalidateQueries({ queryKey: ['availability'], exact: false })
+      queryClient.invalidateQueries({ queryKey: ['treatments'], exact: false })
+      queryClient.invalidateQueries({ queryKey: ['patients', 'one', patient.patient_id] })
+      handleClose()
+    } catch {
+      setSubmitError('Error de red. Verificá tu conexión e intentá de nuevo.')
+    } finally {
+      setIsSubmittingPackage(false)
+    }
+  }
+
   // P0.1 — selección de hueco en modo "cualquier profesional". El <select> de
   // horario lleva la clave compuesta; sincronizamos appointment_time_hhmm para que
   // la validación del form pase (el profesional real se resuelve al guardar).
@@ -564,7 +695,12 @@ export function NewTurnoModal({
           aria-modal="true"
           aria-labelledby="new-turno-title"
         >
-          <div className="bg-[var(--color-bg)] rounded-[12px] shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+          <div
+            className={[
+              'bg-[var(--color-bg)] rounded-[12px] shadow-xl w-full max-h-[90vh] overflow-y-auto',
+              isPackageMode ? 'max-w-4xl' : 'max-w-3xl',
+            ].join(' ')}
+          >
             {/* Header */}
             <div className="px-6 pt-6 pb-4 border-b border-[var(--color-border)]">
               <Dialog.Title
@@ -574,7 +710,9 @@ export function NewTurnoModal({
                 Dar un turno
               </Dialog.Title>
               <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-                Completá los datos del paciente y del turno, y guardá.
+                {isPackageMode
+                  ? `Serie de ${sessionCount} sesiones: elegí cada horario a mano.`
+                  : 'Completá los datos del paciente y del turno, y guardá.'}
               </p>
             </div>
 
@@ -831,6 +969,39 @@ export function NewTurnoModal({
                     {/* patient_id hidden */}
                     <input type="hidden" {...appointmentForm.register('patient_id')} />
 
+                    {/* Cantidad de sesiones: 1 turno suelto o serie/bono (x5/x10) */}
+                    <div>
+                      <span className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
+                        Sesiones
+                      </span>
+                      <div className="flex gap-2" role="group" aria-label="Cantidad de sesiones">
+                        {SESSION_OPTIONS.map((n) => {
+                          const active = sessionCount === n
+                          return (
+                            <button
+                              key={n}
+                              type="button"
+                              aria-pressed={active}
+                              onClick={() => handleSessionCountChange(n)}
+                              className={[
+                                'flex-1 px-3 py-2 rounded-[8px] border text-sm font-medium min-h-[44px] transition-colors',
+                                active
+                                  ? 'bg-[var(--color-interactive)] text-white border-[var(--color-interactive)]'
+                                  : 'bg-[var(--color-bg)] text-[var(--color-text-primary)] border-[var(--color-border)] hover:bg-[var(--color-surface)]',
+                              ].join(' ')}
+                            >
+                              {n === 1 ? '1 turno' : `${n} sesiones`}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {isPackageMode && (
+                        <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                          Se crea un paquete de {sessionCount} y elegís cada horario a mano.
+                        </p>
+                      )}
+                    </div>
+
                     {/* Servicio */}
                     <div>
                       <label
@@ -880,6 +1051,7 @@ export function NewTurnoModal({
                           // al cambiar de profesional (incl. entrar/salir del modo).
                           appointmentForm.setValue('professional_id', e.target.value, { shouldDirty: true })
                           setAnySlotKey('')
+                          setCreatedTreatmentId(null)
                         }}
                         disabled={!selectedServiceId || isLoadingProfessionals || professionals.length === 0}
                         className={inputClass(!!appointmentForm.formState.errors.professional_id)}
@@ -897,8 +1069,9 @@ export function NewTurnoModal({
                                 ? 'Sin profesionales para este servicio'
                                 : 'Seleccioná un profesional'}
                         </option>
-                        {/* P0.1 — con 2+ profesionales, ofrecer "cualquiera" */}
-                        {professionals.length >= 2 && (
+                        {/* P0.1 — con 2+ profesionales, ofrecer "cualquiera". En modo
+                            serie NO: un bono va con un profesional concreto. */}
+                        {professionals.length >= 2 && !isPackageMode && (
                           <option value={ANY_PROFESSIONAL}>Cualquier profesional disponible</option>
                         )}
                         {professionals.map((prof) => (
@@ -919,6 +1092,10 @@ export function NewTurnoModal({
                       )}
                     </div>
 
+                    {/* Turno único (1): Fecha + Horario. En modo serie se usa el
+                        MultiSessionScheduler (más abajo). */}
+                    {!isPackageMode && (
+                      <>
                     {/* Fecha */}
                     <div>
                       <label
@@ -1064,6 +1241,42 @@ export function NewTurnoModal({
                         </p>
                       )}
                     </div>
+                      </>
+                    )}
+
+                    {/* Serie de sesiones (bono x5/x10): elegir N huecos a mano */}
+                    {isPackageMode && (
+                      <div>
+                        <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
+                          Horarios de las {sessionCount} sesiones
+                        </label>
+                        {!selectedServiceId ||
+                        !selectedProfessionalId ||
+                        selectedProfessionalId === ANY_PROFESSIONAL ? (
+                          <p className="text-sm text-[var(--color-text-secondary)]">
+                            Elegí servicio y profesional para ver la disponibilidad.
+                          </p>
+                        ) : (
+                          <MultiSessionScheduler
+                            serviceId={selectedServiceId}
+                            professionalId={selectedProfessionalId}
+                            total={sessionCount}
+                            selected={multiSlots}
+                            onChange={(slots) => {
+                              setSubmitError(null)
+                              setSlotConflictError(null)
+                              setMultiSlots(slots)
+                            }}
+                            minDate={today}
+                          />
+                        )}
+                        {slotConflictError && (
+                          <p role="alert" className="mt-2 text-xs text-red-600">
+                            {slotConflictError}
+                          </p>
+                        )}
+                      </div>
+                    )}
 
                     {/* Error de red/servidor */}
                     {submitError && (
@@ -1080,7 +1293,7 @@ export function NewTurnoModal({
             <div className="px-6 pb-6 pt-2 flex items-center justify-end gap-3 border-t border-[var(--color-border)]">
               {!patient && (
                 <span className="mr-auto text-xs text-[var(--color-text-secondary)]">
-                  Identificá al paciente para guardar el turno.
+                  Identificá al paciente para {isPackageMode ? 'reservar las sesiones' : 'guardar el turno'}.
                 </span>
               )}
               <Dialog.Close
@@ -1092,19 +1305,37 @@ export function NewTurnoModal({
               >
                 Cancelar
               </Dialog.Close>
-              <button
-                type="submit"
-                form="appointment-form"
-                disabled={!patient || appointmentForm.formState.isSubmitting}
-                className={[
-                  'px-4 py-2 rounded-[8px] text-sm font-medium min-h-[44px]',
-                  'bg-[var(--color-interactive)] text-white',
-                  'hover:opacity-90 transition-opacity',
-                  !patient || appointmentForm.formState.isSubmitting ? 'opacity-50 cursor-not-allowed' : '',
-                ].join(' ')}
-              >
-                {appointmentForm.formState.isSubmitting ? 'Guardando...' : 'Guardar turno'}
-              </button>
+              {isPackageMode ? (
+                <button
+                  type="button"
+                  onClick={handleSubmitPackage}
+                  disabled={!patient || multiSlots.length !== sessionCount || isSubmittingPackage}
+                  className={[
+                    'px-4 py-2 rounded-[8px] text-sm font-medium min-h-[44px]',
+                    'bg-[var(--color-interactive)] text-white',
+                    'hover:opacity-90 transition-opacity',
+                    !patient || multiSlots.length !== sessionCount || isSubmittingPackage
+                      ? 'opacity-50 cursor-not-allowed'
+                      : '',
+                  ].join(' ')}
+                >
+                  {isSubmittingPackage ? 'Reservando...' : `Reservar ${sessionCount} sesiones`}
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  form="appointment-form"
+                  disabled={!patient || appointmentForm.formState.isSubmitting}
+                  className={[
+                    'px-4 py-2 rounded-[8px] text-sm font-medium min-h-[44px]',
+                    'bg-[var(--color-interactive)] text-white',
+                    'hover:opacity-90 transition-opacity',
+                    !patient || appointmentForm.formState.isSubmitting ? 'opacity-50 cursor-not-allowed' : '',
+                  ].join(' ')}
+                >
+                  {appointmentForm.formState.isSubmitting ? 'Guardando...' : 'Guardar turno'}
+                </button>
+              )}
             </div>
           </div>
         </Dialog.Popup>
