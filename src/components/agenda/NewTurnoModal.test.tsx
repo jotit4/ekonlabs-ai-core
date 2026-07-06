@@ -127,7 +127,7 @@ vi.mock('@refinedev/core', () => ({
 
 const mockOnClose = vi.fn()
 
-// Helpers para respuestas fetch de búsqueda
+// Helpers para respuestas fetch
 function makeSearchResponse(patients: object[]) {
   return {
     ok: true,
@@ -156,31 +156,76 @@ function makeAppointmentResponse(ok = true, status = 201) {
   }
 }
 
+// Ruteo de fetch por URL. Respuestas idempotentes: como la autobúsqueda por DNI
+// puede disparar más de un fetch de búsqueda (dígitos parciales) además del Enter
+// explícito, devolver siempre lo mismo hace los tests deterministas.
+function setupFetch(
+  opts: {
+    search?: object[]
+    searchError?: { status: number; error: string }
+    professionals?: { professional_id: string; name: string }[]
+    appointment?: { ok: boolean; status: number }
+    createPatient?: { ok: boolean; status: number; patient_id?: string; error?: string }
+  } = {},
+) {
+  const professionals = opts.professionals ?? [{ professional_id: 'prof-1', name: 'Patricia Pérez' }]
+  const appointment = opts.appointment ?? { ok: true, status: 201 }
+  mockFetch.mockImplementation((url: string, init?: { method?: string }) => {
+    if (url.includes('/api/patients/search')) {
+      if (opts.searchError) {
+        return Promise.resolve({
+          ok: false,
+          status: opts.searchError.status,
+          json: async () => ({ error: opts.searchError!.error }),
+        })
+      }
+      return Promise.resolve(makeSearchResponse(opts.search ?? []))
+    }
+    if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse(professionals))
+    if (url === '/api/appointments' && init?.method === 'POST') {
+      return Promise.resolve(makeAppointmentResponse(appointment.ok, appointment.status))
+    }
+    if (url === '/api/patients' && init?.method === 'POST') {
+      const cp = opts.createPatient ?? { ok: true, status: 201, patient_id: 'pat-new' }
+      return Promise.resolve({
+        ok: cp.ok,
+        status: cp.status,
+        json: async () => (cp.ok ? { patient: { patient_id: cp.patient_id ?? 'pat-new' } } : { error: cp.error ?? 'Error' }),
+      })
+    }
+    return Promise.resolve(makeSearchResponse([]))
+  })
+}
+
+type User = ReturnType<typeof userEvent.setup>
+
+// Dispara la búsqueda tipeando en el campo DNI + Enter (fallback determinista de
+// la autobúsqueda). Sirve tanto para DNI como para búsqueda por nombre.
+async function search(user: User, query: string) {
+  const input = screen.getByLabelText('DNI del paciente')
+  await user.clear(input)
+  await user.type(input, `${query}{Enter}`)
+}
+
 describe('NewTurnoModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     // Default: búsqueda sin resultados
-    mockFetch.mockResolvedValue(makeSearchResponse([]))
+    setupFetch({ search: [] })
     // Default: disponibilidad con 09:00–11:00 libres cuando se eligió servicio+profesional+fecha
     mockAvailability()
   })
 
   describe('renderizado', () => {
-    it('renderiza el campo de búsqueda y botón Buscar cuando open=true', () => {
+    it('renderiza el campo DNI cuando open=true', () => {
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
-      expect(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /buscar/i })).toBeInTheDocument()
-    })
-
-    it('el input tiene placeholder "Buscá por nombre, DNI o teléfono…"', () => {
-      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
-      const input = screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…')
-      expect(input).toBeInTheDocument()
+      expect(screen.getByLabelText('DNI del paciente')).toBeInTheDocument()
+      expect(screen.getByPlaceholderText('Ej: 30123456')).toBeInTheDocument()
     })
 
     it('no renderiza nada cuando open=false', () => {
       render(<NewTurnoModal open={false} onClose={mockOnClose} date="2026-05-08" />)
-      expect(screen.queryByPlaceholderText('Buscá por nombre, DNI o teléfono…')).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('DNI del paciente')).not.toBeInTheDocument()
     })
 
     it('tiene el título "Dar un turno"', () => {
@@ -192,79 +237,70 @@ describe('NewTurnoModal', () => {
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
       expect(screen.getByRole('button', { name: /cancelar/i })).toBeInTheDocument()
     })
+
+    it('muestra el turno (servicio) de una y "Guardar turno" deshabilitado sin paciente', () => {
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
+      // El gate se eliminó: la columna del turno es visible desde el inicio.
+      expect(screen.getByLabelText('Servicio')).toBeInTheDocument()
+      expect(screen.getByLabelText('Fecha')).toBeInTheDocument()
+      expect(screen.getByLabelText('Horario')).toBeInTheDocument()
+      // Pero no se puede guardar hasta identificar al paciente.
+      expect(screen.getByRole('button', { name: /guardar turno/i })).toBeDisabled()
+    })
   })
 
-  describe('búsqueda de paciente', () => {
-    it('llama al endpoint /api/patients/search con el parámetro q', async () => {
-      mockFetch.mockResolvedValueOnce(makeSearchResponse([
-        {
-          patient_id: 'pat-uuid-1',
-          full_name: 'Juan García',
-          phone_number: '+5491100000000',
-          obra_social: 'OSDE',
-          deletion_requested_at: null,
-        },
-      ]))
+  describe('búsqueda e identificación del paciente', () => {
+    const singlePatient = {
+      patient_id: 'pat-uuid-1',
+      full_name: 'María López',
+      phone_number: '+5491111111111',
+      obra_social: 'OSDE',
+      deletion_requested_at: null,
+    }
+
+    it('autobusca por DNI (7-8 dígitos) sin apretar ningún botón', async () => {
+      setupFetch({ search: [singlePatient] })
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), 'Juan')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
+      // Sólo tipear el DNI, sin Enter ni click: debe buscar solo.
+      await user.type(screen.getByLabelText('DNI del paciente'), '30123456')
 
       await waitFor(() => {
         expect(mockFetch).toHaveBeenCalledWith(
-          expect.stringContaining('/api/patients/search?q='),
+          expect.stringContaining('/api/patients/search?q=30123456'),
         )
+        expect(screen.getByText(/María López/)).toBeInTheDocument()
       })
     })
 
-    it('auto-selecciona y muestra datos del paciente cuando hay exactamente 1 resultado', async () => {
-      mockFetch.mockResolvedValueOnce(makeSearchResponse([
-        {
-          patient_id: 'pat-uuid-1',
-          full_name: 'Juan García',
-          phone_number: '+5491100000000',
-          obra_social: 'OSDE',
-          deletion_requested_at: null,
-        },
-      ]))
+    it('auto-selecciona y muestra los datos del paciente cuando hay 1 resultado', async () => {
+      setupFetch({ search: [singlePatient] })
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '12345678')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
+      await search(user, '12345678')
 
       await waitFor(() => {
-        expect(screen.getByText('Juan García')).toBeInTheDocument()
+        expect(screen.getByText(/María López/)).toBeInTheDocument()
       })
       expect(screen.getByText(/OSDE/)).toBeInTheDocument()
     })
 
-    it('muestra lista de opciones cuando hay múltiples resultados', async () => {
-      mockFetch.mockResolvedValueOnce(makeSearchResponse([
-        {
-          patient_id: 'pat-1',
-          full_name: 'Juan García',
-          phone_number: '+5491100000000',
-          obra_social: null,
-          deletion_requested_at: null,
-        },
-        {
-          patient_id: 'pat-2',
-          full_name: 'Juan Pérez',
-          phone_number: '+5491199999999',
-          obra_social: 'OSDE',
-          deletion_requested_at: null,
-        },
-      ]))
+    it('muestra lista de opciones cuando hay múltiples resultados (búsqueda por nombre)', async () => {
+      setupFetch({
+        search: [
+          { patient_id: 'pat-1', full_name: 'Juan García', phone_number: '+5491100000000', obra_social: null, deletion_requested_at: null },
+          { patient_id: 'pat-2', full_name: 'Juan Pérez', phone_number: '+5491199999999', obra_social: 'OSDE', deletion_requested_at: null },
+        ],
+      })
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), 'Juan')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
+      await search(user, 'Juan')
 
       await waitFor(() => {
         expect(screen.getByRole('list', { name: 'Resultados de búsqueda' })).toBeInTheDocument()
@@ -274,97 +310,116 @@ describe('NewTurnoModal', () => {
     })
 
     it('selecciona paciente de la lista y muestra la tarjeta', async () => {
-      mockFetch.mockResolvedValueOnce(makeSearchResponse([
-        {
-          patient_id: 'pat-1',
-          full_name: 'Juan García',
-          phone_number: '+5491100000000',
-          obra_social: null,
-          deletion_requested_at: null,
-        },
-        {
-          patient_id: 'pat-2',
-          full_name: 'Juan Pérez',
-          phone_number: '+5491199999999',
-          obra_social: null,
-          deletion_requested_at: null,
-        },
-      ]))
+      setupFetch({
+        search: [
+          { patient_id: 'pat-1', full_name: 'Juan García', phone_number: '+5491100000000', obra_social: null, deletion_requested_at: null },
+          { patient_id: 'pat-2', full_name: 'Juan Pérez', phone_number: '+5491199999999', obra_social: null, deletion_requested_at: null },
+        ],
+      })
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), 'Juan')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
+      await search(user, 'Juan')
 
       await waitFor(() => {
         expect(screen.getByRole('list', { name: 'Resultados de búsqueda' })).toBeInTheDocument()
       })
 
-      // Clic en el primer resultado
       await user.click(screen.getAllByRole('listitem')[0])
 
       await waitFor(() => {
-        // La lista desaparece, aparece la tarjeta del paciente seleccionado
+        // La lista desaparece y aparece la tarjeta del paciente (con el ✓).
         expect(screen.queryByRole('list', { name: 'Resultados de búsqueda' })).not.toBeInTheDocument()
-        expect(screen.getByLabelText('Datos del turno')).toBeInTheDocument()
+        expect(screen.getByText(/✓ Juan García/)).toBeInTheDocument()
       })
+      // Con paciente elegido, "Guardar turno" se habilita.
+      expect(screen.getByRole('button', { name: /guardar turno/i })).toBeEnabled()
     })
 
-    it('muestra "Sin resultados" y formulario de creación inline cuando no hay coincidencia', async () => {
-      mockFetch.mockResolvedValueOnce(makeSearchResponse([]))
+    it('sin resultados por DNI: muestra el alta inline con el DNI precargado', async () => {
+      setupFetch({ search: [] })
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), 'NoExiste')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
+      await search(user, '30123456')
 
       await waitFor(() => {
-        expect(screen.getByText(/Sin resultados para 'NoExiste'/)).toBeInTheDocument()
+        expect(screen.getByText(/No hay ningún paciente con DNI 30123456/i)).toBeInTheDocument()
         expect(screen.getByText(/Nuevo paciente/i)).toBeInTheDocument()
         expect(screen.getByLabelText(/Nombre completo/i)).toBeInTheDocument()
         expect(screen.getByLabelText(/Teléfono/i)).toBeInTheDocument()
       })
+      // El DNI ya viene cargado para no re-tipear.
+      expect((screen.getByLabelText(/DNI \(opcional\)/i) as HTMLInputElement).value).toBe('30123456')
+    })
+
+    it('crea el paciente inline y lo deja seleccionado', async () => {
+      setupFetch({ search: [], createPatient: { ok: true, status: 201, patient_id: 'pat-new' } })
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
+
+      await search(user, '30123456')
+      await waitFor(() => screen.getByText(/Nuevo paciente/i))
+
+      await user.type(screen.getByLabelText(/Nombre completo/i), 'Pedro Nuevo')
+      await user.type(screen.getByLabelText(/Teléfono/i), '2615551234')
+      await user.click(screen.getByRole('button', { name: /crear paciente/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText(/✓ Pedro Nuevo/)).toBeInTheDocument()
+      })
+      expect(screen.getByRole('button', { name: /guardar turno/i })).toBeEnabled()
     })
 
     it('muestra error de validación cuando la búsqueda es menor a 2 caracteres', async () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), 'a')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
+      await search(user, 'a')
 
       await waitFor(() => {
         expect(screen.getByText(/Ingresá al menos 2 caracteres para buscar/)).toBeInTheDocument()
       })
     })
 
-    it('muestra error si el paciente único tiene eliminación programada', async () => {
-      mockFetch.mockResolvedValueOnce(makeSearchResponse([
-        {
-          patient_id: 'pat-uuid-2',
-          full_name: 'Carlos Gómez',
-          phone_number: '+5491122334455',
-          obra_social: null,
-          deletion_requested_at: '2026-05-11T00:00:00Z',
-        },
-      ]))
+    it('muestra error si el paciente único tiene eliminación programada y no habilita guardar', async () => {
+      setupFetch({
+        search: [
+          { patient_id: 'pat-uuid-2', full_name: 'Carlos Gómez', phone_number: '+5491122334455', obra_social: null, deletion_requested_at: '2026-05-11T00:00:00Z' },
+        ],
+      })
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '11223344')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
+      await search(user, '11223344')
 
       await waitFor(() => {
-        expect(
-          screen.getByText('Este paciente tiene una eliminación programada')
-        ).toBeInTheDocument()
+        expect(screen.getByText('Este paciente tiene una eliminación programada')).toBeInTheDocument()
       })
 
-      // No debe mostrarse el formulario de turno
-      expect(screen.queryByLabelText('Servicio')).not.toBeInTheDocument()
+      // No se seleccionó paciente → "Guardar turno" sigue deshabilitado.
+      expect(screen.getByRole('button', { name: /guardar turno/i })).toBeDisabled()
+    })
+
+    it('el botón "Cambiar" limpia el paciente seleccionado', async () => {
+      setupFetch({ search: [singlePatient] })
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
+
+      await search(user, '30123456')
+      await waitFor(() => screen.getByText(/María López/))
+
+      await user.click(screen.getByRole('button', { name: /cambiar/i }))
+
+      await waitFor(() => {
+        expect(screen.queryByText(/María López/)).not.toBeInTheDocument()
+      })
+      expect(screen.getByRole('button', { name: /guardar turno/i })).toBeDisabled()
     })
   })
 
@@ -377,14 +432,13 @@ describe('NewTurnoModal', () => {
       deletion_requested_at: null,
     }
 
-    it('muestra el selector de servicio y fecha tras encontrar paciente único', async () => {
-      mockFetch.mockResolvedValueOnce(makeSearchResponse([singlePatient]))
+    it('muestra los selectores de servicio, fecha y horario', async () => {
+      setupFetch({ search: [singlePatient] })
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
+      await search(user, '87654321')
 
       await waitFor(() => {
         expect(screen.getByLabelText('Servicio')).toBeInTheDocument()
@@ -393,36 +447,27 @@ describe('NewTurnoModal', () => {
       })
     })
 
-    it('muestra el botón "Guardar turno" tras encontrar paciente', async () => {
-      mockFetch.mockResolvedValueOnce(makeSearchResponse([singlePatient]))
+    it('habilita "Guardar turno" tras encontrar paciente', async () => {
+      setupFetch({ search: [singlePatient] })
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-08" />)
 
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
+      await search(user, '87654321')
 
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /guardar turno/i })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /guardar turno/i })).toBeEnabled()
       })
     })
 
     it('envía appointment_time con offset -03:00 (fix C-05)', async () => {
-      // Routear por URL para no depender del orden de los fetch
-      mockFetch.mockImplementation((url: string) => {
-        if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
-        if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse([{ professional_id: 'prof-1', name: 'Patricia Pérez' }]))
-        if (url === '/api/appointments') return Promise.resolve(makeAppointmentResponse())
-        return Promise.resolve(makeSearchResponse([]))
-      })
+      setupFetch({ search: [singlePatient], professionals: [{ professional_id: 'prof-1', name: 'Patricia Pérez' }] })
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
 
-      // Buscar paciente
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
-      await waitFor(() => screen.getByLabelText('Servicio'))
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
 
       // Seleccionar servicio → dispara carga de profesionales
       await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
@@ -432,8 +477,6 @@ describe('NewTurnoModal', () => {
       })
 
       await user.selectOptions(screen.getByLabelText('Horario'), '09:00')
-
-      // Submit
       await user.click(screen.getByRole('button', { name: /guardar turno/i }))
 
       await waitFor(() => {
@@ -442,40 +485,32 @@ describe('NewTurnoModal', () => {
           expect.objectContaining({
             method: 'POST',
             body: expect.stringContaining('-03:00'),
-          })
+          }),
         )
       })
     })
 
     it('carga el selector de profesionales filtrado por servicio y por defecto "cualquiera" (P0.1)', async () => {
-      mockFetch.mockImplementation((url: string) => {
-        if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
-        if (url.includes('/profesionales'))
-          return Promise.resolve(
-            makeProfessionalsResponse([
-              { professional_id: 'prof-1', name: 'Patricia Pérez' },
-              { professional_id: 'prof-2', name: 'Aldo Luque' },
-            ]),
-          )
-        return Promise.resolve(makeSearchResponse([]))
+      setupFetch({
+        search: [singlePatient],
+        professionals: [
+          { professional_id: 'prof-1', name: 'Patricia Pérez' },
+          { professional_id: 'prof-2', name: 'Aldo Luque' },
+        ],
       })
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
 
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
-      await waitFor(() => screen.getByLabelText('Servicio'))
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
 
       await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
 
-      // Llama al endpoint de profesionales del servicio elegido
       await waitFor(() => {
         expect(mockFetch).toHaveBeenCalledWith('/api/services/svc-1/profesionales')
       })
 
-      // Con dos profesionales aparece la opción "Cualquier profesional disponible"
-      // + ambos profesionales, y "cualquiera" queda preseleccionada por defecto.
       await waitFor(() => {
         expect(screen.getByRole('option', { name: 'Cualquier profesional disponible' })).toBeInTheDocument()
         expect(screen.getByRole('option', { name: 'Patricia Pérez' })).toBeInTheDocument()
@@ -487,24 +522,20 @@ describe('NewTurnoModal', () => {
     })
 
     it('P0.2 — oculta los servicios no agendables (booking_mode ≠ appointment)', async () => {
-      mockFetch.mockResolvedValueOnce(makeSearchResponse([singlePatient]))
+      setupFetch({ search: [singlePatient] })
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
 
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
-      await waitFor(() => screen.getByLabelText('Servicio'))
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
 
-      // Los servicios 'appointment' están; el 'cycle' (Aquagym) NO.
       expect(screen.getByRole('option', { name: /Kinesiología/ })).toBeInTheDocument()
       expect(screen.getByRole('option', { name: /Fisioterapia/ })).toBeInTheDocument()
       expect(screen.queryByRole('option', { name: /Aquagym/ })).not.toBeInTheDocument()
     })
 
     it('P0.1 — en modo "cualquiera" los horarios se etiquetan con el profesional y guardar fija ese profesional', async () => {
-      // Disponibilidad "todos los profesionales": el hook devuelve huecos de dos
-      // profesionales distintos con la misma etiqueta compuesta.
       vi.mocked(useAvailability).mockImplementation(({ enabled }) => {
         const shifts: AvailabilityShift[] = enabled
           ? [
@@ -521,39 +552,30 @@ describe('NewTurnoModal', () => {
           shiftsForDate: () => shifts,
         }
       })
-      mockFetch.mockImplementation((url: string, init?: { method?: string }) => {
-        if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
-        if (url.includes('/profesionales'))
-          return Promise.resolve(
-            makeProfessionalsResponse([
-              { professional_id: 'prof-1', name: 'Patricia Pérez' },
-              { professional_id: 'prof-2', name: 'Aldo Luque' },
-            ]),
-          )
-        if (url === '/api/appointments' && init?.method === 'POST')
-          return Promise.resolve(makeAppointmentResponse())
-        return Promise.resolve(makeSearchResponse([]))
+      setupFetch({
+        search: [singlePatient],
+        professionals: [
+          { professional_id: 'prof-1', name: 'Patricia Pérez' },
+          { professional_id: 'prof-2', name: 'Aldo Luque' },
+        ],
       })
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
 
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
-      await waitFor(() => screen.getByLabelText('Servicio'))
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
 
       await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
       await waitFor(() => {
         expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
       })
 
-      // Cada hueco está etiquetado con su profesional
       await waitFor(() => {
         expect(screen.getByRole('option', { name: '09:00 · Patricia Pérez' })).toBeInTheDocument()
         expect(screen.getByRole('option', { name: '10:00 · Aldo Luque' })).toBeInTheDocument()
       })
 
-      // Elegir el hueco de Aldo (prof-2) y guardar → el POST fija professional_id prof-2
       await user.selectOptions(screen.getByLabelText('Horario'), 'prof-2__10:00')
       await user.click(screen.getByRole('button', { name: /guardar turno/i }))
 
@@ -569,13 +591,12 @@ describe('NewTurnoModal', () => {
     })
 
     it('el input de fecha tiene atributo min (fix M-10)', async () => {
-      mockFetch.mockResolvedValueOnce(makeSearchResponse([singlePatient]))
+      setupFetch({ search: [singlePatient] })
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
 
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
+      await search(user, '87654321')
 
       await waitFor(() => {
         const dateInput = screen.getByLabelText('Fecha') as HTMLInputElement
@@ -594,21 +615,14 @@ describe('NewTurnoModal', () => {
     }
 
     it('no muestra horarios inventados hasta elegir servicio + profesional + fecha', async () => {
-      mockFetch.mockImplementation((url: string) => {
-        if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
-        return Promise.resolve(makeSearchResponse([]))
-      })
+      setupFetch({ search: [singlePatient] })
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
 
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
 
-      await waitFor(() => screen.getByLabelText('Horario'))
-
-      // Sin profesional elegido aún, el selector está deshabilitado y sin opciones
-      // de horario (solo el placeholder). NO aparecen las 08:00–19:00 hardcodeadas.
       const timeSelect = screen.getByLabelText('Horario') as HTMLSelectElement
       expect(timeSelect.disabled).toBe(true)
       expect(screen.queryByRole('option', { name: '08:00' })).not.toBeInTheDocument()
@@ -617,51 +631,38 @@ describe('NewTurnoModal', () => {
     })
 
     it('al elegir servicio+profesional+fecha muestra solo los huecos libres reales', async () => {
-      // Disponibilidad real: solo 09:00 y 15:00 libres (no el rango 08–19 fijo).
       mockAvailability(['09:00', '15:00'])
-      mockFetch.mockImplementation((url: string) => {
-        if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
-        if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse([{ professional_id: 'prof-1', name: 'Patricia Pérez' }]))
-        return Promise.resolve(makeSearchResponse([]))
-      })
+      setupFetch({ search: [singlePatient], professionals: [{ professional_id: 'prof-1', name: 'Patricia Pérez' }] })
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
 
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
-      await waitFor(() => screen.getByLabelText('Servicio'))
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
 
       await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
       await waitFor(() => {
         expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('prof-1')
       })
 
-      // Solo los huecos reales se ofrecen como opciones
       await waitFor(() => {
         expect(screen.getByRole('option', { name: '09:00' })).toBeInTheDocument()
         expect(screen.getByRole('option', { name: '15:00' })).toBeInTheDocument()
       })
-      // No aparecen horarios fuera de la disponibilidad real
       expect(screen.queryByRole('option', { name: '08:00' })).not.toBeInTheDocument()
       expect(screen.queryByRole('option', { name: '10:00' })).not.toBeInTheDocument()
       expect(screen.queryByRole('option', { name: '19:00' })).not.toBeInTheDocument()
     })
 
     it('muestra "sin horarios libres" cuando la disponibilidad real está vacía', async () => {
-      mockAvailability([]) // ningún hueco libre, aun con prerequisitos
-      mockFetch.mockImplementation((url: string) => {
-        if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
-        if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse([{ professional_id: 'prof-1', name: 'Patricia Pérez' }]))
-        return Promise.resolve(makeSearchResponse([]))
-      })
+      mockAvailability([])
+      setupFetch({ search: [singlePatient], professionals: [{ professional_id: 'prof-1', name: 'Patricia Pérez' }] })
 
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
 
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
-      await waitFor(() => screen.getByLabelText('Servicio'))
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
 
       await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
       await waitFor(() => {
@@ -669,9 +670,7 @@ describe('NewTurnoModal', () => {
       })
 
       await waitFor(() => {
-        expect(
-          screen.getByRole('option', { name: /Sin horarios libres para esta fecha/i }),
-        ).toBeInTheDocument()
+        expect(screen.getByRole('option', { name: /Sin horarios libres para esta fecha/i })).toBeInTheDocument()
       })
       expect((screen.getByLabelText('Horario') as HTMLSelectElement).disabled).toBe(true)
     })
@@ -687,12 +686,7 @@ describe('NewTurnoModal', () => {
     }
 
     it('al abrir con initialServiceId, carga los profesionales de ese servicio', async () => {
-      mockFetch.mockImplementation((url: string) => {
-        if (url.includes('/profesionales')) {
-          return Promise.resolve(makeProfessionalsResponse([{ professional_id: 'prof-1', name: 'Patricia Pérez' }]))
-        }
-        return Promise.resolve(makeSearchResponse([]))
-      })
+      setupFetch({ search: [], professionals: [{ professional_id: 'prof-1', name: 'Patricia Pérez' }] })
 
       render(
         <NewTurnoModal
@@ -711,14 +705,9 @@ describe('NewTurnoModal', () => {
       })
     })
 
-    it('con prefill: tras seleccionar paciente, service/date/time vienen precargados', async () => {
-      mockFetch.mockImplementation((url: string) => {
-        if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
-        if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse([{ professional_id: 'prof-1', name: 'Patricia Pérez' }]))
-        return Promise.resolve(makeSearchResponse([]))
-      })
+    it('con prefill: service/date/time vienen precargados', async () => {
+      setupFetch({ search: [singlePatient], professionals: [{ professional_id: 'prof-1', name: 'Patricia Pérez' }] })
 
-      const user = userEvent.setup()
       render(
         <NewTurnoModal
           open={true}
@@ -731,27 +720,22 @@ describe('NewTurnoModal', () => {
         />,
       )
 
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
-
-      await waitFor(() => screen.getByLabelText('Servicio'))
-
-      expect((screen.getByLabelText('Servicio') as HTMLSelectElement).value).toBe('svc-1')
-      expect((screen.getByLabelText('Fecha') as HTMLInputElement).value).toBe('2026-06-04')
-      expect((screen.getByLabelText('Horario') as HTMLSelectElement).value).toBe('09:00')
+      // El profesional del hueco se fija una vez cargada la lista; recién ahí la
+      // disponibilidad queda enabled y la <option> del horario prellenado existe.
       await waitFor(() => {
         expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('prof-1')
+      })
+      expect((screen.getByLabelText('Servicio') as HTMLSelectElement).value).toBe('svc-1')
+      expect((screen.getByLabelText('Fecha') as HTMLInputElement).value).toBe('2026-06-04')
+      await waitFor(() => {
+        expect((screen.getByLabelText('Horario') as HTMLSelectElement).value).toBe('09:00')
       })
     })
 
     it('sin prefill: el formulario arranca vacío (no regresión)', async () => {
-      mockFetch.mockResolvedValueOnce(makeSearchResponse([singlePatient]))
+      setupFetch({ search: [singlePatient] })
 
-      const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-06-04" />)
-
-      await user.type(screen.getByPlaceholderText('Buscá por nombre, DNI o teléfono…'), '87654321')
-      await user.click(screen.getByRole('button', { name: /buscar/i }))
 
       await waitFor(() => screen.getByLabelText('Servicio'))
       expect((screen.getByLabelText('Servicio') as HTMLSelectElement).value).toBe('')

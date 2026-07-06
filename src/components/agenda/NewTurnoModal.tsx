@@ -36,6 +36,10 @@ interface ProfessionalOption {
   name: string
 }
 
+// Formato de DNI argentino aceptado: 7 u 8 dígitos. Se usa tanto para disparar
+// la autobúsqueda como para precargar el alta inline.
+const DNI_REGEX = /^\d{7,8}$/
+
 // P0.1 — valor centinela del selector de profesional para "Cualquier profesional
 // disponible". No es un UUID: al guardar se resuelve al profesional del hueco
 // elegido. Un UUID nunca contiene '_', así que es inconfundible.
@@ -247,7 +251,7 @@ export function NewTurnoModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [professionals])
 
-  // Focus search input when modal opens
+  // Focus DNI input when modal opens
   useEffect(() => {
     if (!open) return
     const timer = setTimeout(() => {
@@ -313,8 +317,24 @@ export function NewTurnoModal({
     onClose()
   }
 
-  // Lógica de búsqueda compartida por el disparo manual (submit/Enter) y el
-  // typeahead con debounce. `query` ya viene validada (mín. 2 chars).
+  // Limpiar el paciente seleccionado para identificar a otro (botón "Cambiar").
+  // Deja intactos los datos del turno ya elegidos (servicio/fecha/hora) para no
+  // obligar a recargarlos: solo se corrige a quién se le da el turno.
+  const handleResetPatient = () => {
+    setPatient(null)
+    setPatientResults(null)
+    setPatientSearchError(null)
+    setShowCreatePatient(false)
+    setCreatePatientError(null)
+    setLastSearchedQuery('')
+    appointmentForm.setValue('patient_id', '')
+    searchForm.reset({ query: '' })
+    createPatientForm.reset()
+    setTimeout(() => searchInputRef.current?.focus(), 50)
+  }
+
+  // Lógica de búsqueda compartida por el disparo manual (Enter) y la autobúsqueda
+  // por DNI. `query` ya viene validada (mín. 2 chars; la autobúsqueda exige DNI).
   const performSearch = async (rawQuery: string) => {
     const query = rawQuery.trim()
     setLastSearchedQuery(query)
@@ -339,17 +359,26 @@ export function NewTurnoModal({
       const results = body.patients ?? []
 
       if (results.length === 0) {
-        setPatientSearchError(`Sin resultados para '${query}'.`)
+        const isDni = DNI_REGEX.test(query)
+        setPatientSearchError(
+          isDni
+            ? `No hay ningún paciente con DNI ${query}. Cargá sus datos para darle el turno.`
+            : `Sin resultados para '${query}'. Cargá los datos del paciente.`,
+        )
         setShowCreatePatient(true)
-        // Pre-fill phone if query looks like a phone number
-        if (/^\+?\d[\d\s\-]{6,}$/.test(query)) {
+        // Precargar el campo correspondiente según el formato de la query, para
+        // que la recepcionista no re-tipee lo que ya escribió.
+        if (isDni) {
+          createPatientForm.setValue('dni', query)
+        } else if (/^\+?\d[\d\s\-]{6,}$/.test(query)) {
           createPatientForm.setValue('phone_number', query)
         }
         return
       }
 
       if (results.length === 1) {
-        // Auto-seleccionar si hay exactamente 1 resultado
+        // Auto-seleccionar si hay exactamente 1 resultado (el DNI es único por
+        // tenant, así que la búsqueda por DNI siempre cae acá cuando existe).
         const found = results[0]
         if (found.deletion_requested_at) {
           setPatientSearchError('Este paciente tiene una eliminación programada')
@@ -360,7 +389,8 @@ export function NewTurnoModal({
         return
       }
 
-      // Múltiples resultados — mostrar lista para que elija
+      // Múltiples resultados — mostrar lista para que elija (fallback: sólo
+      // ocurre si se busca por nombre/teléfono vía Enter, no con DNI exacto).
       setPatientResults(results)
     } catch {
       setPatientSearchError('Error de red al buscar el paciente.')
@@ -369,18 +399,19 @@ export function NewTurnoModal({
     }
   }
 
-  // Disparo manual (botón "Buscar" / Enter) — fallback explícito del typeahead.
+  // Disparo manual (Enter) — fallback explícito de la autobúsqueda.
   const handleSearchPatient = async (values: PatientSearchValues) => {
     await performSearch(values.query)
   }
 
-  // P0.1 — typeahead: busca automáticamente con debounce (~300 ms) a partir de
-  // 2 caracteres, sin obligar a clickear "Buscar". El ref evita re-buscar lo ya
-  // buscado (p. ej. tras un disparo manual con la misma query).
+  // Autobúsqueda por DNI: en cuanto el campo contiene un DNI válido (7-8 dígitos)
+  // busca solo con un pequeño debounce, sin obligar a apretar ningún botón. El
+  // ref evita re-buscar lo ya buscado (p. ej. tras un disparo manual).
   const watchedQuery = useWatch({ control: searchForm.control, name: 'query' })
   useEffect(() => {
     const q = (watchedQuery ?? '').trim()
-    if (q.length < 2) return
+    // Solo autodispara con DNI completo; mientras se tipea no busca.
+    if (!DNI_REGEX.test(q)) return
     if (q === lastSearchedQuery) return
     const timer = setTimeout(() => {
       void performSearch(q)
@@ -516,6 +547,9 @@ export function NewTurnoModal({
       hasError ? 'border-red-400' : 'border-[var(--color-border)]',
     ].join(' ')
 
+  const sectionLabel =
+    'text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)]'
+
   const today = new Date().toLocaleDateString('en-CA')
 
   return (
@@ -530,7 +564,7 @@ export function NewTurnoModal({
           aria-modal="true"
           aria-labelledby="new-turno-title"
         >
-          <div className="bg-[var(--color-bg)] rounded-[12px] shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+          <div className="bg-[var(--color-bg)] rounded-[12px] shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
             {/* Header */}
             <div className="px-6 pt-6 pb-4 border-b border-[var(--color-border)]">
               <Dialog.Title
@@ -539,464 +573,516 @@ export function NewTurnoModal({
               >
                 Dar un turno
               </Dialog.Title>
+              <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
+                Completá los datos del paciente y del turno, y guardá.
+              </p>
             </div>
 
-            {/* Body */}
-            <div className="px-6 py-4 space-y-5">
-              {/* Paso 1: Búsqueda de paciente */}
-              <form
-                onSubmit={searchForm.handleSubmit(handleSearchPatient)}
-                noValidate
-                aria-label="Buscar paciente"
-              >
-                <label
-                  htmlFor="patient-search-input"
-                  className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
-                >
-                  Buscar paciente
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    id="patient-search-input"
-                    type="text"
-                    placeholder="Buscá por nombre, DNI o teléfono…"
-                    {...searchForm.register('query')}
-                    ref={(el) => {
-                      searchForm.register('query').ref(el)
-                      searchInputRef.current = el
-                    }}
-                    className={inputClass(!!searchForm.formState.errors.query)}
-                    aria-invalid={!!searchForm.formState.errors.query}
-                    aria-describedby={
-                      searchForm.formState.errors.query
-                        ? 'patient-search-validation-error'
-                        : patientSearchError
-                          ? 'patient-search-error'
-                          : undefined
-                    }
-                  />
-                  <button
-                    type="submit"
-                    disabled={isSearching}
-                    className={[
-                      'shrink-0 px-4 rounded-[8px] text-sm font-medium min-h-[44px]',
-                      'bg-[var(--color-interactive)] text-white',
-                      'hover:opacity-90 transition-opacity',
-                      isSearching ? 'opacity-50 cursor-not-allowed' : '',
-                    ].join(' ')}
-                  >
-                    {isSearching ? 'Buscando...' : 'Buscar'}
-                  </button>
-                </div>
-                {searchForm.formState.errors.query && (
-                  <p id="patient-search-validation-error" role="alert" className="mt-1 text-xs text-red-600">
-                    {searchForm.formState.errors.query.message}
-                  </p>
-                )}
-                {patientSearchError && !searchForm.formState.errors.query && (
-                  <p id="patient-search-error" role="alert" className="mt-1 text-xs text-red-600">
-                    {patientSearchError}
-                  </p>
-                )}
-              </form>
+            {/* Body — dos columnas: Paciente · Turno (se apilan en pantalla chica) */}
+            <div className="px-6 py-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* ── Columna izquierda: PACIENTE ──────────────────────────── */}
+                <div className="space-y-4">
+                  <p className={sectionLabel}>Paciente</p>
 
-              {/* Formulario inline de creación de paciente */}
-              {showCreatePatient && !patient && (
-                <div className="rounded-[8px] border border-[var(--color-border)] p-4 space-y-3">
-                  <p className="text-sm font-semibold text-[var(--color-text-primary)]">Nuevo paciente</p>
+                  {/* Búsqueda por DNI (autobúsqueda + Enter como fallback) */}
                   <form
-                    id="create-patient-form"
-                    onSubmit={createPatientForm.handleSubmit(handleCreatePatient)}
+                    onSubmit={searchForm.handleSubmit(handleSearchPatient)}
                     noValidate
-                    className="space-y-3"
-                    aria-label="Crear nuevo paciente"
+                    aria-label="Buscar paciente por DNI"
                   >
-                    <div>
-                      <label
-                        htmlFor="cp-full-name"
-                        className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1"
-                      >
-                        Nombre completo *
-                      </label>
+                    <label
+                      htmlFor="patient-search-input"
+                      className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
+                    >
+                      DNI del paciente
+                    </label>
+                    <div className="relative">
                       <input
-                        id="cp-full-name"
-                        type="text"
-                        {...createPatientForm.register('full_name')}
-                        className={inputClass(!!createPatientForm.formState.errors.full_name)}
-                        aria-invalid={!!createPatientForm.formState.errors.full_name}
-                      />
-                      {createPatientForm.formState.errors.full_name && (
-                        <p role="alert" className="mt-1 text-xs text-red-600">
-                          {createPatientForm.formState.errors.full_name.message}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label
-                        htmlFor="cp-phone"
-                        className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1"
-                      >
-                        Teléfono *
-                      </label>
-                      <input
-                        id="cp-phone"
-                        type="tel"
-                        {...createPatientForm.register('phone_number')}
-                        className={inputClass(!!createPatientForm.formState.errors.phone_number)}
-                        aria-invalid={!!createPatientForm.formState.errors.phone_number}
-                      />
-                      {createPatientForm.formState.errors.phone_number && (
-                        <p role="alert" className="mt-1 text-xs text-red-600">
-                          {createPatientForm.formState.errors.phone_number.message}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label
-                        htmlFor="cp-dni"
-                        className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1"
-                      >
-                        DNI (opcional)
-                      </label>
-                      <input
-                        id="cp-dni"
+                        id="patient-search-input"
                         type="text"
                         inputMode="numeric"
-                        {...createPatientForm.register('dni')}
-                        className={inputClass(!!createPatientForm.formState.errors.dni)}
-                        aria-invalid={!!createPatientForm.formState.errors.dni}
+                        autoComplete="off"
+                        placeholder="Ej: 30123456"
+                        {...searchForm.register('query')}
+                        ref={(el) => {
+                          searchForm.register('query').ref(el)
+                          searchInputRef.current = el
+                        }}
+                        className={inputClass(!!searchForm.formState.errors.query)}
+                        aria-invalid={!!searchForm.formState.errors.query}
+                        aria-describedby={
+                          searchForm.formState.errors.query
+                            ? 'patient-search-validation-error'
+                            : patientSearchError
+                              ? 'patient-search-error'
+                              : undefined
+                        }
                       />
-                      {createPatientForm.formState.errors.dni && (
-                        <p role="alert" className="mt-1 text-xs text-red-600">
-                          {createPatientForm.formState.errors.dni.message}
-                        </p>
+                      {isSearching && (
+                        <span
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[var(--color-text-secondary)]"
+                          aria-live="polite"
+                        >
+                          Buscando…
+                        </span>
                       )}
                     </div>
+                    <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                      Ingresá los 7 u 8 dígitos y lo buscamos solo.
+                    </p>
+                    {searchForm.formState.errors.query && (
+                      <p id="patient-search-validation-error" role="alert" className="mt-1 text-xs text-red-600">
+                        {searchForm.formState.errors.query.message}
+                      </p>
+                    )}
+                    {patientSearchError && !searchForm.formState.errors.query && (
+                      <p id="patient-search-error" role="alert" className="mt-1 text-xs text-red-600">
+                        {patientSearchError}
+                      </p>
+                    )}
+                  </form>
 
+                  {/* Tarjeta del paciente seleccionado */}
+                  {patient && (
+                    <div className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <p className="font-medium text-[var(--color-text-primary)]">
+                            ✓ {patient.full_name}
+                          </p>
+                          {patient.phone_number && (
+                            <p className="text-[var(--color-text-secondary)]">Tel: {patient.phone_number}</p>
+                          )}
+                          {patient.obra_social && (
+                            <p className="text-[var(--color-text-secondary)]">Obra social: {patient.obra_social}</p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleResetPatient}
+                          className="shrink-0 text-xs font-medium text-[var(--color-interactive)] hover:underline"
+                        >
+                          Cambiar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Formulario inline de creación de paciente */}
+                  {showCreatePatient && !patient && (
+                    <div className="rounded-[8px] border border-[var(--color-border)] p-4 space-y-3">
+                      <p className="text-sm font-semibold text-[var(--color-text-primary)]">Nuevo paciente</p>
+                      <form
+                        id="create-patient-form"
+                        onSubmit={createPatientForm.handleSubmit(handleCreatePatient)}
+                        noValidate
+                        className="space-y-3"
+                        aria-label="Crear nuevo paciente"
+                      >
+                        <div>
+                          <label
+                            htmlFor="cp-full-name"
+                            className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1"
+                          >
+                            Nombre completo *
+                          </label>
+                          <input
+                            id="cp-full-name"
+                            type="text"
+                            {...createPatientForm.register('full_name')}
+                            className={inputClass(!!createPatientForm.formState.errors.full_name)}
+                            aria-invalid={!!createPatientForm.formState.errors.full_name}
+                          />
+                          {createPatientForm.formState.errors.full_name && (
+                            <p role="alert" className="mt-1 text-xs text-red-600">
+                              {createPatientForm.formState.errors.full_name.message}
+                            </p>
+                          )}
+                        </div>
+
+                        <div>
+                          <label
+                            htmlFor="cp-phone"
+                            className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1"
+                          >
+                            Teléfono *
+                          </label>
+                          <input
+                            id="cp-phone"
+                            type="tel"
+                            {...createPatientForm.register('phone_number')}
+                            className={inputClass(!!createPatientForm.formState.errors.phone_number)}
+                            aria-invalid={!!createPatientForm.formState.errors.phone_number}
+                          />
+                          {createPatientForm.formState.errors.phone_number && (
+                            <p role="alert" className="mt-1 text-xs text-red-600">
+                              {createPatientForm.formState.errors.phone_number.message}
+                            </p>
+                          )}
+                        </div>
+
+                        <div>
+                          <label
+                            htmlFor="cp-dni"
+                            className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1"
+                          >
+                            DNI (opcional)
+                          </label>
+                          <input
+                            id="cp-dni"
+                            type="text"
+                            inputMode="numeric"
+                            {...createPatientForm.register('dni')}
+                            className={inputClass(!!createPatientForm.formState.errors.dni)}
+                            aria-invalid={!!createPatientForm.formState.errors.dni}
+                          />
+                          {createPatientForm.formState.errors.dni && (
+                            <p role="alert" className="mt-1 text-xs text-red-600">
+                              {createPatientForm.formState.errors.dni.message}
+                            </p>
+                          )}
+                        </div>
+
+                        <div>
+                          <label
+                            htmlFor="cp-email"
+                            className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1"
+                          >
+                            Email (opcional)
+                          </label>
+                          <input
+                            id="cp-email"
+                            type="email"
+                            {...createPatientForm.register('email')}
+                            className={inputClass(!!createPatientForm.formState.errors.email)}
+                            aria-invalid={!!createPatientForm.formState.errors.email}
+                          />
+                          {createPatientForm.formState.errors.email && (
+                            <p role="alert" className="mt-1 text-xs text-red-600">
+                              {createPatientForm.formState.errors.email.message}
+                            </p>
+                          )}
+                        </div>
+
+                        {createPatientError && (
+                          <p role="alert" className="text-xs text-red-600">{createPatientError}</p>
+                        )}
+
+                        <button
+                          type="submit"
+                          disabled={isCreatingPatient}
+                          className={[
+                            'w-full px-4 py-2 rounded-[8px] text-sm font-medium min-h-[44px]',
+                            'bg-[var(--color-interactive)] text-white',
+                            'hover:opacity-90 transition-opacity',
+                            isCreatingPatient ? 'opacity-50 cursor-not-allowed' : '',
+                          ].join(' ')}
+                        >
+                          {isCreatingPatient ? 'Creando...' : 'Crear paciente'}
+                        </button>
+                      </form>
+                    </div>
+                  )}
+
+                  {/* Lista de resultados (múltiples — fallback de búsqueda por nombre) */}
+                  {patientResults && patientResults.length > 1 && (
+                    <div
+                      role="list"
+                      aria-label="Resultados de búsqueda"
+                      className="rounded-[8px] border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden"
+                    >
+                      {patientResults.map((p) => (
+                        <button
+                          key={p.patient_id}
+                          type="button"
+                          role="listitem"
+                          onClick={() => handleSelectPatient(p)}
+                          className={[
+                            'w-full text-left px-4 py-3 text-sm',
+                            'bg-[var(--color-bg)] hover:bg-[var(--color-surface)] transition-colors',
+                            p.deletion_requested_at ? 'opacity-50 cursor-not-allowed' : '',
+                          ].join(' ')}
+                          disabled={!!p.deletion_requested_at}
+                        >
+                          <p className="font-medium text-[var(--color-text-primary)]">{p.full_name}</p>
+                          {p.phone_number && (
+                            <p className="text-[var(--color-text-secondary)]">Tel: {p.phone_number}</p>
+                          )}
+                          {p.deletion_requested_at && (
+                            <p className="text-red-500 text-xs">Eliminación programada</p>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Columna derecha: TURNO ───────────────────────────────── */}
+                <div className="space-y-4">
+                  <p className={sectionLabel}>Turno</p>
+                  <form
+                    id="appointment-form"
+                    onSubmit={appointmentForm.handleSubmit(handleSubmitAppointment)}
+                    noValidate
+                    className="space-y-4"
+                    aria-label="Datos del turno"
+                  >
+                    {/* patient_id hidden */}
+                    <input type="hidden" {...appointmentForm.register('patient_id')} />
+
+                    {/* Servicio */}
                     <div>
                       <label
-                        htmlFor="cp-email"
-                        className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1"
+                        htmlFor="service-select"
+                        className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
                       >
-                        Email (opcional)
+                        Servicio
                       </label>
-                      <input
-                        id="cp-email"
-                        type="email"
-                        {...createPatientForm.register('email')}
-                        className={inputClass(!!createPatientForm.formState.errors.email)}
-                        aria-invalid={!!createPatientForm.formState.errors.email}
-                      />
-                      {createPatientForm.formState.errors.email && (
-                        <p role="alert" className="mt-1 text-xs text-red-600">
-                          {createPatientForm.formState.errors.email.message}
+                      <select
+                        id="service-select"
+                        {...appointmentForm.register('service_id')}
+                        className={inputClass(!!appointmentForm.formState.errors.service_id)}
+                        aria-invalid={!!appointmentForm.formState.errors.service_id}
+                        aria-describedby={
+                          appointmentForm.formState.errors.service_id ? 'service-error' : undefined
+                        }
+                      >
+                        <option value="">Seleccioná un servicio</option>
+                        {services.map((svc) => (
+                          <option key={svc.service_id} value={svc.service_id}>
+                            {svc.name}
+                            {svc.professional_name ? ` · ${svc.professional_name}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                      {appointmentForm.formState.errors.service_id && (
+                        <p id="service-error" role="alert" className="mt-1 text-xs text-red-600">
+                          {appointmentForm.formState.errors.service_id.message}
                         </p>
                       )}
                     </div>
 
-                    {createPatientError && (
-                      <p role="alert" className="text-xs text-red-600">{createPatientError}</p>
+                    {/* Profesional — el paciente elige (modelo por profesional) */}
+                    <div>
+                      <label
+                        htmlFor="professional-select"
+                        className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
+                      >
+                        Profesional
+                      </label>
+                      <select
+                        id="professional-select"
+                        {...appointmentForm.register('professional_id')}
+                        onChange={(e) => {
+                          // setValue actualiza el estado de RHF igual que el onChange
+                          // nativo; además reseteamos el hueco compuesto de "cualquiera"
+                          // al cambiar de profesional (incl. entrar/salir del modo).
+                          appointmentForm.setValue('professional_id', e.target.value, { shouldDirty: true })
+                          setAnySlotKey('')
+                        }}
+                        disabled={!selectedServiceId || isLoadingProfessionals || professionals.length === 0}
+                        className={inputClass(!!appointmentForm.formState.errors.professional_id)}
+                        aria-invalid={!!appointmentForm.formState.errors.professional_id}
+                        aria-describedby={
+                          appointmentForm.formState.errors.professional_id ? 'professional-error' : undefined
+                        }
+                      >
+                        <option value="">
+                          {!selectedServiceId
+                            ? 'Seleccioná un servicio primero'
+                            : isLoadingProfessionals
+                              ? 'Cargando profesionales...'
+                              : professionals.length === 0
+                                ? 'Sin profesionales para este servicio'
+                                : 'Seleccioná un profesional'}
+                        </option>
+                        {/* P0.1 — con 2+ profesionales, ofrecer "cualquiera" */}
+                        {professionals.length >= 2 && (
+                          <option value={ANY_PROFESSIONAL}>Cualquier profesional disponible</option>
+                        )}
+                        {professionals.map((prof) => (
+                          <option key={prof.professional_id} value={prof.professional_id}>
+                            {prof.name}
+                          </option>
+                        ))}
+                      </select>
+                      {professionalsError && (
+                        <p role="alert" className="mt-1 text-xs text-red-600">
+                          {professionalsError}
+                        </p>
+                      )}
+                      {appointmentForm.formState.errors.professional_id && (
+                        <p id="professional-error" role="alert" className="mt-1 text-xs text-red-600">
+                          {appointmentForm.formState.errors.professional_id.message}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Fecha */}
+                    <div>
+                      <label
+                        htmlFor="date-input"
+                        className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
+                      >
+                        Fecha
+                      </label>
+                      <input
+                        id="date-input"
+                        type="date"
+                        min={today}
+                        {...appointmentForm.register('appointment_date')}
+                        onChange={(e) => {
+                          appointmentForm.setValue('appointment_date', e.target.value, { shouldDirty: true })
+                          // El hueco compuesto de "cualquiera" pertenece a la fecha
+                          // anterior: descartarlo al cambiar de día.
+                          setAnySlotKey('')
+                        }}
+                        className={inputClass(!!appointmentForm.formState.errors.appointment_date)}
+                        aria-invalid={!!appointmentForm.formState.errors.appointment_date}
+                        aria-describedby={
+                          appointmentForm.formState.errors.appointment_date ? 'date-error' : undefined
+                        }
+                      />
+                      {appointmentForm.formState.errors.appointment_date && (
+                        <p id="date-error" role="alert" className="mt-1 text-xs text-red-600">
+                          {appointmentForm.formState.errors.appointment_date.message}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Horario */}
+                    <div>
+                      <label
+                        htmlFor="time-select"
+                        className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
+                      >
+                        Horario
+                      </label>
+                      {isAnyProfessional ? (
+                        // Modo "cualquier profesional": cada opción es un hueco real
+                        // de un profesional concreto, etiquetado "HH:MM · Profesional".
+                        // Controlado por anySlotKey (valor compuesto).
+                        <select
+                          id="time-select"
+                          value={anySlotKey}
+                          onChange={(e) => handleAnySlotChange(e.target.value)}
+                          disabled={!availabilityEnabled || isLoadingAvailability || availableShifts.length === 0}
+                          className={inputClass(
+                            !!appointmentForm.formState.errors.appointment_time_hhmm || !!slotConflictError,
+                          )}
+                          aria-invalid={
+                            !!appointmentForm.formState.errors.appointment_time_hhmm || !!slotConflictError
+                          }
+                          aria-describedby={
+                            slotConflictError
+                              ? 'slot-conflict-error'
+                              : appointmentForm.formState.errors.appointment_time_hhmm
+                                ? 'time-error'
+                                : undefined
+                          }
+                        >
+                          <option value="">
+                            {!availabilityEnabled
+                              ? 'Elegí servicio, profesional y fecha'
+                              : isLoadingAvailability
+                                ? 'Cargando horarios disponibles...'
+                                : isAvailabilityError
+                                  ? 'No se pudo cargar la disponibilidad'
+                                  : availableShifts.length === 0
+                                    ? 'Sin horarios libres para esta fecha'
+                                    : 'Seleccioná un horario'}
+                          </option>
+                          {availableShifts.map((shift) => (
+                            <option
+                              key={`${shift.professional_id}__${shift.open}`}
+                              value={`${shift.professional_id}__${shift.open}`}
+                            >
+                              {shift.open} · {shift.professional_name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        // Select CONTROLADO (no register): al eliminar el gate, el
+                        // <select> se monta antes de tener opciones. Con value
+                        // controlado, el horario prellenado (Story 10.7) se refleja
+                        // en cuanto la <option> correspondiente aparece.
+                        <select
+                          id="time-select"
+                          value={selectedTime ?? ''}
+                          onChange={(e) =>
+                            appointmentForm.setValue('appointment_time_hhmm', e.target.value, {
+                              shouldValidate: true,
+                            })
+                          }
+                          disabled={!availabilityEnabled || isLoadingAvailability || availableTimes.length === 0}
+                          className={inputClass(
+                            !!appointmentForm.formState.errors.appointment_time_hhmm || !!slotConflictError,
+                          )}
+                          aria-invalid={
+                            !!appointmentForm.formState.errors.appointment_time_hhmm || !!slotConflictError
+                          }
+                          aria-describedby={
+                            slotConflictError
+                              ? 'slot-conflict-error'
+                              : appointmentForm.formState.errors.appointment_time_hhmm
+                                ? 'time-error'
+                                : undefined
+                          }
+                        >
+                          <option value="">
+                            {!availabilityEnabled
+                              ? 'Elegí servicio, profesional y fecha'
+                              : isLoadingAvailability
+                                ? 'Cargando horarios disponibles...'
+                                : isAvailabilityError
+                                  ? 'No se pudo cargar la disponibilidad'
+                                  : availableTimes.length === 0
+                                    ? 'Sin horarios libres para esta fecha'
+                                    : 'Seleccioná un horario'}
+                          </option>
+                          {availableTimes.map((slot) => (
+                            <option key={slot} value={slot}>
+                              {slot}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      {isAvailabilityError && (
+                        <p role="alert" className="mt-1 text-xs text-red-600">
+                          No se pudo cargar la disponibilidad. Probá de nuevo.
+                        </p>
+                      )}
+                      {appointmentForm.formState.errors.appointment_time_hhmm && !slotConflictError && (
+                        <p id="time-error" role="alert" className="mt-1 text-xs text-red-600">
+                          {appointmentForm.formState.errors.appointment_time_hhmm.message}
+                        </p>
+                      )}
+                      {slotConflictError && (
+                        <p id="slot-conflict-error" role="alert" className="mt-1 text-xs text-red-600">
+                          {slotConflictError}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Error de red/servidor */}
+                    {submitError && (
+                      <p role="alert" className="text-xs text-red-600">
+                        {submitError}
+                      </p>
                     )}
                   </form>
                 </div>
-              )}
-
-              {/* Lista de resultados (múltiples) */}
-              {patientResults && patientResults.length > 1 && (
-                <div
-                  role="list"
-                  aria-label="Resultados de búsqueda"
-                  className="rounded-[8px] border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden"
-                >
-                  {patientResults.map((p) => (
-                    <button
-                      key={p.patient_id}
-                      type="button"
-                      role="listitem"
-                      onClick={() => handleSelectPatient(p)}
-                      className={[
-                        'w-full text-left px-4 py-3 text-sm',
-                        'bg-[var(--color-bg)] hover:bg-[var(--color-surface)] transition-colors',
-                        p.deletion_requested_at ? 'opacity-50 cursor-not-allowed' : '',
-                      ].join(' ')}
-                      disabled={!!p.deletion_requested_at}
-                    >
-                      <p className="font-medium text-[var(--color-text-primary)]">{p.full_name}</p>
-                      {p.phone_number && (
-                        <p className="text-[var(--color-text-secondary)]">Tel: {p.phone_number}</p>
-                      )}
-                      {p.deletion_requested_at && (
-                        <p className="text-red-500 text-xs">Eliminación programada</p>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Tarjeta del paciente seleccionado */}
-              {patient && (
-                <div className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm space-y-1">
-                  <p className="font-medium text-[var(--color-text-primary)]">{patient.full_name}</p>
-                  {patient.phone_number && (
-                    <p className="text-[var(--color-text-secondary)]">Tel: {patient.phone_number}</p>
-                  )}
-                  {patient.obra_social && (
-                    <p className="text-[var(--color-text-secondary)]">Obra social: {patient.obra_social}</p>
-                  )}
-                </div>
-              )}
-
-              {/* Paso 2: Datos del turno — solo visible si hay paciente */}
-              {patient && (
-                <form
-                  id="appointment-form"
-                  onSubmit={appointmentForm.handleSubmit(handleSubmitAppointment)}
-                  noValidate
-                  className="space-y-4"
-                  aria-label="Datos del turno"
-                >
-                  {/* patient_id hidden */}
-                  <input type="hidden" {...appointmentForm.register('patient_id')} />
-
-                  {/* Servicio */}
-                  <div>
-                    <label
-                      htmlFor="service-select"
-                      className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
-                    >
-                      Servicio
-                    </label>
-                    <select
-                      id="service-select"
-                      {...appointmentForm.register('service_id')}
-                      className={inputClass(!!appointmentForm.formState.errors.service_id)}
-                      aria-invalid={!!appointmentForm.formState.errors.service_id}
-                      aria-describedby={
-                        appointmentForm.formState.errors.service_id ? 'service-error' : undefined
-                      }
-                    >
-                      <option value="">Seleccioná un servicio</option>
-                      {services.map((svc) => (
-                        <option key={svc.service_id} value={svc.service_id}>
-                          {svc.name}
-                          {svc.professional_name ? ` · ${svc.professional_name}` : ''}
-                        </option>
-                      ))}
-                    </select>
-                    {appointmentForm.formState.errors.service_id && (
-                      <p id="service-error" role="alert" className="mt-1 text-xs text-red-600">
-                        {appointmentForm.formState.errors.service_id.message}
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Profesional — el paciente elige (modelo por profesional) */}
-                  <div>
-                    <label
-                      htmlFor="professional-select"
-                      className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
-                    >
-                      Profesional
-                    </label>
-                    <select
-                      id="professional-select"
-                      {...appointmentForm.register('professional_id')}
-                      onChange={(e) => {
-                        // setValue actualiza el estado de RHF igual que el onChange
-                        // nativo; además reseteamos el hueco compuesto de "cualquiera"
-                        // al cambiar de profesional (incl. entrar/salir del modo).
-                        appointmentForm.setValue('professional_id', e.target.value, { shouldDirty: true })
-                        setAnySlotKey('')
-                      }}
-                      disabled={!selectedServiceId || isLoadingProfessionals || professionals.length === 0}
-                      className={inputClass(!!appointmentForm.formState.errors.professional_id)}
-                      aria-invalid={!!appointmentForm.formState.errors.professional_id}
-                      aria-describedby={
-                        appointmentForm.formState.errors.professional_id ? 'professional-error' : undefined
-                      }
-                    >
-                      <option value="">
-                        {!selectedServiceId
-                          ? 'Seleccioná un servicio primero'
-                          : isLoadingProfessionals
-                            ? 'Cargando profesionales...'
-                            : professionals.length === 0
-                              ? 'Sin profesionales para este servicio'
-                              : 'Seleccioná un profesional'}
-                      </option>
-                      {/* P0.1 — con 2+ profesionales, ofrecer "cualquiera" */}
-                      {professionals.length >= 2 && (
-                        <option value={ANY_PROFESSIONAL}>Cualquier profesional disponible</option>
-                      )}
-                      {professionals.map((prof) => (
-                        <option key={prof.professional_id} value={prof.professional_id}>
-                          {prof.name}
-                        </option>
-                      ))}
-                    </select>
-                    {professionalsError && (
-                      <p role="alert" className="mt-1 text-xs text-red-600">
-                        {professionalsError}
-                      </p>
-                    )}
-                    {appointmentForm.formState.errors.professional_id && (
-                      <p id="professional-error" role="alert" className="mt-1 text-xs text-red-600">
-                        {appointmentForm.formState.errors.professional_id.message}
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Fecha */}
-                  <div>
-                    <label
-                      htmlFor="date-input"
-                      className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
-                    >
-                      Fecha
-                    </label>
-                    <input
-                      id="date-input"
-                      type="date"
-                      min={today}
-                      {...appointmentForm.register('appointment_date')}
-                      onChange={(e) => {
-                        appointmentForm.setValue('appointment_date', e.target.value, { shouldDirty: true })
-                        // El hueco compuesto de "cualquiera" pertenece a la fecha
-                        // anterior: descartarlo al cambiar de día.
-                        setAnySlotKey('')
-                      }}
-                      className={inputClass(!!appointmentForm.formState.errors.appointment_date)}
-                      aria-invalid={!!appointmentForm.formState.errors.appointment_date}
-                      aria-describedby={
-                        appointmentForm.formState.errors.appointment_date ? 'date-error' : undefined
-                      }
-                    />
-                    {appointmentForm.formState.errors.appointment_date && (
-                      <p id="date-error" role="alert" className="mt-1 text-xs text-red-600">
-                        {appointmentForm.formState.errors.appointment_date.message}
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Horario */}
-                  <div>
-                    <label
-                      htmlFor="time-select"
-                      className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
-                    >
-                      Horario
-                    </label>
-                    {isAnyProfessional ? (
-                      // Modo "cualquier profesional": cada opción es un hueco real
-                      // de un profesional concreto, etiquetado "HH:MM · Profesional".
-                      // Controlado por anySlotKey (valor compuesto).
-                      <select
-                        id="time-select"
-                        value={anySlotKey}
-                        onChange={(e) => handleAnySlotChange(e.target.value)}
-                        disabled={!availabilityEnabled || isLoadingAvailability || availableShifts.length === 0}
-                        className={inputClass(
-                          !!appointmentForm.formState.errors.appointment_time_hhmm || !!slotConflictError,
-                        )}
-                        aria-invalid={
-                          !!appointmentForm.formState.errors.appointment_time_hhmm || !!slotConflictError
-                        }
-                        aria-describedby={
-                          slotConflictError
-                            ? 'slot-conflict-error'
-                            : appointmentForm.formState.errors.appointment_time_hhmm
-                              ? 'time-error'
-                              : undefined
-                        }
-                      >
-                        <option value="">
-                          {!availabilityEnabled
-                            ? 'Elegí servicio, profesional y fecha'
-                            : isLoadingAvailability
-                              ? 'Cargando horarios disponibles...'
-                              : isAvailabilityError
-                                ? 'No se pudo cargar la disponibilidad'
-                                : availableShifts.length === 0
-                                  ? 'Sin horarios libres para esta fecha'
-                                  : 'Seleccioná un horario'}
-                        </option>
-                        {availableShifts.map((shift) => (
-                          <option
-                            key={`${shift.professional_id}__${shift.open}`}
-                            value={`${shift.professional_id}__${shift.open}`}
-                          >
-                            {shift.open} · {shift.professional_name}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <select
-                        id="time-select"
-                        {...appointmentForm.register('appointment_time_hhmm')}
-                        disabled={!availabilityEnabled || isLoadingAvailability || availableTimes.length === 0}
-                        className={inputClass(
-                          !!appointmentForm.formState.errors.appointment_time_hhmm || !!slotConflictError,
-                        )}
-                        aria-invalid={
-                          !!appointmentForm.formState.errors.appointment_time_hhmm || !!slotConflictError
-                        }
-                        aria-describedby={
-                          slotConflictError
-                            ? 'slot-conflict-error'
-                            : appointmentForm.formState.errors.appointment_time_hhmm
-                              ? 'time-error'
-                              : undefined
-                        }
-                      >
-                        <option value="">
-                          {!availabilityEnabled
-                            ? 'Elegí servicio, profesional y fecha'
-                            : isLoadingAvailability
-                              ? 'Cargando horarios disponibles...'
-                              : isAvailabilityError
-                                ? 'No se pudo cargar la disponibilidad'
-                                : availableTimes.length === 0
-                                  ? 'Sin horarios libres para esta fecha'
-                                  : 'Seleccioná un horario'}
-                        </option>
-                        {availableTimes.map((slot) => (
-                          <option key={slot} value={slot}>
-                            {slot}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                    {isAvailabilityError && (
-                      <p role="alert" className="mt-1 text-xs text-red-600">
-                        No se pudo cargar la disponibilidad. Probá de nuevo.
-                      </p>
-                    )}
-                    {appointmentForm.formState.errors.appointment_time_hhmm && !slotConflictError && (
-                      <p id="time-error" role="alert" className="mt-1 text-xs text-red-600">
-                        {appointmentForm.formState.errors.appointment_time_hhmm.message}
-                      </p>
-                    )}
-                    {slotConflictError && (
-                      <p id="slot-conflict-error" role="alert" className="mt-1 text-xs text-red-600">
-                        {slotConflictError}
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Error de red/servidor */}
-                  {submitError && (
-                    <p role="alert" className="text-xs text-red-600">
-                      {submitError}
-                    </p>
-                  )}
-                </form>
-              )}
+              </div>
             </div>
 
             {/* Footer */}
-            <div className="px-6 pb-6 pt-2 flex justify-end gap-3 border-t border-[var(--color-border)]">
+            <div className="px-6 pb-6 pt-2 flex items-center justify-end gap-3 border-t border-[var(--color-border)]">
+              {!patient && (
+                <span className="mr-auto text-xs text-[var(--color-text-secondary)]">
+                  Identificá al paciente para guardar el turno.
+                </span>
+              )}
               <Dialog.Close
                 onClick={handleClose}
                 className={[
@@ -1006,36 +1092,19 @@ export function NewTurnoModal({
               >
                 Cancelar
               </Dialog.Close>
-              {showCreatePatient && !patient && (
-                <button
-                  type="submit"
-                  form="create-patient-form"
-                  disabled={isCreatingPatient}
-                  className={[
-                    'px-4 py-2 rounded-[8px] text-sm font-medium min-h-[44px]',
-                    'bg-[var(--color-interactive)] text-white',
-                    'hover:opacity-90 transition-opacity',
-                    isCreatingPatient ? 'opacity-50 cursor-not-allowed' : '',
-                  ].join(' ')}
-                >
-                  {isCreatingPatient ? 'Creando...' : 'Crear paciente'}
-                </button>
-              )}
-              {patient && (
-                <button
-                  type="submit"
-                  form="appointment-form"
-                  disabled={appointmentForm.formState.isSubmitting}
-                  className={[
-                    'px-4 py-2 rounded-[8px] text-sm font-medium min-h-[44px]',
-                    'bg-[var(--color-interactive)] text-white',
-                    'hover:opacity-90 transition-opacity',
-                    appointmentForm.formState.isSubmitting ? 'opacity-50 cursor-not-allowed' : '',
-                  ].join(' ')}
-                >
-                  {appointmentForm.formState.isSubmitting ? 'Guardando...' : 'Guardar turno'}
-                </button>
-              )}
+              <button
+                type="submit"
+                form="appointment-form"
+                disabled={!patient || appointmentForm.formState.isSubmitting}
+                className={[
+                  'px-4 py-2 rounded-[8px] text-sm font-medium min-h-[44px]',
+                  'bg-[var(--color-interactive)] text-white',
+                  'hover:opacity-90 transition-opacity',
+                  !patient || appointmentForm.formState.isSubmitting ? 'opacity-50 cursor-not-allowed' : '',
+                ].join(' ')}
+              >
+                {appointmentForm.formState.isSubmitting ? 'Guardando...' : 'Guardar turno'}
+              </button>
             </div>
           </div>
         </Dialog.Popup>
