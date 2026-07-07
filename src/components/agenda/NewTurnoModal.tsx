@@ -1,11 +1,13 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { useForm, useWatch } from 'react-hook-form'
 import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
 import { useQueryClient } from '@tanstack/react-query'
 import { useList } from '@refinedev/core'
 import { Dialog } from '@base-ui/react/dialog'
+import { toast } from 'sonner'
 import {
   patientSearchSchema,
   newAppointmentSchema,
@@ -71,6 +73,7 @@ export function NewTurnoModal({
   initialTimeHHmm,
 }: NewTurnoModalProps) {
   const queryClient = useQueryClient()
+  const router = useRouter()
   const searchInputRef = useRef<HTMLInputElement | null>(null)
 
   // Patient search state
@@ -587,8 +590,8 @@ export function NewTurnoModal({
       setSubmitError('Elegí un profesional para la serie de sesiones')
       return
     }
-    if (multiSlots.length !== sessionCount) {
-      setSubmitError(`Elegí las ${sessionCount} sesiones (llevás ${multiSlots.length})`)
+    if (multiSlots.length < 1) {
+      setSubmitError('Elegí al menos una sesión')
       return
     }
 
@@ -646,13 +649,36 @@ export function NewTurnoModal({
         return
       }
 
-      // Éxito: invalidar agenda / disponibilidad / paquetes / ficha del paciente.
+      // Éxito: puede haber sido reserva PARCIAL (menos slots que el cupo del
+      // bono) — el backend crea igual el bono de N y agenda solo lo enviado.
+      // `creadas` viene del response; si el backend no lo informa (mocks
+      // viejos/legacy), asumimos que se agendó todo lo enviado.
+      const okBody = await sRes.json().catch(() => ({}))
+      const creadas = (okBody as { creadas?: number }).creadas ?? multiSlots.length
+      const faltan = sessionCount - creadas
+      const patientId = patient.patient_id
+
+      // Invalidar agenda / disponibilidad / paquetes / ficha del paciente.
       queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
       queryClient.invalidateQueries({ queryKey: ['agenda'], exact: false })
       queryClient.invalidateQueries({ queryKey: ['availability'], exact: false })
       queryClient.invalidateQueries({ queryKey: ['treatments'], exact: false })
       queryClient.invalidateQueries({ queryKey: ['patients', 'one', patient.patient_id] })
       handleClose()
+
+      if (faltan > 0) {
+        toast.success(
+          `Reservaste ${creadas} de ${sessionCount} sesiones. Faltan ${faltan} por agendar.`,
+          {
+            action: {
+              label: 'Ir a completar',
+              onClick: () => router.push(`/pacientes/${patientId}`),
+            },
+          },
+        )
+      } else {
+        toast.success(`Reservaste las ${sessionCount} sesiones.`)
+      }
     } catch {
       setSubmitError('Error de red. Verificá tu conexión e intentá de nuevo.')
     } finally {
@@ -682,6 +708,18 @@ export function NewTurnoModal({
     'text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)]'
 
   const today = new Date().toLocaleDateString('en-CA')
+
+  // Botón "Reservar" de la serie: habilitado con reserva PARCIAL (≥1 elegida,
+  // no exige las N). El texto refleja cuánto se eligió vs. el total del bono.
+  const packageChosen = multiSlots.length
+  const packageSubmitDisabled = !patient || packageChosen < 1 || isSubmittingPackage
+  const packageSubmitLabel = isSubmittingPackage
+    ? 'Reservando...'
+    : packageChosen === 0
+      ? 'Reservar sesiones'
+      : packageChosen === sessionCount
+        ? `Reservar ${sessionCount} sesiones`
+        : `Reservar ${packageChosen} (quedan ${sessionCount - packageChosen})`
 
   return (
     <Dialog.Root open={open} onOpenChange={(isOpen) => { if (!isOpen) handleClose() }}>
@@ -997,7 +1035,7 @@ export function NewTurnoModal({
                       </div>
                       {isPackageMode && (
                         <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
-                          Se crea un paquete de {sessionCount} y elegís cada horario a mano.
+                          Se crea un paquete de {sessionCount}. Reservá las que el paciente pueda ahora; el resto queda pendiente.
                         </p>
                       )}
                     </div>
@@ -1309,17 +1347,15 @@ export function NewTurnoModal({
                 <button
                   type="button"
                   onClick={handleSubmitPackage}
-                  disabled={!patient || multiSlots.length !== sessionCount || isSubmittingPackage}
+                  disabled={packageSubmitDisabled}
                   className={[
                     'px-4 py-2 rounded-[8px] text-sm font-medium min-h-[44px]',
                     'bg-[var(--color-interactive)] text-white',
                     'hover:opacity-90 transition-opacity',
-                    !patient || multiSlots.length !== sessionCount || isSubmittingPackage
-                      ? 'opacity-50 cursor-not-allowed'
-                      : '',
+                    packageSubmitDisabled ? 'opacity-50 cursor-not-allowed' : '',
                   ].join(' ')}
                 >
-                  {isSubmittingPackage ? 'Reservando...' : `Reservar ${sessionCount} sesiones`}
+                  {packageSubmitLabel}
                 </button>
               ) : (
                 <button

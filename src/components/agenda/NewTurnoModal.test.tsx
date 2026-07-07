@@ -5,6 +5,17 @@ import { NewTurnoModal } from './NewTurnoModal'
 import { patientSearchSchema } from '@/lib/schemas/appointment.schema'
 import type { AvailabilityShift } from '@/types/availability'
 
+// Reserva parcial de series x5/x10: aviso por toast (sonner, ya global) +
+// navegación a la ficha del paciente ("Ir a completar").
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}))
+import { toast } from 'sonner'
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn() }),
+}))
+
 // Mock del hook de disponibilidad: el modal pinta los horarios REALES libres
 // (RPC check_clinic_availability vía useAvailability). En los tests devolvemos
 // huecos controlados según servicio+profesional+fecha elegidos.
@@ -797,7 +808,9 @@ describe('NewTurnoModal', () => {
 
       await user.click(screen.getByRole('button', { name: /10 sesiones/i }))
 
-      const btn = screen.getByRole('button', { name: /reservar 10 sesiones/i })
+      // Sin ninguna sesión elegida todavía, el botón dice "Reservar sesiones" y
+      // está deshabilitado (reserva parcial: se habilita desde 1 elegida).
+      const btn = screen.getByRole('button', { name: /reservar sesiones/i })
       expect(btn).toBeInTheDocument()
       expect(btn).toBeDisabled()
       expect(screen.getByText(/Serie de 10 sesiones/i)).toBeInTheDocument()
@@ -891,6 +904,94 @@ describe('NewTurnoModal', () => {
         const body = JSON.parse((call![1] as { body: string }).body)
         expect(body.slots).toHaveLength(5)
       })
+
+      // 3) reserva completa: toast sin acción "Ir a completar"
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+          expect.stringContaining('las 5 sesiones'),
+        )
+      })
+    })
+
+    it('reserva parcial: agenda 3 de 5 y avisa las pendientes', async () => {
+      mockUniqueDailyAvailability()
+      mockFetch.mockImplementation((url: string, init?: { method?: string }) => {
+        if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
+        if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse([{ professional_id: 'prof-1', name: 'Patricia Pérez' }]))
+        if (url === '/api/treatments' && init?.method === 'POST') {
+          return Promise.resolve({ ok: true, status: 201, json: async () => ({ success: true, treatment_id: 'trt-new' }) })
+        }
+        if (url.includes('/api/treatments/trt-new/sessions') && init?.method === 'POST') {
+          return Promise.resolve({ ok: true, status: 201, json: async () => ({ success: true, creadas: 3, skipped: [] }) })
+        }
+        return Promise.resolve(makeSearchResponse([]))
+      })
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-07" />)
+
+      // Paciente + modo 5 sesiones + servicio (preselecciona el único profesional)
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
+      await user.click(screen.getByRole('button', { name: /5 sesiones/i }))
+      await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+      await waitFor(() => {
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('prof-1')
+      })
+
+      // Elegir la fecha inicial y acumular solo 3 de las 5 sesiones del bono.
+      fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: '2026-07-07' } })
+      for (let i = 0; i < 3; i++) {
+        const chip = await screen.findByRole('button', { name: '12:00' })
+        await user.click(chip)
+      }
+
+      // (a) el botón refleja la reserva parcial y está habilitado.
+      const reservar = screen.getByRole('button', { name: 'Reservar 3 (quedan 2)' })
+      expect(reservar).toBeEnabled()
+      await user.click(reservar)
+
+      // (b) creó el bono con total_sessions = 5 (el cupo completo, no lo elegido).
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find(
+          (c) => c[0] === '/api/treatments' && (c[1] as { method?: string })?.method === 'POST',
+        )
+        expect(call).toBeTruthy()
+        const body = JSON.parse((call![1] as { body: string }).body)
+        expect(body.total_sessions).toBe(5)
+      })
+
+      // (c) agendó solo las 3 sesiones elegidas en el bono creado.
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find(
+          (c) =>
+            typeof c[0] === 'string' &&
+            c[0].includes('/api/treatments/trt-new/sessions') &&
+            (c[1] as { method?: string })?.method === 'POST',
+        )
+        expect(call).toBeTruthy()
+        const body = JSON.parse((call![1] as { body: string }).body)
+        expect(body.slots).toHaveLength(3)
+      })
+
+      // (d) toast con el conteo real y una acción para completar el bono.
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+          expect.stringMatching(/3 de 5/),
+          expect.objectContaining({ action: expect.anything() }),
+        )
+      })
+      const [msg] = vi.mocked(toast.success).mock.calls[0]
+      expect(msg).toContain('Faltan 2')
+    })
+
+    it('el botón está deshabilitado con 0 sesiones elegidas', async () => {
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-07" />)
+
+      await user.click(screen.getByRole('button', { name: /10 sesiones/i }))
+
+      expect(screen.getByRole('button', { name: /reservar/i })).toBeDisabled()
     })
   })
 
