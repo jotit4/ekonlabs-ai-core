@@ -13,6 +13,48 @@ vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries }),
 }))
 
+// Mock useProfessionals — "KLGO a cargo" (migración 047, ficha de admisión).
+// Se mockea el hook directamente (no @tanstack/react-query, que arriba solo
+// expone useQueryClient) — mismo patrón que ProfesionalesView.test.tsx.
+// vi.hoisted: el factory de vi.mock corre ANTES de las const del módulo — sin
+// esto, mockUseProfessionals se leería en TDZ (ReferenceError).
+const { mockUseProfessionals } = vi.hoisted(() => ({
+  mockUseProfessionals: vi.fn(),
+}))
+vi.mock('@/hooks/use-professionals', () => ({
+  useProfessionals: mockUseProfessionals,
+}))
+
+// professional_id como UUID real — primary_professional_id valida formato UUID
+// (z.string().uuid()) en el schema del form, igual que en producción.
+const PROFESSIONAL_ID_1 = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
+const PROFESSIONAL_ID_2 = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22'
+const PROFESSIONAL_ID_3 = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33'
+
+const ACTIVE_PROFESSIONAL_1 = {
+  professional_id: PROFESSIONAL_ID_1,
+  tenant_id: 'tenant-1',
+  name: 'Lic. Gómez',
+  email: 'gomez@clinica.com',
+  active: true,
+  created_at: '2026-05-01T00:00:00Z',
+  services: [],
+  linked_user_email: null,
+}
+
+const ACTIVE_PROFESSIONAL_2 = {
+  ...ACTIVE_PROFESSIONAL_1,
+  professional_id: PROFESSIONAL_ID_2,
+  name: 'Lic. Fernández',
+}
+
+const INACTIVE_PROFESSIONAL = {
+  ...ACTIVE_PROFESSIONAL_1,
+  professional_id: PROFESSIONAL_ID_3,
+  name: 'Lic. Inactivo',
+  active: false,
+}
+
 // Mock ObraSocialSelector para aislar PatientForm de la implementación del selector.
 // El mock renderiza un select nativo accesible como reemplazo simplificado.
 let capturedOnChange: ((val: ObraSocialSelection | null) => void) | undefined
@@ -52,6 +94,11 @@ function makePatient(overrides: Partial<Patient> = {}): Patient {
     reason_for_visit: null,
     alternative_phone: null,
     address: null,
+    lugar: null,
+    ocupacion: null,
+    derivacion: null,
+    actividad_fisica: null,
+    primary_professional_id: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     deletion_requested_at: null,
@@ -60,12 +107,24 @@ function makePatient(overrides: Partial<Patient> = {}): Patient {
   }
 }
 
+function setupProfessionalsMock(
+  professionals = [ACTIVE_PROFESSIONAL_1, ACTIVE_PROFESSIONAL_2, INACTIVE_PROFESSIONAL],
+) {
+  mockUseProfessionals.mockReturnValue({
+    professionals,
+    isPending: false,
+    isError: false,
+    refetch: vi.fn(),
+  })
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('PatientForm — modo create', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.restoreAllMocks()
+    setupProfessionalsMock()
   })
 
   it('renderiza todos los campos del formulario', () => {
@@ -84,7 +143,58 @@ describe('PatientForm — modo create', () => {
     expect(screen.getByLabelText(/teléfono alternativo/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/motivo de consulta/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/notas/i)).toBeInTheDocument()
+    // Ficha de admisión (migración 047 — Fase 1 digitalización)
+    expect(screen.getByLabelText(/^lugar$/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/ocupación/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/derivación/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/actividad física/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/klgo a cargo/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /crear paciente/i })).toBeInTheDocument()
+  })
+
+  it('el select "KLGO a cargo" solo muestra profesionales activos', () => {
+    render(<PatientForm mode="create" />)
+
+    const select = screen.getByLabelText(/klgo a cargo/i)
+    expect(select).toHaveTextContent('Lic. Gómez')
+    expect(select).toHaveTextContent('Lic. Fernández')
+    expect(select).not.toHaveTextContent('Lic. Inactivo')
+    // Opción "Sin asignar" siempre presente para permitir dejar el campo vacío
+    expect(select).toHaveTextContent('Sin asignar')
+  })
+
+  it('modo create — el body del POST incluye los campos de la ficha de admisión', async () => {
+    const mockFetch = vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ patient: { patient_id: 'new-patient-id' } }),
+        { status: 201 }
+      )
+    )
+
+    const user = userEvent.setup()
+    render(<PatientForm mode="create" />)
+
+    await user.type(screen.getByLabelText(/nombre completo/i), 'Lucía Fernández')
+    await user.type(document.getElementById('phone_number')!, '1133334444')
+    await user.type(screen.getByLabelText(/^lugar$/i), 'Mendoza')
+    await user.type(screen.getByLabelText(/ocupación/i), 'Docente')
+    await user.type(screen.getByLabelText(/derivación/i), 'Dr. Pérez')
+    await user.type(screen.getByLabelText(/actividad física/i), 'Running 3x semana')
+    await user.selectOptions(screen.getByLabelText(/klgo a cargo/i), PROFESSIONAL_ID_1)
+
+    await user.click(screen.getByRole('button', { name: /crear paciente/i }))
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledOnce()
+    })
+
+    const call = mockFetch.mock.calls[0]
+    const body = JSON.parse((call[1] as RequestInit).body as string)
+    expect(body.lugar).toBe('Mendoza')
+    expect(body.ocupacion).toBe('Docente')
+    expect(body.derivacion).toBe('Dr. Pérez')
+    expect(body.actividad_fisica).toBe('Running 3x semana')
+    expect(body.primary_professional_id).toBe(PROFESSIONAL_ID_1)
   })
 
   it('en modo create, ObraSocialSelector se renderiza vacío (sin entidad ni plan)', () => {
@@ -283,6 +393,7 @@ describe('PatientForm — modo edit', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.restoreAllMocks()
+    setupProfessionalsMock()
   })
 
   it('modo edit — hace PATCH a /api/patients/[id]', async () => {
@@ -321,6 +432,30 @@ describe('PatientForm — modo edit', () => {
     // Usar el id para evitar ambigüedad con "Teléfono alternativo"
     expect(document.getElementById('phone_number')).toHaveValue('1155556666')
     expect(screen.getByLabelText(/^DNI$/i)).toHaveValue('25678901')
+  })
+
+  it('pre-llena los campos de la ficha de admisión en modo edit', () => {
+    const patient = makePatient({
+      lugar: 'San Rafael',
+      ocupacion: 'Contador',
+      derivacion: 'Dra. Gómez',
+      actividad_fisica: 'Natación',
+      primary_professional_id: PROFESSIONAL_ID_2,
+    })
+    render(<PatientForm mode="edit" patient={patient} />)
+
+    expect(screen.getByLabelText(/^lugar$/i)).toHaveValue('San Rafael')
+    expect(screen.getByLabelText(/ocupación/i)).toHaveValue('Contador')
+    expect(screen.getByLabelText(/derivación/i)).toHaveValue('Dra. Gómez')
+    expect(screen.getByLabelText(/actividad física/i)).toHaveValue('Natación')
+    expect(screen.getByLabelText(/klgo a cargo/i)).toHaveValue(PROFESSIONAL_ID_2)
+  })
+
+  it('en modo edit sin primary_professional_id, "KLGO a cargo" queda en "Sin asignar"', () => {
+    const patient = makePatient({ primary_professional_id: null })
+    render(<PatientForm mode="edit" patient={patient} />)
+
+    expect(screen.getByLabelText(/klgo a cargo/i)).toHaveValue('')
   })
 
   it('en modo edit con obra_social "OSEP — Plan 200", el selector muestra entidad OSEP y plan Plan 200', () => {

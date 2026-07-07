@@ -61,6 +61,11 @@ const VALID_BODY = {
   reason_for_visit: '',
   alternative_phone: '',
   address: '',
+  lugar: '',
+  ocupacion: '',
+  derivacion: '',
+  actividad_fisica: '',
+  primary_professional_id: '',
 }
 
 function makeRequest(body: unknown = VALID_BODY) {
@@ -178,11 +183,11 @@ describe('PATCH /api/patients/[id]', () => {
   // ─── Regresión Story 14.4 (AC 6) — blindaje del write path genérico ─────────
   // PatientApiSchema es z.object NO estricto → Zod v4 STRIPEA claves desconocidas.
   // Este test FIJA ese contrato: los campos clínicos (antecedentes/alergias/
-  // medicacion, HCE — migración 042) inyectados en el body del PATCH genérico
-  // NUNCA llegan al UPDATE. Solo se escriben por PUT /api/patients/[id]/clinical-data
-  // (guard doctor/admin). Si alguien convierte PatientApiSchema a strictObject o
-  // agrega los campos al schema, este test lo detecta.
-  it('PATCH con antecedentes/alergias/medicacion extra → 200 y el payload del UPDATE NO los contiene (Zod strip)', async () => {
+  // medicacion, HCE — migración 042; `cirugias`, migración 047) inyectados en el
+  // body del PATCH genérico NUNCA llegan al UPDATE. Solo se escriben por
+  // PUT /api/patients/[id]/clinical-data (guard doctor/admin). Si alguien convierte
+  // PatientApiSchema a strictObject o agrega los campos al schema, este test lo detecta.
+  it('PATCH con antecedentes/alergias/medicacion/cirugias extra → 200 y el payload del UPDATE NO los contiene (Zod strip)', async () => {
     let capturedUpdatePayload: Record<string, unknown> | null = null
 
     const mockMaybeSingle = vi.fn().mockResolvedValue({ data: mockExistingPatient, error: null })
@@ -207,6 +212,7 @@ describe('PATCH /api/patients/[id]', () => {
       antecedentes: 'HTA inyectada por receptionist',
       alergias: 'Penicilina inyectada',
       medicacion: 'Enalapril inyectado',
+      cirugias: 'Apendicectomía inyectada por receptionist',
     }
     const res = await PATCH(makeRequest(bodyWithClinicalFields), makeContext())
 
@@ -216,14 +222,89 @@ describe('PATCH /api/patients/[id]', () => {
     expect(capturedUpdatePayload).not.toHaveProperty('antecedentes')
     expect(capturedUpdatePayload).not.toHaveProperty('alergias')
     expect(capturedUpdatePayload).not.toHaveProperty('medicacion')
+    expect(capturedUpdatePayload).not.toHaveProperty('cirugias')
     // Los campos administrativos legítimos SÍ pasan
     expect(capturedUpdatePayload).toHaveProperty('full_name', 'María García Editada')
   })
 
+  // ─── Ficha de admisión (migración 047 — Fase 1 digitalización) ──────────────
+  it('persiste los campos administrativos de la ficha de admisión en el UPDATE', async () => {
+    let capturedUpdatePayload: Record<string, unknown> | null = null
+    const professionalId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
+
+    const mockMaybeSingle = vi.fn().mockResolvedValue({ data: mockExistingPatient, error: null })
+    const mockSingle = vi.fn().mockResolvedValue({ data: mockUpdatedPatient, error: null })
+    const mockSelectChain = { eq: vi.fn(() => ({ maybeSingle: mockMaybeSingle })) }
+    const mockUpdate = vi.fn((payload: Record<string, unknown>) => {
+      capturedUpdatePayload = payload
+      return {
+        eq: vi.fn(() => ({
+          select: vi.fn(() => ({ single: mockSingle })),
+        })),
+      }
+    })
+
+    mockFrom.mockReturnValue({
+      select: vi.fn(() => mockSelectChain),
+      update: mockUpdate,
+    })
+
+    const bodyWithFicha = {
+      ...VALID_BODY,
+      lugar: 'Mendoza',
+      ocupacion: 'Docente',
+      derivacion: 'Dr. Pérez',
+      actividad_fisica: 'Running 3x semana',
+      primary_professional_id: professionalId,
+    }
+    const res = await PATCH(makeRequest(bodyWithFicha), makeContext())
+
+    expect(res.status).toBe(200)
+    expect(capturedUpdatePayload).toMatchObject({
+      lugar: 'Mendoza',
+      ocupacion: 'Docente',
+      derivacion: 'Dr. Pérez',
+      actividad_fisica: 'Running 3x semana',
+      primary_professional_id: professionalId,
+    })
+  })
+
+  it('strings vacíos de la ficha de admisión se actualizan como null', async () => {
+    let capturedUpdatePayload: Record<string, unknown> | null = null
+
+    const mockMaybeSingle = vi.fn().mockResolvedValue({ data: mockExistingPatient, error: null })
+    const mockSingle = vi.fn().mockResolvedValue({ data: mockUpdatedPatient, error: null })
+    const mockSelectChain = { eq: vi.fn(() => ({ maybeSingle: mockMaybeSingle })) }
+    const mockUpdate = vi.fn((payload: Record<string, unknown>) => {
+      capturedUpdatePayload = payload
+      return {
+        eq: vi.fn(() => ({
+          select: vi.fn(() => ({ single: mockSingle })),
+        })),
+      }
+    })
+
+    mockFrom.mockReturnValue({
+      select: vi.fn(() => mockSelectChain),
+      update: mockUpdate,
+    })
+
+    const res = await PATCH(makeRequest(VALID_BODY), makeContext())
+    expect(res.status).toBe(200)
+    expect(capturedUpdatePayload).toMatchObject({
+      lugar: null,
+      ocupacion: null,
+      derivacion: null,
+      actividad_fisica: null,
+      primary_professional_id: null,
+    })
+  })
+
   // Sellado Story 14.4 (AC 5): la respuesta { patient } del PATCH genérico sale de un
-  // select EXPLÍCITO de columnas administrativas — nunca .select() pelado (que tras la
-  // migración 042 devolvería antecedentes/alergias/medicacion a sesiones receptionist).
-  it('el UPDATE usa select explícito de columnas administrativas (sin campos clínicos)', async () => {
+  // select EXPLÍCITO de columnas administrativas — nunca .select() pelado (que tras las
+  // migraciones 042/047 devolvería antecedentes/alergias/medicacion/cirugias a
+  // sesiones receptionist).
+  it('el UPDATE usa select explícito de columnas administrativas (sin campos clínicos, con ficha de admisión)', async () => {
     let capturedSelectArg: string | undefined
 
     const mockMaybeSingle = vi.fn().mockResolvedValue({ data: mockExistingPatient, error: null })
@@ -246,6 +327,14 @@ describe('PATCH /api/patients/[id]', () => {
     expect(res.status).toBe(200)
     expect(capturedSelectArg).toBeDefined()
     expect(capturedSelectArg).toContain('patient_id')
+    // Columnas administrativas nuevas (migración 047) SÍ están en el select sellado
+    expect(capturedSelectArg).toContain('lugar')
+    expect(capturedSelectArg).toContain('ocupacion')
+    expect(capturedSelectArg).toContain('derivacion')
+    expect(capturedSelectArg).toContain('actividad_fisica')
+    expect(capturedSelectArg).toContain('primary_professional_id')
+    // Campo clínico (cirugias) JAMÁS en el select administrativo
+    expect(capturedSelectArg).not.toContain('cirugias')
     expect(capturedSelectArg).not.toContain('antecedentes')
     expect(capturedSelectArg).not.toContain('alergias')
     expect(capturedSelectArg).not.toContain('medicacion')

@@ -11,13 +11,15 @@ interface PatientClinicalDataPanelProps {
 }
 
 /**
- * Contexto clínico de base del paciente: antecedentes, alergias y medicación
- * (Story 14.4 — Epic 14 HCE).
+ * Contexto clínico de base del paciente: antecedentes, alergias, medicación y
+ * cirugías (Story 14.4 — Epic 14 HCE; `cirugias` sumado en la digitalización de
+ * la ficha de admisión — migración 047, mismo tratamiento sellado).
  *
- * AUTO-GATEADO POR ROL: HCE (Ley 25.326) → SOLO doctor/admin. Para receptionist
- * (o mientras carga el rol) devuelve null: ni toggle ni sección ni fetch. El host
- * (tab "Notas clínicas" de la ficha) ya está gateado a doctor/admin a nivel tab —
- * este gate interno es la segunda capa de defensa.
+ * AUTO-GATEADO POR ROL: HCE (Ley 25.326) → doctor/admin/receptionist. Mientras
+ * carga el rol (o para cualquier otro rol) devuelve null: ni toggle ni sección
+ * ni fetch. El host (tab "Notas clínicas" de la ficha) ya está gateado a
+ * doctor/admin/receptionist a nivel tab — este gate interno es la segunda capa
+ * de defensa.
  *
  * ⚠️ A diferencia de 14.2/14.3 acá NO hay red de RLS por rol (los campos viven en
  * `patients`): la privacidad es 100% capa de aplicación (guard 403 del endpoint
@@ -42,8 +44,8 @@ export function PatientClinicalDataPanel({ patientId, readOnly = false }: Patien
   const { role, loading } = useCurrentTenant()
 
   // Gate de rol ANTES de montar el contenido (componente aparte para no
-  // condicionar hooks): receptionist / rol desconocido / cargando → nada.
-  if (loading || !['doctor', 'admin'].includes(role ?? '')) return null
+  // condicionar hooks): rol desconocido / cargando → nada.
+  if (loading || !['doctor', 'admin', 'receptionist'].includes(role ?? '')) return null
 
   return <PatientClinicalDataPanelContent patientId={patientId} readOnly={readOnly} />
 }
@@ -122,6 +124,7 @@ function PatientClinicalDataEditor({
   const [antecedentes, setAntecedentes] = useState(clinicalData.antecedentes ?? '')
   const [alergias, setAlergias] = useState(clinicalData.alergias ?? '')
   const [medicacion, setMedicacion] = useState(clinicalData.medicacion ?? '')
+  const [cirugias, setCirugias] = useState(clinicalData.cirugias ?? '')
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
@@ -134,6 +137,7 @@ function PatientClinicalDataEditor({
     antecedentes: clinicalData.antecedentes ?? '',
     alergias: clinicalData.alergias ?? '',
     medicacion: clinicalData.medicacion ?? '',
+    cirugias: clinicalData.cirugias ?? '',
   })
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -149,12 +153,12 @@ function PatientClinicalDataEditor({
     const seq = ++saveSeqRef.current
     setSaveStatus('saving')
     try {
-      // El panel manda los 3 campos juntos — el contrato parcial del PUT es
+      // El panel manda los 4 campos juntos — el contrato parcial del PUT es
       // robustez del API, no requisito de esta UI.
       const res = await fetch(`/api/patients/${patientId}/clinical-data`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ antecedentes, alergias, medicacion }),
+        body: JSON.stringify({ antecedentes, alergias, medicacion, cirugias }),
       })
       // Hay un guardado más nuevo en curso/terminado → esta respuesta es obsoleta.
       if (seq !== saveSeqRef.current) return
@@ -172,7 +176,7 @@ function PatientClinicalDataEditor({
 
       // Patch (a): lo enviado quedó persistido → actualizar la referencia de
       // "último guardado" para que un revert al texto original también dispare autosave.
-      lastSavedRef.current = { antecedentes, alergias, medicacion }
+      lastSavedRef.current = { antecedentes, alergias, medicacion, cirugias }
       // Patch (b): sincronizar la cache SIN invalidar (no refetch → no pisa el
       // tipeo): si el panel se colapsa y re-expande dentro del staleTime, el
       // editor remonta con los datos REALES del server.
@@ -191,7 +195,7 @@ function PatientClinicalDataEditor({
       setErrorMessage(GENERIC_SAVE_ERROR)
       setSaveStatus('error')
     }
-  }, [patientId, antecedentes, alergias, medicacion, queryClient])
+  }, [patientId, antecedentes, alergias, medicacion, cirugias, queryClient])
 
   // Autosave con debounce 1200ms (molde SessionNotePanel). El cleanup del efecto
   // cancela el timer anterior en cada tipeo → un solo PUT por pausa.
@@ -200,7 +204,8 @@ function PatientClinicalDataEditor({
     if (
       antecedentes === lastSavedRef.current.antecedentes &&
       alergias === lastSavedRef.current.alergias &&
-      medicacion === lastSavedRef.current.medicacion
+      medicacion === lastSavedRef.current.medicacion &&
+      cirugias === lastSavedRef.current.cirugias
     ) {
       return // Sin cambios respecto a lo último persistido — no guardar
     }
@@ -211,7 +216,7 @@ function PatientClinicalDataEditor({
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [antecedentes, alergias, medicacion, readOnly])
+  }, [antecedentes, alergias, medicacion, cirugias, readOnly])
 
   // Cleanup al desmontar
   useEffect(() => {
@@ -255,6 +260,7 @@ function PatientClinicalDataEditor({
     { id: 'antecedentes', label: 'Antecedentes', value: antecedentes, setter: setAntecedentes },
     { id: 'alergias', label: 'Alergias', value: alergias, setter: setAlergias },
     { id: 'medicacion', label: 'Medicación actual', value: medicacion, setter: setMedicacion },
+    { id: 'cirugias', label: 'Cirugías', value: cirugias, setter: setCirugias },
   ]
 
   return (

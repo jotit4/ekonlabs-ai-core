@@ -13,9 +13,9 @@ import { treatmentDischargeInputSchema } from '@/lib/schemas/treatment-plan.sche
 // 409 si status !== 'active' (no se toca ese route). Los turnos futuros YA generados
 // NO se cancelan automáticamente (decisión clínica manual — fuera de scope).
 //
-// HCE (Ley 25.326 — datos de salud): SOLO roles 'admin' y 'doctor'. receptionist → 403.
-// Guard = patrón clinical-notes / treatments/[id]/plan (NO el de POST /api/treatments,
-// que es agendamiento con receptionist — copiarlo acá sería un bug de privacidad).
+// HCE (Ley 25.326 — datos de salud): roles 'admin', 'doctor' y 'receptionist' (ISADI:
+// recepción hace la carga administrativa completa de la ficha clínica).
+// Guard = patrón clinical-notes / treatments/[id]/plan.
 //
 // "Transacción" SIN RPC (precedente 13.6 — supabase-js no tiene transacciones sin RPC
 // y una RPC exigiría migración nueva): writes secuenciales con orden seguro.
@@ -39,7 +39,7 @@ interface RouteContext {
   params: Promise<{ id: string }>
 }
 
-const ALLOWED_ROLES = ['admin', 'doctor']
+const ALLOWED_ROLES = ['admin', 'doctor', 'receptionist']
 
 // Validar formato UUID antes de cualquier query (B-11 — patrón session-note)
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -61,7 +61,7 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }
 
-  // 2. Rol clínico — SOLO admin/doctor (receptionist NO accede a HCE)
+  // 2. Rol clínico — admin/doctor/receptionist
   const claims = parseJwtPayload(session.access_token)
   const appRole = claims?.app_role as string | undefined
   if (!ALLOWED_ROLES.includes(appRole ?? '')) {

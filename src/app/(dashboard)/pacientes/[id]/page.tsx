@@ -37,7 +37,7 @@ interface TabDef {
   id: TabId
   label: string
   param: string | null
-  roles?: Array<'doctor' | 'admin'>
+  roles?: Array<'doctor' | 'admin' | 'receptionist'>
 }
 
 const TABS: TabDef[] = [
@@ -45,7 +45,7 @@ const TABS: TabDef[] = [
   { id: 'turnos', label: 'Historial de turnos', param: 'turnos' },
   { id: 'paquetes', label: 'Paquetes', param: 'paquetes' },
   { id: 'conversaciones', label: 'Conversaciones', param: 'conversaciones' },
-  { id: 'notas', label: 'Notas clínicas', param: 'notas', roles: ['doctor', 'admin'] },
+  { id: 'notas', label: 'Notas clínicas', param: 'notas', roles: ['doctor', 'admin', 'receptionist'] },
   { id: 'documentos', label: 'Documentos', param: 'documentos' },
 ]
 
@@ -129,15 +129,18 @@ export default function PacienteFichaPage() {
     queryKey: ['patients', 'one', patientId],
     queryFn: async () => {
       // SELLADO (Story 14.4): select EXPLÍCITO de columnas administrativas — NUNCA '*'.
-      // Tras la migración 042, `patients` tiene antecedentes/alergias/medicacion (HCE,
-      // Ley 25.326) y la RLS NO distingue rol: un '*' acá los traería al browser de
-      // receptionist. La lista = interface Patient completa; columnas futuras de
-      // patients deben agregarse acá a mano (default-deny por columna). Los campos
-      // clínicos viajan SOLO por GET /api/patients/[id]/clinical-data (doctor/admin).
+      // Tras las migraciones 042/047, `patients` tiene antecedentes/alergias/medicacion/
+      // cirugias (HCE, Ley 25.326) y la RLS NO distingue rol: un '*' acá los traería al
+      // browser de receptionist. La lista = interface Patient completa (sin `cirugias`,
+      // que es clínico); columnas futuras de patients deben agregarse acá a mano
+      // (default-deny por columna). Los campos clínicos viajan SOLO por
+      // GET /api/patients/[id]/clinical-data (doctor/admin).
+      // `professionals(name)` embeba primary_professional_id ("KLGO a cargo") — mismo
+      // patrón que use-appointments.ts / PaquetesTracking.
       const { data, error } = await supabase
         .from('patients')
         .select(
-          'patient_id, tenant_id, phone_number, full_name, dni, date_of_birth, email, obra_social, obra_social_number, notes, reason_for_visit, alternative_phone, address, created_at, updated_at, deletion_requested_at, deletion_effective_at, appointments(appointment_id, start_at, end_at, status, reminder_sent_at, attendance_confirmed, services(name, professional_name))'
+          'patient_id, tenant_id, phone_number, full_name, dni, date_of_birth, email, obra_social, obra_social_number, notes, reason_for_visit, alternative_phone, address, lugar, ocupacion, derivacion, actividad_fisica, primary_professional_id, created_at, updated_at, deletion_requested_at, deletion_effective_at, appointments(appointment_id, start_at, end_at, status, reminder_sent_at, attendance_confirmed, services(name, professional_name)), professionals!patients_primary_professional_id_fkey(name)'
         )
         .eq('patient_id', patientId)
         .maybeSingle()
@@ -449,6 +452,12 @@ export default function PacienteFichaPage() {
             <DataField label="Domicilio" value={patient.address} />
             <DataField label="Motivo de consulta" value={patient.reason_for_visit} />
             <DataField label="Notas" value={patient.notes} />
+            {/* Ficha de admisión (migración 047 — Fase 1 digitalización) */}
+            <DataField label="Lugar" value={patient.lugar} />
+            <DataField label="Ocupación" value={patient.ocupacion} />
+            <DataField label="Derivación" value={patient.derivacion} />
+            <DataField label="Actividad física" value={patient.actividad_fisica} />
+            <DataField label="KLGO a cargo" value={patient.professionals?.name} />
           </div>
         </section>
       )}
@@ -474,13 +483,13 @@ export default function PacienteFichaPage() {
         </section>
       )}
 
-      {/* Tab: Notas clínicas — solo para doctor y admin */}
-      {activeTab === 'notas' && (role === 'doctor' || role === 'admin') && (
+      {/* Tab: Notas clínicas — doctor, admin y receptionist */}
+      {activeTab === 'notas' && (role === 'doctor' || role === 'admin' || role === 'receptionist') && (
         <section aria-label="Notas clínicas" role="tabpanel">
           <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Notas clínicas</h2>
 
           {/* Contexto clínico de base (Story 14.4 — HCE): antecedentes/alergias/medicación.
-              Auto-gateado por rol por dentro (doble defensa; el tab ya es doctor/admin).
+              Auto-gateado por rol por dentro (doble defensa; el tab ya es doctor/admin/receptionist).
               readOnly si hay eliminación pendiente: consultar sí, editar no. */}
           <PatientClinicalDataPanel patientId={patientId} readOnly={hasDeletionPending} />
 

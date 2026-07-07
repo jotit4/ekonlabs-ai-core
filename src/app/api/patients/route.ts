@@ -71,6 +71,12 @@ export async function POST(request: Request) {
     reason_for_visit: body.reason_for_visit || null,
     alternative_phone: body.alternative_phone || null,
     address: body.address || null,
+    // Ficha de admisión (migración 047 — Fase 1 digitalización, campos ADMINISTRATIVOS)
+    lugar: body.lugar || null,
+    ocupacion: body.ocupacion || null,
+    derivacion: body.derivacion || null,
+    actividad_fisica: body.actividad_fisica || null,
+    primary_professional_id: body.primary_professional_id || null,
   }
 
   // 7. INSERT en patients con tenant_id del JWT

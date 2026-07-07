@@ -34,7 +34,7 @@ vi.mock('@/lib/audit', () => ({
 import { GET, PUT } from './route'
 
 const PATIENT_ID = 'f0ae17b1-3c90-401c-93ce-32e6118f29e3'
-const CLINICAL_SELECT = 'patient_id, antecedentes, alergias, medicacion'
+const CLINICAL_SELECT = 'patient_id, antecedentes, alergias, medicacion, cirugias'
 
 function makeClinicalRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -42,6 +42,7 @@ function makeClinicalRow(overrides: Record<string, unknown> = {}) {
     antecedentes: 'HTA',
     alergias: 'Penicilina',
     medicacion: 'Enalapril 10mg',
+    cirugias: 'Apendicectomía 2018',
     ...overrides,
   }
 }
@@ -157,11 +158,17 @@ describe('GET /api/patients/[id]/clinical-data', () => {
     expect(res.status).toBe(401)
   })
 
-  it('403 si el rol es receptionist (HCE — Ley 25.326) SIN tocar la DB', async () => {
-    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
+  it('403 si el rol no es admin/doctor/receptionist SIN tocar la DB', async () => {
+    mockParseJwt.mockReturnValue({ app_role: 'otro', tenant_id: 'tenant-1' })
     const res = await GET(makeGetRequest(), makeContext())
     expect(res.status).toBe(403)
     expect(mockFrom).not.toHaveBeenCalled()
+  })
+
+  it('permite rol receptionist (HCE — Ley 25.326: recepción hace la carga clínica)', async () => {
+    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
+    const res = await GET(makeGetRequest(), makeContext())
+    expect(res.status).toBe(200)
   })
 
   it('permite rol admin', async () => {
@@ -182,7 +189,7 @@ describe('GET /api/patients/[id]/clinical-data', () => {
     expect(res.status).toBe(500)
   })
 
-  it('200 con clinical_data y select EXPLÍCITO solo de los 3 campos + patient_id (nunca *)', async () => {
+  it('200 con clinical_data y select EXPLÍCITO solo de los 4 campos + patient_id (nunca *)', async () => {
     const res = await GET(makeGetRequest(), makeContext())
     expect(res.status).toBe(200)
     const body = await res.json()
@@ -190,6 +197,7 @@ describe('GET /api/patients/[id]/clinical-data', () => {
       antecedentes: 'HTA',
       alergias: 'Penicilina',
       medicacion: 'Enalapril 10mg',
+      cirugias: 'Apendicectomía 2018',
     })
     expect(selectArgs).toEqual([CLINICAL_SELECT])
     // La respuesta NO arrastra patient_id ni campos administrativos
@@ -197,14 +205,19 @@ describe('GET /api/patients/[id]/clinical-data', () => {
     expect(body.clinical_data).not.toHaveProperty('full_name')
   })
 
-  it('200 con los 3 campos en null cuando aún no se cargaron', async () => {
+  it('200 con los 4 campos en null cuando aún no se cargaron', async () => {
     configureFrom({
-      selectData: makeClinicalRow({ antecedentes: null, alergias: null, medicacion: null }),
+      selectData: makeClinicalRow({ antecedentes: null, alergias: null, medicacion: null, cirugias: null }),
     })
     const res = await GET(makeGetRequest(), makeContext())
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.clinical_data).toEqual({ antecedentes: null, alergias: null, medicacion: null })
+    expect(body.clinical_data).toEqual({
+      antecedentes: null,
+      alergias: null,
+      medicacion: null,
+      cirugias: null,
+    })
   })
 })
 
@@ -221,12 +234,18 @@ describe('PUT /api/patients/[id]/clinical-data', () => {
     expect(res.status).toBe(401)
   })
 
-  it('403 si el rol es receptionist SIN tocar la DB ni el UPDATE', async () => {
-    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
+  it('403 si el rol no es admin/doctor/receptionist SIN tocar la DB ni el UPDATE', async () => {
+    mockParseJwt.mockReturnValue({ app_role: 'otro', tenant_id: 'tenant-1' })
     const res = await PUT(makePutRequest({ alergias: 'Polen' }), makeContext())
     expect(res.status).toBe(403)
     expect(mockFrom).not.toHaveBeenCalled()
     expect(lastUpdatePayload).toBeNull()
+  })
+
+  it('permite rol receptionist (HCE — Ley 25.326: recepción hace la carga clínica)', async () => {
+    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
+    const res = await PUT(makePutRequest({ alergias: 'Polen' }), makeContext())
+    expect(res.status).toBe(200)
   })
 
   it('permite rol admin', async () => {
@@ -279,12 +298,13 @@ describe('PUT /api/patients/[id]/clinical-data', () => {
     expect(lastUpdatePayload).toBeNull()
   })
 
-  it('200 + UPDATE con los 3 campos normalizados + updated_at manual, SIN tenant/notes/full_name', async () => {
+  it('200 + UPDATE con los 4 campos normalizados + updated_at manual, SIN tenant/notes/full_name', async () => {
     const res = await PUT(
       makePutRequest({
         antecedentes: '  HTA  ',
         alergias: '',
         medicacion: 'Enalapril 10mg',
+        cirugias: '  Apendicectomía 2018  ',
       }),
       makeContext(),
     )
@@ -294,6 +314,7 @@ describe('PUT /api/patients/[id]/clinical-data', () => {
       antecedentes: 'HTA', // trim del schema
       alergias: null, // vacío → null
       medicacion: 'Enalapril 10mg',
+      cirugias: 'Apendicectomía 2018', // trim del schema
       updated_at: expect.any(String),
     })
     // patients NO tiene trigger de updated_at → se setea manualmente (ISO válido)
@@ -311,10 +332,11 @@ describe('PUT /api/patients/[id]/clinical-data', () => {
       antecedentes: 'HTA',
       alergias: 'Penicilina',
       medicacion: 'Enalapril 10mg',
+      cirugias: 'Apendicectomía 2018',
     })
   })
 
-  it('UPDATE PARCIAL: solo alergias en el body → el payload NO toca antecedentes ni medicacion', async () => {
+  it('UPDATE PARCIAL: solo alergias en el body → el payload NO toca antecedentes ni medicacion ni cirugias', async () => {
     const res = await PUT(makePutRequest({ alergias: 'Ibuprofeno' }), makeContext())
     expect(res.status).toBe(200)
     expect(lastUpdatePayload).toEqual({
@@ -322,6 +344,19 @@ describe('PUT /api/patients/[id]/clinical-data', () => {
       updated_at: expect.any(String),
     })
     expect(lastUpdatePayload).not.toHaveProperty('antecedentes')
+    expect(lastUpdatePayload).not.toHaveProperty('medicacion')
+    expect(lastUpdatePayload).not.toHaveProperty('cirugias')
+  })
+
+  it('UPDATE PARCIAL: solo cirugias en el body → el payload NO toca antecedentes/alergias/medicacion', async () => {
+    const res = await PUT(makePutRequest({ cirugias: 'Apendicectomía 2018' }), makeContext())
+    expect(res.status).toBe(200)
+    expect(lastUpdatePayload).toEqual({
+      cirugias: 'Apendicectomía 2018',
+      updated_at: expect.any(String),
+    })
+    expect(lastUpdatePayload).not.toHaveProperty('antecedentes')
+    expect(lastUpdatePayload).not.toHaveProperty('alergias')
     expect(lastUpdatePayload).not.toHaveProperty('medicacion')
   })
 

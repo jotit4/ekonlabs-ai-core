@@ -82,14 +82,60 @@ describe('PATCH /api/patients/[id]/clinical-notes/[note_id]', () => {
     expect(res.status).toBe(401)
   })
 
-  it('retorna 403 si el rol no tiene acceso (receptionist)', async () => {
+  it('retorna 403 si el rol no tiene acceso (rol desconocido)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-uuid-1' } }, error: null })
-    mockParseJwt.mockReturnValueOnce({ app_role: 'receptionist', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' })
+    mockParseJwt.mockReturnValueOnce({ app_role: 'otro', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' })
 
     const res = await PATCH(makeRequest({ content: 'texto' }), makeContext('p1', 'note-uuid-1'))
     expect(res.status).toBe(403)
     const body = await res.json() as { error: string }
     expect(body.error).toBe('Acceso denegado')
+  })
+
+  it('PATCH permite a receptionist editar SU PROPIA nota (ISADI: recepción crea/edita sus notas)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'receptionist-user' } } })
+    mockParseJwt.mockReturnValueOnce({ app_role: 'receptionist', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' })
+
+    let callCount = 0
+    mockFrom.mockImplementation(() => {
+      callCount++
+      if (callCount === 1) {
+        // SELECT de author_id para check de autor (receptionist se trata como doctor: solo propias)
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({ data: { author_id: 'receptionist-user' }, error: null }),
+        }
+      }
+      // UPDATE de la nota
+      return {
+        update: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue({ data: mockNote, error: null }),
+      }
+    })
+
+    const res = await PATCH(makeRequest({ content: 'Editado por recepción' }), makeContext('p1', 'note-uuid-1'))
+    expect(res.status).toBe(200)
+  })
+
+  it('retorna 403 si receptionist intenta editar nota de otro autor (RLS 048: solo autor propio u admin)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'receptionist-user' } } })
+    mockParseJwt.mockReturnValueOnce({ app_role: 'receptionist', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' })
+
+    // La nota pertenece a un doctor, no a la recepcionista
+    const mockChain = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: { author_id: 'doctor-1' }, error: null }),
+    }
+    mockFrom.mockReturnValue(mockChain)
+
+    const res = await PATCH(makeRequest({ content: 'Intento de edición' }), makeContext('p1', 'note-uuid-1'))
+    expect(res.status).toBe(403)
+    const body = await res.json() as { error: string }
+    expect(body.error).toBe('Sin permiso para editar esta nota')
   })
 
   it('retorna 403 si doctor intenta editar nota de otro médico', async () => {

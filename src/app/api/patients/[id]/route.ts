@@ -92,6 +92,12 @@ export async function PATCH(request: Request, context: RouteContext) {
     reason_for_visit: body.reason_for_visit || null,
     alternative_phone: body.alternative_phone || null,
     address: body.address || null,
+    // Ficha de admisión (migración 047 — Fase 1 digitalización, campos ADMINISTRATIVOS)
+    lugar: body.lugar || null,
+    ocupacion: body.ocupacion || null,
+    derivacion: body.derivacion || null,
+    actividad_fisica: body.actividad_fisica || null,
+    primary_professional_id: body.primary_professional_id || null,
     // NO actualizar tenant_id — siempre omitirlo del UPDATE
   }
 
@@ -110,7 +116,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     })
     .eq('patient_id', id)
     .select(
-      'patient_id, tenant_id, phone_number, full_name, dni, date_of_birth, email, obra_social, obra_social_number, notes, reason_for_visit, alternative_phone, address, created_at, updated_at, deletion_requested_at, deletion_effective_at'
+      'patient_id, tenant_id, phone_number, full_name, dni, date_of_birth, email, obra_social, obra_social_number, notes, reason_for_visit, alternative_phone, address, lugar, ocupacion, derivacion, actividad_fisica, primary_professional_id, created_at, updated_at, deletion_requested_at, deletion_effective_at'
     )
     .single()
 

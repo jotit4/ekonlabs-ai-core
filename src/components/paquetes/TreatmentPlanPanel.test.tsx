@@ -67,10 +67,10 @@ async function expandPanel(sessionsRemaining = 0) {
 }
 
 describe('TreatmentPlanPanel — gating por rol (HCE, Ley 25.326)', () => {
-  it('NO renderiza nada para receptionist (ni botón ni sección)', () => {
+  it('NO renderiza nada para un rol desconocido (ni botón ni sección)', () => {
     mockUseCurrentTenant.mockReturnValue({
       tenantId: 'tenant-1',
-      role: 'receptionist',
+      role: 'otro',
       loading: false,
     })
     const { container } = render(<TreatmentPlanPanel treatmentId={TREATMENT_ID} sessionsRemaining={0} />, {
@@ -97,6 +97,12 @@ describe('TreatmentPlanPanel — gating por rol (HCE, Ley 25.326)', () => {
 
   it('renderiza el toggle para admin', () => {
     mockUseCurrentTenant.mockReturnValue({ tenantId: 'tenant-1', role: 'admin', loading: false })
+    render(<TreatmentPlanPanel treatmentId={TREATMENT_ID} sessionsRemaining={0} />, { wrapper: makeWrapper() })
+    expect(screen.getByRole('button', { name: /plan de tratamiento/i })).toBeInTheDocument()
+  })
+
+  it('renderiza el toggle para receptionist (ISADI: recepción carga el plan de tratamiento)', () => {
+    mockUseCurrentTenant.mockReturnValue({ tenantId: 'tenant-1', role: 'receptionist', loading: false })
     render(<TreatmentPlanPanel treatmentId={TREATMENT_ID} sessionsRemaining={0} />, { wrapper: makeWrapper() })
     expect(screen.getByRole('button', { name: /plan de tratamiento/i })).toBeInTheDocument()
   })

@@ -1,9 +1,10 @@
 import { z } from 'zod'
 
 // ─── Datos clínicos de base del paciente (Story 14.4 — Epic 14 HCE) ───────────
-// Schema del body del PUT /api/patients/[id]/clinical-data. Los 3 campos viven
-// como columnas text nullable en `patients` (migración 042 — NO aplicada en prod,
-// la aplica el usuario en EasyPanel).
+// Schema del body del PUT /api/patients/[id]/clinical-data. Los 3 campos originales
+// viven como columnas text nullable en `patients` (migración 042 — NO aplicada en
+// prod, la aplica el usuario en EasyPanel). `cirugias` se sumó en la migración 047
+// (digitalización de la ficha de admisión, Fase 1) con el MISMO tratamiento sellado.
 //
 // ESTRICTO (z.strictObject): rechaza claves desconocidas — en particular
 // `patient_id`/`tenant_id`/`notes`/`full_name`/`clinical_notes`/`dni`
@@ -30,10 +31,11 @@ export const patientClinicalDataSchema = z.strictObject({
   antecedentes: optionalTrimmedText,
   alergias: optionalTrimmedText,
   medicacion: optionalTrimmedText,
+  cirugias: optionalTrimmedText,
 })
 
 // Output normalizado (todas las claves presentes, vacíos → null).
 export type PatientClinicalDataInput = z.output<typeof patientClinicalDataSchema>
 
 // Claves clínicas válidas — única fuente para el chequeo de presencia del PUT.
-export const PATIENT_CLINICAL_DATA_KEYS = ['antecedentes', 'alergias', 'medicacion'] as const
+export const PATIENT_CLINICAL_DATA_KEYS = ['antecedentes', 'alergias', 'medicacion', 'cirugias'] as const

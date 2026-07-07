@@ -4,15 +4,16 @@ import {
   PATIENT_CLINICAL_DATA_KEYS,
 } from './patient-clinical-data.schema'
 
-describe('patientClinicalDataSchema (Story 14.4 — HCE)', () => {
+describe('patientClinicalDataSchema (Story 14.4 — HCE; `cirugias` sumado en migración 047)', () => {
   describe('normalización de texto', () => {
-    it('string vacío → null en los 3 campos', () => {
+    it('string vacío → null en los 4 campos', () => {
       const result = patientClinicalDataSchema.parse({
         antecedentes: '',
         alergias: '',
         medicacion: '',
+        cirugias: '',
       })
-      expect(result).toEqual({ antecedentes: null, alergias: null, medicacion: null })
+      expect(result).toEqual({ antecedentes: null, alergias: null, medicacion: null, cirugias: null })
     })
 
     it('aplica trim al texto', () => {
@@ -20,11 +21,13 @@ describe('patientClinicalDataSchema (Story 14.4 — HCE)', () => {
         antecedentes: '  HTA y diabetes tipo 2  ',
         alergias: '\tPenicilina\n',
         medicacion: ' Enalapril 10mg ',
+        cirugias: ' Apendicectomía 2018 ',
       })
       expect(result).toEqual({
         antecedentes: 'HTA y diabetes tipo 2',
         alergias: 'Penicilina',
         medicacion: 'Enalapril 10mg',
+        cirugias: 'Apendicectomía 2018',
       })
     })
 
@@ -38,14 +41,16 @@ describe('patientClinicalDataSchema (Story 14.4 — HCE)', () => {
         antecedentes: null,
         alergias: null,
         medicacion: null,
+        cirugias: null,
       })
-      expect(result).toEqual({ antecedentes: null, alergias: null, medicacion: null })
+      expect(result).toEqual({ antecedentes: null, alergias: null, medicacion: null, cirugias: null })
     })
 
     it('rechaza valores no-string (número, objeto, array)', () => {
       expect(patientClinicalDataSchema.safeParse({ antecedentes: 42 }).success).toBe(false)
       expect(patientClinicalDataSchema.safeParse({ alergias: { a: 1 } }).success).toBe(false)
       expect(patientClinicalDataSchema.safeParse({ medicacion: ['x'] }).success).toBe(false)
+      expect(patientClinicalDataSchema.safeParse({ cirugias: 42 }).success).toBe(false)
     })
   })
 
@@ -60,11 +65,21 @@ describe('patientClinicalDataSchema (Story 14.4 — HCE)', () => {
       expect(result.alergias).toBe('Ibuprofeno')
     })
 
+    it('parcial válido — solo cirugias', () => {
+      const result = patientClinicalDataSchema.parse({ cirugias: 'Apendicectomía 2018' })
+      expect(result.cirugias).toBe('Apendicectomía 2018')
+    })
+
     it('el output normaliza las claves ausentes a null (por eso el PUT chequea el body crudo, no el output)', () => {
       // Documenta el comportamiento de Zod v4: el transform corre también para
       // claves ausentes → el output parseado NO distingue ausente de null.
       const result = patientClinicalDataSchema.parse({ alergias: 'Ibuprofeno' })
-      expect(result).toEqual({ antecedentes: null, alergias: 'Ibuprofeno', medicacion: null })
+      expect(result).toEqual({
+        antecedentes: null,
+        alergias: 'Ibuprofeno',
+        medicacion: null,
+        cirugias: null,
+      })
     })
   })
 
@@ -87,8 +102,8 @@ describe('patientClinicalDataSchema (Story 14.4 — HCE)', () => {
   })
 
   describe('PATIENT_CLINICAL_DATA_KEYS', () => {
-    it('expone exactamente las 3 claves clínicas (fuente del chequeo de presencia del PUT)', () => {
-      expect(PATIENT_CLINICAL_DATA_KEYS).toEqual(['antecedentes', 'alergias', 'medicacion'])
+    it('expone exactamente las 4 claves clínicas (fuente del chequeo de presencia del PUT)', () => {
+      expect(PATIENT_CLINICAL_DATA_KEYS).toEqual(['antecedentes', 'alergias', 'medicacion', 'cirugias'])
     })
   })
 })

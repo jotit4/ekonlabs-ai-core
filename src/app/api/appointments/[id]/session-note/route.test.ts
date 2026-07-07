@@ -183,8 +183,8 @@ describe('GET /api/appointments/[id]/session-note', () => {
     expect(res.status).toBe(401)
   })
 
-  it('403 si el rol es receptionist (HCE — Ley 25.326), sin queries', async () => {
-    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
+  it('403 si el rol no es admin/doctor/receptionist (HCE — Ley 25.326), sin queries', async () => {
+    mockParseJwt.mockReturnValue({ app_role: 'otro', tenant_id: 'tenant-1' })
     const res = await GET(makeGetRequest(), context)
     expect(res.status).toBe(403)
     expect(mockFrom).not.toHaveBeenCalled()
@@ -192,6 +192,13 @@ describe('GET /api/appointments/[id]/session-note', () => {
 
   it('permite rol admin', async () => {
     mockParseJwt.mockReturnValue({ app_role: 'admin', tenant_id: 'tenant-1' })
+    configureFrom({ noteSelectData: makeNoteRow() })
+    const res = await GET(makeGetRequest(), context)
+    expect(res.status).toBe(200)
+  })
+
+  it('permite rol receptionist (ISADI: recepción carga la evolución por sesión)', async () => {
+    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
     configureFrom({ noteSelectData: makeNoteRow() })
     const res = await GET(makeGetRequest(), context)
     expect(res.status).toBe(200)
@@ -246,12 +253,18 @@ describe('PUT /api/appointments/[id]/session-note', () => {
     expect(res.status).toBe(401)
   })
 
-  it('403 si el rol es receptionist, sin upsert', async () => {
-    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
+  it('403 si el rol no es admin/doctor/receptionist, sin upsert', async () => {
+    mockParseJwt.mockReturnValue({ app_role: 'otro', tenant_id: 'tenant-1' })
     const res = await PUT(makePutRequest(validBody()), context)
     expect(res.status).toBe(403)
     expect(mockFrom).not.toHaveBeenCalled()
     expect(lastUpsertPayload).toBeNull()
+  })
+
+  it('permite rol receptionist (ISADI: recepción carga la evolución por sesión)', async () => {
+    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
+    const res = await PUT(makePutRequest(validBody()), context)
+    expect(res.status).toBe(200)
   })
 
   it('400 si falta tenant_id en el JWT', async () => {

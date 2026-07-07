@@ -32,6 +32,7 @@ function makeClinicalData(overrides: Record<string, unknown> = {}) {
     antecedentes: 'HTA',
     alergias: 'Penicilina',
     medicacion: 'Enalapril 10mg',
+    cirugias: 'Apendicectomía 2018',
     ...overrides,
   }
 }
@@ -62,6 +63,7 @@ function mockGetClinicalData(clinicalData: unknown) {
               antecedentes: sent.antecedentes || null,
               alergias: sent.alergias || null,
               medicacion: sent.medicacion || null,
+              cirugias: sent.cirugias || null,
             },
           }),
       })
@@ -97,10 +99,10 @@ function putCalls() {
 }
 
 describe('PatientClinicalDataPanel — gating por rol (HCE, Ley 25.326)', () => {
-  it('NO renderiza nada para receptionist (ni toggle ni fetch)', () => {
+  it('NO renderiza nada para un rol desconocido (ni toggle ni fetch)', () => {
     mockUseCurrentTenant.mockReturnValue({
       tenantId: 'tenant-1',
-      role: 'receptionist',
+      role: 'otro',
       loading: false,
     })
     const { container } = renderPanel()
@@ -128,6 +130,12 @@ describe('PatientClinicalDataPanel — gating por rol (HCE, Ley 25.326)', () => 
     renderPanel()
     expect(screen.getByRole('button', { name: /contexto clínico de base/i })).toBeInTheDocument()
   })
+
+  it('renderiza el toggle para receptionist (ISADI: recepción carga la ficha clínica)', () => {
+    mockUseCurrentTenant.mockReturnValue({ tenantId: 'tenant-1', role: 'receptionist', loading: false })
+    renderPanel()
+    expect(screen.getByRole('button', { name: /contexto clínico de base/i })).toBeInTheDocument()
+  })
 })
 
 describe('PatientClinicalDataPanel — carga al expandir', () => {
@@ -141,11 +149,14 @@ describe('PatientClinicalDataPanel — carga al expandir', () => {
     })
     expect(screen.getByLabelText('Alergias')).toHaveValue('Penicilina')
     expect(screen.getByLabelText('Medicación actual')).toHaveValue('Enalapril 10mg')
+    expect(screen.getByLabelText('Cirugías')).toHaveValue('Apendicectomía 2018')
     expect(mockFetch).toHaveBeenCalledWith(API_URL)
   })
 
-  it('GET con los 3 campos null (aún sin cargar) → textareas vacías listas para crear', async () => {
-    mockGetClinicalData(makeClinicalData({ antecedentes: null, alergias: null, medicacion: null }))
+  it('GET con los 4 campos null (aún sin cargar) → textareas vacías listas para crear', async () => {
+    mockGetClinicalData(
+      makeClinicalData({ antecedentes: null, alergias: null, medicacion: null, cirugias: null }),
+    )
     renderPanel()
     await userEvent.click(screen.getByRole('button', { name: /contexto clínico de base/i }))
 
@@ -154,6 +165,7 @@ describe('PatientClinicalDataPanel — carga al expandir', () => {
     })
     expect(screen.getByLabelText('Alergias')).toHaveValue('')
     expect(screen.getByLabelText('Medicación actual')).toHaveValue('')
+    expect(screen.getByLabelText('Cirugías')).toHaveValue('')
   })
 
   it('error del GET (p.ej. migración 042 sin aplicar en prod) → mensaje sin crash', async () => {
@@ -184,6 +196,7 @@ describe('PatientClinicalDataPanel — readOnly (eliminación pendiente)', () =>
     expect(antecedentes).toBeDisabled()
     expect(screen.getByLabelText('Alergias')).toBeDisabled()
     expect(screen.getByLabelText('Medicación actual')).toBeDisabled()
+    expect(screen.getByLabelText('Cirugías')).toBeDisabled()
     // Sin indicador de autosave en readOnly
     expect(screen.queryByText(/se guarda automáticamente/i)).not.toBeInTheDocument()
 
@@ -221,7 +234,7 @@ describe('PatientClinicalDataPanel — autosave con debounce 1200ms (fake timers
     expect(putCalls()).toHaveLength(0)
   })
 
-  it('dispara UN PUT con los 3 campos tras 1200ms de pausa', async () => {
+  it('dispara UN PUT con los 4 campos tras 1200ms de pausa', async () => {
     vi.useFakeTimers()
     const antecedentes = await setupExpanded()
     const alergias = screen.getByLabelText('Alergias')
@@ -245,6 +258,7 @@ describe('PatientClinicalDataPanel — autosave con debounce 1200ms (fake timers
       antecedentes: 'HTA y DBT2',
       alergias: 'Ibuprofeno',
       medicacion: 'Enalapril 10mg',
+      cirugias: 'Apendicectomía 2018',
     })
   })
 

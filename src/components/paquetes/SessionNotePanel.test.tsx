@@ -86,10 +86,10 @@ async function flushMicrotasks() {
 }
 
 describe('SessionNotePanel — gating por rol (HCE, Ley 25.326)', () => {
-  it('NO renderiza nada para receptionist (ni botón ni fetch)', () => {
+  it('NO renderiza nada para un rol desconocido (ni botón ni fetch)', () => {
     mockUseCurrentTenant.mockReturnValue({
       tenantId: 'tenant-1',
-      role: 'receptionist',
+      role: 'otro',
       loading: false,
     })
     const { container } = renderPanel()
@@ -114,6 +114,12 @@ describe('SessionNotePanel — gating por rol (HCE, Ley 25.326)', () => {
 
   it('renderiza el toggle para admin', () => {
     mockUseCurrentTenant.mockReturnValue({ tenantId: 'tenant-1', role: 'admin', loading: false })
+    renderPanel()
+    expect(screen.getByRole('button', { name: /evolución de la sesión/i })).toBeInTheDocument()
+  })
+
+  it('renderiza el toggle para receptionist (ISADI: recepción carga la evolución)', () => {
+    mockUseCurrentTenant.mockReturnValue({ tenantId: 'tenant-1', role: 'receptionist', loading: false })
     renderPanel()
     expect(screen.getByRole('button', { name: /evolución de la sesión/i })).toBeInTheDocument()
   })

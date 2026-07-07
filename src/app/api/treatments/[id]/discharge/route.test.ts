@@ -209,8 +209,8 @@ describe('POST /api/treatments/[id]/discharge — guards', () => {
     expect(res.status).toBe(401)
   })
 
-  it('403 si el rol es receptionist (HCE — Ley 25.326), sin tocar la DB', async () => {
-    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
+  it('403 si el rol no es admin/doctor/receptionist (HCE — Ley 25.326), sin tocar la DB', async () => {
+    mockParseJwt.mockReturnValue({ app_role: 'otro', tenant_id: 'tenant-1' })
     const res = await POST(makeRequest(validBody), context)
     expect(res.status).toBe(403)
     expect(mockFrom).not.toHaveBeenCalled()
@@ -218,6 +218,12 @@ describe('POST /api/treatments/[id]/discharge — guards', () => {
 
   it('permite rol admin (200)', async () => {
     mockParseJwt.mockReturnValue({ app_role: 'admin', tenant_id: 'tenant-1' })
+    const res = await POST(makeRequest(validBody), context)
+    expect(res.status).toBe(200)
+  })
+
+  it('permite rol receptionist (200) (ISADI: recepción registra el alta)', async () => {
+    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
     const res = await POST(makeRequest(validBody), context)
     expect(res.status).toBe(200)
   })
@@ -413,7 +419,7 @@ describe('POST /api/treatments/[id]/discharge — audit trail', () => {
   })
 
   it('NO llama logAudit en 4xx (403 / 404 / 409)', async () => {
-    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
+    mockParseJwt.mockReturnValue({ app_role: 'otro', tenant_id: 'tenant-1' })
     await POST(makeRequest(validBody), context)
 
     mockParseJwt.mockReturnValue({ app_role: 'doctor', tenant_id: 'tenant-1' })

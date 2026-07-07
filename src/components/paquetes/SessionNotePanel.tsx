@@ -15,9 +15,10 @@ interface SessionNotePanelProps {
 /**
  * Evolución por sesión ligada al turno (Story 14.3 — Epic 14 HCE).
  *
- * AUTO-GATEADO POR ROL: HCE (Ley 25.326) → SOLO doctor/admin. Para receptionist
- * (o mientras carga el rol) devuelve null: ni botón ni sección ni fetch. Los hosts
- * (TurnoDetailModal / PaquetesTracking) lo montan sin lógica de rol propia.
+ * AUTO-GATEADO POR ROL: HCE (Ley 25.326) → doctor/admin/receptionist. Mientras
+ * carga el rol (o para cualquier otro rol) devuelve null: ni botón ni sección
+ * ni fetch. Los hosts (TurnoDetailModal / PaquetesTracking) lo montan sin
+ * lógica de rol propia.
  *
  * Colapsado por defecto; al expandir carga la evolución vía
  * GET /api/appointments/[id]/session-note (API Route — el guard 403 vive en el
@@ -37,8 +38,8 @@ export function SessionNotePanel({
   const { role, loading } = useCurrentTenant()
 
   // Gate de rol ANTES de montar el contenido (componente aparte para no
-  // condicionar hooks): receptionist / rol desconocido / cargando → nada.
-  if (loading || !['doctor', 'admin'].includes(role ?? '')) return null
+  // condicionar hooks): rol desconocido / cargando → nada.
+  if (loading || !['doctor', 'admin', 'receptionist'].includes(role ?? '')) return null
 
   return (
     <SessionNotePanelContent

@@ -177,8 +177,8 @@ describe('GET /api/treatments/[id]/plan', () => {
     expect(res.status).toBe(401)
   })
 
-  it('403 si el rol es receptionist (HCE — Ley 25.326)', async () => {
-    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
+  it('403 si el rol no es admin/doctor/receptionist (HCE — Ley 25.326)', async () => {
+    mockParseJwt.mockReturnValue({ app_role: 'otro', tenant_id: 'tenant-1' })
     const res = await GET(makeGetRequest(), context)
     expect(res.status).toBe(403)
     expect(mockFrom).not.toHaveBeenCalled()
@@ -186,6 +186,13 @@ describe('GET /api/treatments/[id]/plan', () => {
 
   it('permite rol admin', async () => {
     mockParseJwt.mockReturnValue({ app_role: 'admin', tenant_id: 'tenant-1' })
+    configureFrom({ planSelectData: makePlanRow() })
+    const res = await GET(makeGetRequest(), context)
+    expect(res.status).toBe(200)
+  })
+
+  it('permite rol receptionist (ISADI: recepción carga el plan de tratamiento)', async () => {
+    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
     configureFrom({ planSelectData: makePlanRow() })
     const res = await GET(makeGetRequest(), context)
     expect(res.status).toBe(200)
@@ -234,11 +241,17 @@ describe('PUT /api/treatments/[id]/plan', () => {
     expect(res.status).toBe(401)
   })
 
-  it('403 si el rol es receptionist', async () => {
-    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
+  it('403 si el rol no es admin/doctor/receptionist', async () => {
+    mockParseJwt.mockReturnValue({ app_role: 'otro', tenant_id: 'tenant-1' })
     const res = await PUT(makePutRequest(validBody()), context)
     expect(res.status).toBe(403)
     expect(lastUpsertPayload).toBeNull()
+  })
+
+  it('permite rol receptionist (ISADI: recepción carga el plan de tratamiento)', async () => {
+    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
+    const res = await PUT(makePutRequest(validBody()), context)
+    expect(res.status).toBe(200)
   })
 
   it('400 si falta tenant_id en el JWT', async () => {

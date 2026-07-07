@@ -7,37 +7,39 @@ import {
   PATIENT_CLINICAL_DATA_KEYS,
 } from '@/lib/schemas/patient-clinical-data.schema'
 
-// GET/PUT /api/patients/[id]/clinical-data — Antecedentes, alergias y medicación
-// estructurados del paciente (Story 14.4 — Epic 14 HCE).
+// GET/PUT /api/patients/[id]/clinical-data — Antecedentes, alergias, medicación
+// y cirugías estructurados del paciente (Story 14.4 — Epic 14 HCE; `cirugias`
+// sumado en la digitalización de la ficha de admisión — migración 047).
 //
-// HCE (Ley 25.326 — datos de salud): SOLO roles 'admin' y 'doctor'. receptionist → 403.
-// ⚠️ A diferencia de 14.2/14.3 acá NO hay red de RLS: los 3 campos viven en `patients`
+// HCE (Ley 25.326 — datos de salud): roles 'admin', 'doctor' y 'receptionist' (ISADI:
+// recepción hace la carga administrativa completa de la ficha clínica).
+// ⚠️ A diferencia de 14.2/14.3 acá NO hay red de RLS: los 4 campos viven en `patients`
 // y su RLS (migración 20260511000000) es por fila/tenant SIN distinción de rol — la
 // privacidad de estas columnas es 100% capa de aplicación (este guard + el sellado de
 // los read paths generales por select explícito). Riesgo residual aceptado en 14.1:
 // un insider con JWT puede leer/escribir las columnas vía PostgREST directo.
 //
-// Este endpoint es la ÚNICA vía de lectura/escritura de los 3 campos clínicos:
+// Este endpoint es la ÚNICA vía de lectura/escritura de los 4 campos clínicos:
 // - El PATCH genérico de /api/patients/[id] es administrativo (receptionist/admin)
 //   y su Zod stripea estas claves (test de regresión en su route.test.ts).
-// - El select explícito SOLO trae los 3 campos + patient_id (nunca '*'): tampoco
+// - El select explícito SOLO trae los 4 campos + patient_id (nunca '*'): tampoco
 //   debe convertirse en un leak de datos administrativos ni viceversa.
 //
 // AR14: queries autenticadas SIN .eq('tenant_id', ...) — la RLS por tenant filtra.
 // AR15: sin admin.ts. AR10: API Route, no Server Action.
 //
-// ⚠️ DEPENDENCIA DE RUNTIME: requiere la migración 042 (columnas antecedentes/
-// alergias/medicacion en patients) APLICADA. Aún NO está aplicada en prod — la
-// aplica el usuario en EasyPanel. Sin la 042 las queries fallan → 500 (el panel
+// ⚠️ DEPENDENCIA DE RUNTIME: requiere las migraciones 042 (antecedentes/alergias/
+// medicacion) y 047 (cirugias) APLICADAS. Aún NO están aplicadas en prod — las
+// aplica el usuario en EasyPanel. Sin ellas las queries fallan → 500 (el panel
 // degrada con mensaje no rompiente).
 
 interface RouteContext {
   params: Promise<{ id: string }>
 }
 
-const ALLOWED_ROLES = ['admin', 'doctor']
+const ALLOWED_ROLES = ['admin', 'doctor', 'receptionist']
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const CLINICAL_SELECT = 'patient_id, antecedentes, alergias, medicacion'
+const CLINICAL_SELECT = 'patient_id, antecedentes, alergias, medicacion, cirugias'
 
 export async function GET(_request: Request, context: RouteContext): Promise<Response> {
   const { id } = await context.params
@@ -56,7 +58,7 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }
 
-  // 3. Rol clínico — SOLO admin/doctor (receptionist NO accede a HCE), SIN tocar la DB
+  // 3. Rol clínico — admin/doctor/receptionist, SIN tocar la DB
   const claims = parseJwtPayload(session.access_token)
   const appRole = claims?.app_role as string | undefined
   if (!ALLOWED_ROLES.includes(appRole ?? '')) {
@@ -84,6 +86,7 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
         antecedentes: patient.antecedentes ?? null,
         alergias: patient.alergias ?? null,
         medicacion: patient.medicacion ?? null,
+        cirugias: patient.cirugias ?? null,
       },
     },
     { status: 200 },
@@ -107,7 +110,7 @@ export async function PUT(request: Request, context: RouteContext): Promise<Resp
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }
 
-  // 3. Rol clínico — SOLO admin/doctor, SIN tocar la DB
+  // 3. Rol clínico — admin/doctor/receptionist, SIN tocar la DB
   const claims = parseJwtPayload(session.access_token)
   const appRole = claims?.app_role as string | undefined
   if (!ALLOWED_ROLES.includes(appRole ?? '')) {
@@ -186,6 +189,7 @@ export async function PUT(request: Request, context: RouteContext): Promise<Resp
         antecedentes: updated.antecedentes ?? null,
         alergias: updated.alergias ?? null,
         medicacion: updated.medicacion ?? null,
+        cirugias: updated.cirugias ?? null,
       },
     },
     { status: 200 },

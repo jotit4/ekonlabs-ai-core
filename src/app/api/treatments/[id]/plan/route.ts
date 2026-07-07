@@ -6,9 +6,9 @@ import { treatmentPlanInputSchema } from '@/lib/schemas/treatment-plan.schema'
 
 // GET/PUT /api/treatments/[id]/plan — Plan de tratamiento 1:1 con el paquete (Story 14.2).
 //
-// HCE (Ley 25.326 — datos de salud): SOLO roles 'admin' y 'doctor'. receptionist → 403.
-// Guard de rol = patrón clinical-notes (NO el de POST /api/treatments, que es agendamiento
-// con admin/receptionist — copiarlo acá sería un bug de privacidad).
+// HCE (Ley 25.326 — datos de salud): roles 'admin', 'doctor' y 'receptionist' (ISADI:
+// recepción hace la carga administrativa completa de la ficha clínica).
+// Guard de rol = patrón clinical-notes.
 //
 // AR14: queries autenticadas SIN .eq('tenant_id', ...) — la RLS de la migración 040 filtra
 // (incluir tenant_id en el payload del upsert SÍ corresponde: columna NOT NULL + WITH CHECK).
@@ -22,7 +22,7 @@ interface RouteContext {
   params: Promise<{ id: string }>
 }
 
-const ALLOWED_ROLES = ['admin', 'doctor']
+const ALLOWED_ROLES = ['admin', 'doctor', 'receptionist']
 
 export async function GET(_request: Request, context: RouteContext): Promise<Response> {
   const { id } = await context.params
@@ -35,7 +35,7 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }
 
-  // 2. Rol clínico — SOLO admin/doctor (receptionist NO accede a HCE)
+  // 2. Rol clínico — admin/doctor/receptionist
   const claims = parseJwtPayload(session.access_token)
   const appRole = claims?.app_role as string | undefined
   if (!ALLOWED_ROLES.includes(appRole ?? '')) {
@@ -83,7 +83,7 @@ export async function PUT(request: Request, context: RouteContext): Promise<Resp
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }
 
-  // 2. Rol clínico — SOLO admin/doctor
+  // 2. Rol clínico — admin/doctor/receptionist
   const claims = parseJwtPayload(session.access_token)
   const appRole = claims?.app_role as string | undefined
   if (!ALLOWED_ROLES.includes(appRole ?? '')) {

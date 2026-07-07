@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form'
 import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
 import { useQueryClient } from '@tanstack/react-query'
 import { PatientFormSchema, type PatientFormValues } from '@/lib/schemas/patient.schema'
+import { useProfessionals } from '@/hooks/use-professionals'
 import type { Patient } from '@/types/patients'
 import { ObraSocialSelector, type ObraSocialSelection } from './ObraSocialSelector'
 
@@ -48,6 +49,10 @@ function parseObraSocial(rawValue: string | null | undefined): ObraSocialSelecti
 export function PatientForm({ mode, patient, onSuccess }: PatientFormProps) {
   const queryClient = useQueryClient()
 
+  // "KLGO a cargo" (migración 047 — ficha de admisión) — solo profesionales activos
+  const { professionals } = useProfessionals()
+  const activeProfessionals = professionals.filter((p) => p.active)
+
   // Estado local para el selector en cascada de obra social (Story 3.3)
   const [obraSocialSelection, setObraSocialSelection] = useState<ObraSocialSelection | null>(
     () => (mode === 'edit' && patient?.obra_social)
@@ -76,6 +81,11 @@ export function PatientForm({ mode, patient, onSuccess }: PatientFormProps) {
             reason_for_visit: patient.reason_for_visit ?? '',
             alternative_phone: patient.alternative_phone ?? '',
             address: patient.address ?? '',
+            lugar: patient.lugar ?? '',
+            ocupacion: patient.ocupacion ?? '',
+            derivacion: patient.derivacion ?? '',
+            actividad_fisica: patient.actividad_fisica ?? '',
+            primary_professional_id: patient.primary_professional_id ?? '',
           }
         : {
             full_name: '',
@@ -89,6 +99,11 @@ export function PatientForm({ mode, patient, onSuccess }: PatientFormProps) {
             reason_for_visit: '',
             alternative_phone: '',
             address: '',
+            lugar: '',
+            ocupacion: '',
+            derivacion: '',
+            actividad_fisica: '',
+            primary_professional_id: '',
           },
   })
 
@@ -372,6 +387,94 @@ export function PatientForm({ mode, patient, onSuccess }: PatientFormProps) {
             className={inputClass(!!errors.notes)}
             aria-invalid={!!errors.notes}
           />
+        </div>
+      </fieldset>
+
+      {/* ── Sección: Ficha de admisión (migración 047 — Fase 1 digitalización) ── */}
+      <fieldset className="space-y-4">
+        <legend className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] pb-1">
+          Ficha de admisión
+        </legend>
+
+        {/* lugar */}
+        <div>
+          <label htmlFor="lugar" className={labelClass()}>
+            Lugar
+          </label>
+          <input
+            id="lugar"
+            type="text"
+            {...register('lugar')}
+            className={inputClass(!!errors.lugar)}
+            aria-invalid={!!errors.lugar}
+          />
+        </div>
+
+        {/* ocupacion */}
+        <div>
+          <label htmlFor="ocupacion" className={labelClass()}>
+            Ocupación
+          </label>
+          <input
+            id="ocupacion"
+            type="text"
+            {...register('ocupacion')}
+            className={inputClass(!!errors.ocupacion)}
+            aria-invalid={!!errors.ocupacion}
+          />
+        </div>
+
+        {/* derivacion */}
+        <div>
+          <label htmlFor="derivacion" className={labelClass()}>
+            Derivación
+          </label>
+          <input
+            id="derivacion"
+            type="text"
+            {...register('derivacion')}
+            className={inputClass(!!errors.derivacion)}
+            aria-invalid={!!errors.derivacion}
+          />
+        </div>
+
+        {/* actividad_fisica */}
+        <div>
+          <label htmlFor="actividad_fisica" className={labelClass()}>
+            Actividad física
+          </label>
+          <input
+            id="actividad_fisica"
+            type="text"
+            {...register('actividad_fisica')}
+            className={inputClass(!!errors.actividad_fisica)}
+            aria-invalid={!!errors.actividad_fisica}
+          />
+        </div>
+
+        {/* primary_professional_id — KLGO a cargo (select de profesionales activos) */}
+        <div>
+          <label htmlFor="primary_professional_id" className={labelClass()}>
+            KLGO a cargo
+          </label>
+          <select
+            id="primary_professional_id"
+            {...register('primary_professional_id')}
+            className={inputClass(!!errors.primary_professional_id)}
+            aria-invalid={!!errors.primary_professional_id}
+          >
+            <option value="">Sin asignar</option>
+            {activeProfessionals.map((professional) => (
+              <option key={professional.professional_id} value={professional.professional_id}>
+                {professional.name}
+              </option>
+            ))}
+          </select>
+          {errors.primary_professional_id && (
+            <p id="primary-professional-id-error" role="alert" className="mt-1 text-xs text-red-600">
+              {errors.primary_professional_id.message}
+            </p>
+          )}
         </div>
       </fieldset>
 

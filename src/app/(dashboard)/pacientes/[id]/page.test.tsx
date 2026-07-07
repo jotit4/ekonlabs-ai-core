@@ -61,6 +61,11 @@ function makePatient(overrides: Partial<Patient> = {}): Patient {
     reason_for_visit: 'Control general',
     alternative_phone: null,
     address: 'Av. Corrientes 1234',
+    lugar: null,
+    ocupacion: null,
+    derivacion: null,
+    actividad_fisica: null,
+    primary_professional_id: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     deletion_requested_at: null,
@@ -213,6 +218,45 @@ describe('PacienteFichaPage', () => {
     expect(screen.getByText('OSDE')).toBeInTheDocument()
   })
 
+  // ── Ficha de admisión (migración 047 — Fase 1 digitalización) ───────────────
+
+  it('muestra los campos de la ficha de admisión (lugar/ocupación/derivación/actividad física/KLGO a cargo)', async () => {
+    mockQueryState.data = makePatient({
+      lugar: 'Mendoza',
+      ocupacion: 'Docente',
+      derivacion: 'Dr. Pérez',
+      actividad_fisica: 'Running 3x semana',
+      primary_professional_id: 'prof-1',
+      professionals: { name: 'Lic. Gómez' },
+    })
+
+    render(<PacienteFichaPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Mendoza')).toBeInTheDocument()
+    })
+    expect(screen.getByText('Docente')).toBeInTheDocument()
+    expect(screen.getByText('Dr. Pérez')).toBeInTheDocument()
+    expect(screen.getByText('Running 3x semana')).toBeInTheDocument()
+    // "KLGO a cargo" muestra el NOMBRE del profesional, nunca el uuid
+    expect(screen.getByText('Lic. Gómez')).toBeInTheDocument()
+    expect(screen.queryByText('prof-1')).not.toBeInTheDocument()
+  })
+
+  it('sin primary_professional_id → "KLGO a cargo" muestra el placeholder "—"', async () => {
+    mockQueryState.data = makePatient({ primary_professional_id: null, professionals: null })
+
+    render(<PacienteFichaPage />)
+
+    await waitFor(() => {
+      const allAnaLopez = screen.getAllByText('Ana López')
+      expect(allAnaLopez.length).toBeGreaterThanOrEqual(1)
+    })
+    // Todos los DataField sin valor muestran "—" — solo confirmamos que no crashea
+    // ni muestra un uuid/objeto vacío.
+    expect(screen.queryByText('[object Object]')).not.toBeInTheDocument()
+  })
+
   it('botón "‹ Pacientes" navega a /pacientes', async () => {
     const user = userEvent.setup()
     render(<PacienteFichaPage />)
@@ -259,7 +303,7 @@ describe('PacienteFichaPage', () => {
     expect(screen.getByRole('tab', { name: /datos personales/i })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /historial de turnos/i })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /conversaciones/i })).toBeInTheDocument()
-    // Notas clínicas solo visible para doctor/admin (role=admin en mock)
+    // Notas clínicas visible para doctor/admin/receptionist (role=admin en mock)
     expect(screen.getByRole('tab', { name: /notas clínicas/i })).toBeInTheDocument()
   })
 
@@ -277,10 +321,10 @@ describe('PacienteFichaPage', () => {
 
   // ── Tests de rol para tab "Notas clínicas" (Story 3.6) ───────────────────────
 
-  it('rol receptionist → tab "Notas clínicas" NO aparece en el DOM', () => {
+  it('rol receptionist → tab "Notas clínicas" SÍ aparece en el DOM (ISADI: recepción hace la carga clínica)', () => {
     mockCurrentTenant.role = 'receptionist'
     render(<PacienteFichaPage />)
-    expect(screen.queryByRole('tab', { name: /notas clínicas/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /notas clínicas/i })).toBeInTheDocument()
   })
 
   it('rol doctor → tab "Notas clínicas" SÍ aparece en el DOM', () => {
@@ -303,12 +347,12 @@ describe('PacienteFichaPage', () => {
     expect(screen.getByTestId('clinical-note-editor')).toBeInTheDocument()
   })
 
-  it('?tab=notas con rol receptionist → NO renderiza el panel de notas', () => {
+  it('?tab=notas con rol receptionist → renderiza ClinicalNotesHistory y ClinicalNoteEditor', () => {
     mockCurrentTenant.role = 'receptionist'
     setSearchParams(new URLSearchParams('tab=notas'))
     render(<PacienteFichaPage />)
-    expect(screen.queryByTestId('clinical-notes-history')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('clinical-note-editor')).not.toBeInTheDocument()
+    expect(screen.getByTestId('clinical-notes-history')).toBeInTheDocument()
+    expect(screen.getByTestId('clinical-note-editor')).toBeInTheDocument()
   })
 
   // ── Tests de eliminación programada (Story 3.7) ─────────────────────────────

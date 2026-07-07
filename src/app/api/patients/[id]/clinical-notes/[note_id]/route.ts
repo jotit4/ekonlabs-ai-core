@@ -13,16 +13,20 @@ export async function PATCH(request: Request, context: RouteContext) {
   } = await supabase.auth.getUser()
   if (!user) return Response.json({ error: 'No autorizado' }, { status: 401 })
 
-  // Check de rol: solo admin y doctor pueden editar notas clínicas (C-10 extendido)
+  // Check de rol: admin, doctor y receptionist pueden editar notas clínicas (C-10 extendido)
   const { data: sessionData } = await supabase.auth.getSession()
   const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
   const appRole = claims?.app_role as string | undefined
-  if (!['admin', 'doctor'].includes(appRole ?? '')) {
+  if (!['admin', 'doctor', 'receptionist'].includes(appRole ?? '')) {
     return Response.json({ error: 'Acceso denegado' }, { status: 403 })
   }
 
-  // Check de autor: un doctor solo puede editar sus propias notas (admins pueden editar cualquier nota)
-  if (appRole === 'doctor') {
+  // Check de autor: doctor y receptionist solo pueden editar sus propias notas
+  // (admin puede editar cualquier nota). Espeja la RLS de clinical_notes_update_own
+  // (migración 048 abrió SELECT/INSERT de clinical_notes a receptionist, pero
+  // DEJÓ el UPDATE restringido a autor propio u admin — recepción edita las
+  // notas que crea).
+  if (appRole === 'doctor' || appRole === 'receptionist') {
     const { data: existingNote } = await supabase
       .from('clinical_notes')
       .select('author_id')

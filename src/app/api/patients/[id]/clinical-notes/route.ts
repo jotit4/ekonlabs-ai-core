@@ -17,11 +17,11 @@ export async function GET(_request: Request, context: RouteContext) {
   } = await supabase.auth.getUser()
   if (!user) return Response.json({ error: 'No autorizado' }, { status: 401 })
 
-  // Check de rol: solo admin y doctor pueden leer notas clínicas (C-10)
+  // Check de rol: admin, doctor y receptionist pueden leer notas clínicas (C-10)
   const { data: sessionData } = await supabase.auth.getSession()
   const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
   const appRole = claims?.app_role as string | undefined
-  if (!['admin', 'doctor'].includes(appRole ?? '')) {
+  if (!['admin', 'doctor', 'receptionist'].includes(appRole ?? '')) {
     return Response.json({ error: 'Acceso denegado' }, { status: 403 })
   }
 
@@ -48,7 +48,7 @@ export async function POST(request: Request, context: RouteContext) {
   const { data: sessionData } = await supabase.auth.getSession()
   const claims = parseJwtPayload(sessionData.session?.access_token ?? '')
   const appRole = claims?.app_role as string | undefined
-  if (!['admin', 'doctor'].includes(appRole ?? '')) {
+  if (!['admin', 'doctor', 'receptionist'].includes(appRole ?? '')) {
     return Response.json({ error: 'Acceso denegado' }, { status: 403 })
   }
 

@@ -45,6 +45,17 @@ export const PatientFormSchema = z.object({
   reason_for_visit: z.string().optional(),
   alternative_phone: z.string().optional(),
   address: z.string().optional(),
+  // Ficha de admisión (migración 047 — Fase 1 digitalización, campos ADMINISTRATIVOS)
+  lugar: z.string().optional(),
+  ocupacion: z.string().optional(),
+  derivacion: z.string().optional(),
+  actividad_fisica: z.string().optional(),
+  // "KLGO a cargo" — <select> poblado con profesionales activos; '' = sin asignar
+  primary_professional_id: z
+    .string()
+    .uuid({ error: 'Profesional inválido' })
+    .or(z.literal(''))
+    .optional(),
 })
 
 export type PatientFormValues = z.infer<typeof PatientFormSchema>

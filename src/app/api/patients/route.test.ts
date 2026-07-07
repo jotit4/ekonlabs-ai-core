@@ -73,6 +73,11 @@ const VALID_BODY = {
   reason_for_visit: '',
   alternative_phone: '',
   address: '',
+  lugar: '',
+  ocupacion: '',
+  derivacion: '',
+  actividad_fisica: '',
+  primary_professional_id: '',
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -169,5 +174,53 @@ describe('POST /api/patients', () => {
     // tenant_id del body no debe aparecer en la llamada
     const insertCall = mockInsert.mock.calls[0][0]
     expect(insertCall.tenant_id).toBe('tenant-uuid-1234')
+  })
+
+  // ─── Ficha de admisión (migración 047 — Fase 1 digitalización) ──────────────
+  it('persiste los campos administrativos de la ficha de admisión (lugar/ocupacion/derivacion/actividad_fisica/primary_professional_id)', async () => {
+    const professionalId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
+    const bodyWithFicha = {
+      ...VALID_BODY,
+      lugar: 'Mendoza',
+      ocupacion: 'Docente',
+      derivacion: 'Dr. Pérez',
+      actividad_fisica: 'Running 3x semana',
+      primary_professional_id: professionalId,
+    }
+    const res = await POST(makeRequest(bodyWithFicha))
+    expect(res.status).toBe(201)
+
+    expect(mockInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lugar: 'Mendoza',
+        ocupacion: 'Docente',
+        derivacion: 'Dr. Pérez',
+        actividad_fisica: 'Running 3x semana',
+        primary_professional_id: professionalId,
+      })
+    )
+  })
+
+  it('strings vacíos de la ficha de admisión se insertan como null', async () => {
+    await POST(makeRequest(VALID_BODY))
+
+    expect(mockInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lugar: null,
+        ocupacion: null,
+        derivacion: null,
+        actividad_fisica: null,
+        primary_professional_id: null,
+      })
+    )
+  })
+
+  it('no persiste `cirugias` (clínico) vía el POST administrativo — Zod lo stripea', async () => {
+    const bodyWithCirugias = { ...VALID_BODY, cirugias: 'Apendicectomía inyectada por receptionist' }
+    const res = await POST(makeRequest(bodyWithCirugias))
+    expect(res.status).toBe(201)
+
+    const insertCall = mockInsert.mock.calls[0][0]
+    expect(insertCall).not.toHaveProperty('cirugias')
   })
 })

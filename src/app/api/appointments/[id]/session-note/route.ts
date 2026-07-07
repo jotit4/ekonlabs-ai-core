@@ -6,10 +6,9 @@ import { sessionNoteInputSchema } from '@/lib/schemas/session-note.schema'
 
 // GET/PUT /api/appointments/[id]/session-note — Evolución por sesión ligada al turno (Story 14.3).
 //
-// HCE (Ley 25.326 — datos de salud): SOLO roles 'admin' y 'doctor'. receptionist → 403.
-// Guard de rol = patrón clinical-notes / treatments/[id]/plan (NO el de PATCH
-// /api/appointments/[id] ni POST /api/treatments, que son agendamiento con
-// receptionist — copiarlos acá sería un bug de privacidad).
+// HCE (Ley 25.326 — datos de salud): roles 'admin', 'doctor' y 'receptionist' (ISADI:
+// recepción hace la carga administrativa completa de la ficha clínica).
+// Guard de rol = patrón clinical-notes / treatments/[id]/plan.
 //
 // La evolución se ancla al APPOINTMENT (no al treatment): `session_notes.appointment_id`
 // es NOT NULL + UNIQUE (migración 041) → upsert ON CONFLICT (appointment_id).
@@ -29,7 +28,7 @@ interface RouteContext {
   params: Promise<{ id: string }>
 }
 
-const ALLOWED_ROLES = ['admin', 'doctor']
+const ALLOWED_ROLES = ['admin', 'doctor', 'receptionist']
 
 // Validar formato UUID antes de cualquier query (B-11 — patrón hermano appointments/[id])
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -51,7 +50,7 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }
 
-  // 2. Rol clínico — SOLO admin/doctor (receptionist NO accede a HCE)
+  // 2. Rol clínico — admin/doctor/receptionist
   const claims = parseJwtPayload(session.access_token)
   const appRole = claims?.app_role as string | undefined
   if (!ALLOWED_ROLES.includes(appRole ?? '')) {
@@ -105,7 +104,7 @@ export async function PUT(request: Request, context: RouteContext): Promise<Resp
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }
 
-  // 2. Rol clínico — SOLO admin/doctor
+  // 2. Rol clínico — admin/doctor/receptionist
   const claims = parseJwtPayload(session.access_token)
   const appRole = claims?.app_role as string | undefined
   if (!ALLOWED_ROLES.includes(appRole ?? '')) {

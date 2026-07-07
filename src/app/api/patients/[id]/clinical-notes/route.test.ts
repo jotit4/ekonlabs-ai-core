@@ -86,14 +86,29 @@ describe('GET /api/patients/[id]/clinical-notes', () => {
     expect(res.status).toBe(401)
   })
 
-  it('retorna 403 si el rol no tiene acceso (receptionist)', async () => {
+  it('retorna 403 si el rol no tiene acceso (rol desconocido)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-uuid-1' } }, error: null })
-    mockParseJwt.mockReturnValueOnce({ app_role: 'receptionist', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' })
+    mockParseJwt.mockReturnValueOnce({ app_role: 'otro', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' })
 
     const res = await GET(new Request('http://localhost'), makeContext('p1'))
     expect(res.status).toBe(403)
     const body = await res.json() as { error: string }
     expect(body.error).toBe('Acceso denegado')
+  })
+
+  it('retorna 200 si el rol es receptionist (ISADI: recepción lee notas clínicas)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-uuid-1' } }, error: null })
+    mockParseJwt.mockReturnValueOnce({ app_role: 'receptionist', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' })
+
+    const mockChain = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [mockNote], error: null }),
+    }
+    mockFrom.mockReturnValue(mockChain)
+
+    const res = await GET(new Request('http://localhost'), makeContext('p1'))
+    expect(res.status).toBe(200)
   })
 
   it('retorna 200 con array de notas si autenticado', async () => {
@@ -168,17 +183,35 @@ describe('POST /api/patients/[id]/clinical-notes', () => {
     expect(res.status).toBe(401)
   })
 
-  it('retorna 403 si el rol no tiene acceso (receptionist)', async () => {
+  it('retorna 403 si el rol no tiene acceso (rol desconocido)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-uuid-1' } }, error: null })
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'mock-token' } },
+    })
+    mockParseJwt.mockReturnValueOnce({ app_role: 'otro', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' })
+
+    const res = await POST(makeRequest({ content: 'Nota' }), makeContext('p1'))
+    expect(res.status).toBe(403)
+    const body = await res.json() as { error: string }
+    expect(body.error).toBe('Acceso denegado')
+  })
+
+  it('retorna 201 si el rol es receptionist (ISADI: recepción crea notas clínicas)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-uuid-1' } }, error: null })
     mockGetSession.mockResolvedValue({
       data: { session: { access_token: 'mock-token' } },
     })
     mockParseJwt.mockReturnValueOnce({ app_role: 'receptionist', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' })
 
+    const mockChain = {
+      insert: vi.fn().mockReturnThis(),
+      select: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({ data: mockNote, error: null }),
+    }
+    mockFrom.mockReturnValue(mockChain)
+
     const res = await POST(makeRequest({ content: 'Nota' }), makeContext('p1'))
-    expect(res.status).toBe(403)
-    const body = await res.json() as { error: string }
-    expect(body.error).toBe('Acceso denegado')
+    expect(res.status).toBe(201)
   })
 
   it('retorna 400 si content está vacío', async () => {

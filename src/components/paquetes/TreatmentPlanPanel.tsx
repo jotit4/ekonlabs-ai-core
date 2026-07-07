@@ -23,9 +23,9 @@ interface TreatmentPlanPanelProps {
  * Plan de tratamiento 1:1 con el paquete (Story 14.2 — Epic 14 HCE)
  * + alta / informe final (Story 14.6).
  *
- * AUTO-GATEADO POR ROL: HCE (Ley 25.326) → SOLO doctor/admin. Para receptionist
- * (o mientras carga el rol) devuelve null: ni botón ni sección. PaquetesTracking
- * lo monta sin lógica de rol propia.
+ * AUTO-GATEADO POR ROL: HCE (Ley 25.326) → doctor/admin/receptionist. Mientras
+ * carga el rol (o para cualquier otro rol) devuelve null: ni botón ni sección.
+ * PaquetesTracking lo monta sin lógica de rol propia.
  *
  * Colapsado por defecto; al expandir carga el plan vía GET /api/treatments/[id]/plan
  * (API Route — el guard 403 vive en el server; la RLS 040 es la segunda capa).
@@ -42,8 +42,8 @@ export function TreatmentPlanPanel({ treatmentId, sessionsRemaining }: Treatment
   const { role, loading } = useCurrentTenant()
 
   // Gate de rol ANTES de montar el contenido (componente aparte para no
-  // condicionar hooks): receptionist / rol desconocido / cargando → nada.
-  if (loading || !['doctor', 'admin'].includes(role ?? '')) return null
+  // condicionar hooks): rol desconocido / cargando → nada.
+  if (loading || !['doctor', 'admin', 'receptionist'].includes(role ?? '')) return null
 
   return (
     <TreatmentPlanPanelContent treatmentId={treatmentId} sessionsRemaining={sessionsRemaining} />
