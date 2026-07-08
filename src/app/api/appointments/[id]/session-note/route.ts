@@ -1,5 +1,6 @@
 import 'server-only'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { createServiceRoleClient } from '@/lib/supabase/admin'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 import { logAudit } from '@/lib/audit'
 import { sessionNoteInputSchema } from '@/lib/schemas/session-note.schema'
@@ -18,7 +19,10 @@ import { sessionNoteInputSchema } from '@/lib/schemas/session-note.schema'
 //
 // AR14: queries autenticadas SIN .eq('tenant_id', ...) — la RLS de la migración 041 filtra
 // (incluir tenant_id en el payload del upsert SÍ corresponde: columna NOT NULL + WITH CHECK).
-// AR15: sin admin.ts. AR10: API Route, no Server Action.
+// AR15: admin.ts SOLO server-side (API Route) — NUNCA desde componentes/hooks. Se usa acá
+// (resolveAuthorName) para resolver la firma cuando el autor es OTRO usuario del tenant
+// (RLS de dashboard_users no lo permitiría con el cliente autenticado). AR10: API Route,
+// no Server Action.
 //
 // ⚠️ DEPENDENCIA DE RUNTIME: requiere la migración 041 (session_notes) APLICADA.
 // Aún NO está aplicada en prod — la aplica el usuario en EasyPanel. Si la tabla no existe,
@@ -32,6 +36,35 @@ const ALLOWED_ROLES = ['admin', 'doctor', 'receptionist']
 
 // Validar formato UUID antes de cualquier query (B-11 — patrón hermano appointments/[id])
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// Firma de la evolución (Fase 2): resuelve author_id → dashboard_users.full_name.
+// author_id puede ser OTRO usuario del tenant que el que está pidiendo la nota
+// (p.ej. recepción cargó, doctor la revisa) — dashboard_users solo tiene RLS SELECT
+// para la fila propia o para admin, así que un doctor/receptionist mirando la firma de
+// otro usuario NO vería nada con el cliente autenticado. Se resuelve con service role +
+// tenant_id explícito (mismo patrón que profesionales/route.ts). Autor no encontrado,
+// author_id null o falta el tenant_id → null (la UI muestra guion/nada).
+async function resolveAuthorName(
+  authorId: string | null | undefined,
+  tenantId: string | undefined,
+): Promise<string | null> {
+  if (!authorId || !tenantId) return null
+
+  const supabaseAdmin = createServiceRoleClient()
+  const { data, error } = await supabaseAdmin
+    .from('dashboard_users')
+    .select('full_name')
+    .eq('user_id', authorId)
+    .eq('tenant_id', tenantId) // service_role bypasea RLS → filtro de tenant explícito
+    .maybeSingle()
+
+  if (error) {
+    console.error('[appointments/session-note] dashboard_users lookup error:', error)
+    return null
+  }
+
+  return data?.full_name || null
+}
 
 export async function GET(_request: Request, context: RouteContext): Promise<Response> {
   const { id } = await context.params
@@ -84,7 +117,10 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
     return Response.json({ error: 'Error al obtener la evolución' }, { status: 500 })
   }
 
-  return Response.json({ note: note ?? null }, { status: 200 })
+  // 5. Firma — nombre de quien guardó/editó último la evolución (Fase 2).
+  const authorName = await resolveAuthorName(note?.author_id, claims?.tenant_id as string | undefined)
+
+  return Response.json({ note: note ?? null, author_name: authorName }, { status: 200 })
 }
 
 export async function PUT(request: Request, context: RouteContext): Promise<Response> {
@@ -193,5 +229,8 @@ export async function PUT(request: Request, context: RouteContext): Promise<Resp
     supabase,
   })
 
-  return Response.json({ note }, { status: 200 })
+  // 8. Firma — quien acaba de guardar es siempre `user.id` (author_id del upsert).
+  const authorName = await resolveAuthorName(user.id, tenantId)
+
+  return Response.json({ note, author_name: authorName }, { status: 200 })
 }

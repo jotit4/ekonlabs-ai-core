@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { format, parseISO, isValid } from 'date-fns'
+import { es } from 'date-fns/locale'
 import { useCurrentTenant } from '@/hooks/use-current-tenant'
 import { SesionSerieBadge } from '@/components/agenda/SesionSerieBadge'
 import type { SessionNote } from '@/types/treatments'
@@ -10,6 +12,24 @@ interface SessionNotePanelProps {
   appointmentId: string
   sessionIndex?: number | null
   totalSessions?: number | null
+}
+
+// Respuesta de GET /api/appointments/[id]/session-note — la nota + la firma
+// (Fase 2): nombre de quien guardó/editó último (dashboard_users.full_name,
+// resuelto server-side). NO es el profesional que atendió — es el autor real
+// de la carga en el sistema (puede ser recepción).
+interface SessionNoteResponse {
+  note: SessionNote | null
+  author_name: string | null
+}
+
+// Formatea la fecha de la firma con guarda de invalidez (mismo patrón que
+// PaquetesTracking.fmtDate). Devuelve '—' si no parsea.
+function fmtSignatureDate(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const parsed = parseISO(iso)
+  if (!isValid(parsed)) return '—'
+  return format(parsed, "d/MM/yyyy · HH:mm", { locale: es })
 }
 
 /**
@@ -57,7 +77,7 @@ function SessionNotePanelContent({
 }: SessionNotePanelProps) {
   const [expanded, setExpanded] = useState(false)
 
-  const { data, isPending, isError } = useQuery<{ note: SessionNote | null }>({
+  const { data, isPending, isError } = useQuery<SessionNoteResponse>({
     queryKey: ['session-note', appointmentId],
     queryFn: async () => {
       const res = await fetch(`/api/appointments/${appointmentId}/session-note`)
@@ -98,7 +118,11 @@ function SessionNotePanelContent({
           )}
 
           {!isPending && !isError && data && (
-            <SessionNoteEditor appointmentId={appointmentId} note={data.note} />
+            <SessionNoteEditor
+              appointmentId={appointmentId}
+              note={data.note}
+              authorName={data.author_name ?? null}
+            />
           )}
         </div>
       )}
@@ -114,14 +138,32 @@ const GENERIC_SAVE_ERROR =
 interface SessionNoteEditorProps {
   appointmentId: string
   note: SessionNote | null
+  authorName: string | null
 }
 
-function SessionNoteEditor({ appointmentId, note }: SessionNoteEditorProps) {
+// Firma mostrada bajo el editor: nombre de quien guardó + fecha de esa
+// carga (updated_at, con fallback a created_at). null = todavía no hay nada
+// guardado (nota nueva) → no se muestra la línea (AC 2 de la Fase 2).
+interface Signature {
+  authorName: string | null
+  at: string
+}
+
+function signatureFromNote(note: SessionNote | null, authorName: string | null): Signature | null {
+  if (!note) return null
+  return { authorName, at: note.updated_at ?? note.created_at }
+}
+
+function SessionNoteEditor({ appointmentId, note, authorName }: SessionNoteEditorProps) {
   const queryClient = useQueryClient()
   const [workedOn, setWorkedOn] = useState(note?.worked_on ?? '')
   const [progress, setProgress] = useState(note?.progress ?? '')
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  // Firma visible (Fase 2 — "firma del licenciado"): se inicializa con lo que
+  // trajo el GET y se actualiza tras cada guardado exitoso con la respuesta
+  // del PUT (autor = quien acaba de guardar, fecha = la nota recién persistida).
+  const [signature, setSignature] = useState<Signature | null>(signatureFromNote(note, authorName))
 
   // Último contenido PERSISTIDO (al montar = lo que trajo el GET; tras cada PUT
   // exitoso se actualiza a lo enviado). Mientras el texto coincida con esto, no
@@ -165,7 +207,7 @@ function SessionNoteEditor({ appointmentId, note }: SessionNoteEditorProps) {
         return
       }
 
-      const data = (await res.json().catch(() => null)) as { note: SessionNote | null } | null
+      const data = (await res.json().catch(() => null)) as SessionNoteResponse | null
       if (seq !== saveSeqRef.current) return
 
       // Lo enviado quedó persistido: actualizar la referencia de "último guardado"
@@ -176,7 +218,15 @@ function SessionNoteEditor({ appointmentId, note }: SessionNoteEditorProps) {
       // editor remonta con la nota REAL del server y no con la versión pre-edición
       // (editar sobre una versión vieja pisaría contenido más nuevo en el server).
       if (data?.note) {
-        queryClient.setQueryData(['session-note', appointmentId], { note: data.note })
+        const authorNameFromSave = data.author_name ?? null
+        queryClient.setQueryData(['session-note', appointmentId], {
+          note: data.note,
+          author_name: authorNameFromSave,
+        })
+        // Firma actualizada AL INSTANTE (quien acaba de guardar + la fecha de
+        // esta nota): sin esto, la firma quedaría desactualizada hasta colapsar
+        // y re-expandir el panel (staleTime 5min evita el refetch).
+        setSignature(signatureFromNote(data.note, authorNameFromSave))
       }
 
       setErrorMessage(null)
@@ -284,6 +334,15 @@ function SessionNoteEditor({ appointmentId, note }: SessionNoteEditorProps) {
       >
         {statusLabel}
       </span>
+
+      {/* Firma (Fase 2): quien guardó/editó último la evolución + cuándo. Es el
+          autor real de la carga en el sistema (puede ser recepción) — NO el
+          profesional que atendió. Sin nota guardada todavía → no se muestra. */}
+      {signature && (
+        <p className="text-xs text-[var(--color-text-secondary)]">
+          Firma: {signature.authorName ?? '—'} · {fmtSignatureDate(signature.at)}
+        </p>
+      )}
     </div>
   )
 }

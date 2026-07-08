@@ -1,11 +1,21 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 
-const { mockGetUser, mockGetSession, mockFrom, mockParseJwt, mockLogAudit } = vi.hoisted(() => ({
+const {
+  mockGetUser,
+  mockGetSession,
+  mockFrom,
+  mockParseJwt,
+  mockLogAudit,
+  mockCreateServiceRoleClient,
+  mockAdminFrom,
+} = vi.hoisted(() => ({
   mockGetUser: vi.fn(),
   mockGetSession: vi.fn(),
   mockFrom: vi.fn(),
   mockParseJwt: vi.fn().mockReturnValue({ app_role: 'doctor', tenant_id: 'tenant-1' }),
   mockLogAudit: vi.fn().mockResolvedValue(undefined),
+  mockCreateServiceRoleClient: vi.fn(),
+  mockAdminFrom: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -21,6 +31,10 @@ vi.mock('@/lib/supabase/server', () => ({
       from: mockFrom,
     }),
   ),
+}))
+
+vi.mock('@/lib/supabase/admin', () => ({
+  createServiceRoleClient: mockCreateServiceRoleClient,
 }))
 
 vi.mock('@/lib/utils/jwt', () => ({
@@ -130,6 +144,32 @@ function configureFrom(cfg: FromConfig = {}) {
   })
 }
 
+// Builder de dashboard_users vía service role (admin) — resolución de la firma
+// (Fase 2): soporta .select().eq(user_id).eq(tenant_id).maybeSingle().
+// fullName === null simula "sin fila" (usuario borrado / no encontrado).
+function makeDashboardUsersAdminBuilder(fullName: string | null, error: unknown = null) {
+  const builder = {
+    select: vi.fn(() => builder),
+    eq: vi.fn(() => builder),
+    maybeSingle: vi.fn(() =>
+      Promise.resolve({
+        data: fullName === null ? null : { full_name: fullName },
+        error,
+      }),
+    ),
+  }
+  return builder
+}
+
+function configureAdmin(cfg: { fullName?: string | null; error?: unknown } = {}) {
+  const fullName = cfg.fullName === undefined ? 'Ana Gómez' : cfg.fullName
+  mockCreateServiceRoleClient.mockReturnValue({ from: mockAdminFrom })
+  mockAdminFrom.mockImplementation((table: string) => {
+    if (table === 'dashboard_users') return makeDashboardUsersAdminBuilder(fullName, cfg.error ?? null)
+    throw new Error(`unexpected admin table ${table}`)
+  })
+}
+
 const context = { params: Promise.resolve({ id: APPOINTMENT_ID }) }
 const badContext = { params: Promise.resolve({ id: 'no-es-uuid' }) }
 
@@ -162,6 +202,7 @@ beforeEach(() => {
   mockParseJwt.mockReturnValue({ app_role: 'doctor', tenant_id: 'tenant-1' })
   mockLogAudit.mockResolvedValue(undefined)
   configureFrom()
+  configureAdmin()
 })
 
 describe('GET /api/appointments/[id]/session-note', () => {
@@ -237,6 +278,51 @@ describe('GET /api/appointments/[id]/session-note', () => {
     configureFrom({ noteSelectError: { message: 'relation does not exist' } })
     const res = await GET(makeGetRequest(), context)
     expect(res.status).toBe(500)
+  })
+
+  describe('firma — author_name resuelto desde dashboard_users (Fase 2)', () => {
+    it('incluye author_name resuelto por dashboard_users.user_id = author_id, filtrado por tenant_id', async () => {
+      configureFrom({ noteSelectData: makeNoteRow({ author_id: 'user-2' }) })
+      configureAdmin({ fullName: 'Dra. López' })
+      const res = await GET(makeGetRequest(), context)
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.author_name).toBe('Dra. López')
+      expect(mockCreateServiceRoleClient).toHaveBeenCalled()
+      expect(mockAdminFrom).toHaveBeenCalledWith('dashboard_users')
+    })
+
+    it('author_name: null cuando el turno aún no tiene evolución (nada que firmar)', async () => {
+      configureFrom({ noteSelectData: null })
+      const res = await GET(makeGetRequest(), context)
+      const body = await res.json()
+      expect(body.author_name).toBeNull()
+    })
+
+    it('author_name: null cuando la nota existe pero author_id es null (dato legado)', async () => {
+      configureFrom({ noteSelectData: makeNoteRow({ author_id: null }) })
+      const res = await GET(makeGetRequest(), context)
+      const body = await res.json()
+      expect(body.author_name).toBeNull()
+    })
+
+    it('author_name: null cuando dashboard_users no tiene la fila (usuario borrado) — sin romper el 200', async () => {
+      configureFrom({ noteSelectData: makeNoteRow() })
+      configureAdmin({ fullName: null })
+      const res = await GET(makeGetRequest(), context)
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.author_name).toBeNull()
+    })
+
+    it('author_name: null cuando la query de dashboard_users falla — sin romper el 200', async () => {
+      configureFrom({ noteSelectData: makeNoteRow() })
+      configureAdmin({ error: { message: 'boom' } })
+      const res = await GET(makeGetRequest(), context)
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.author_name).toBeNull()
+    })
   })
 })
 
@@ -351,6 +437,25 @@ describe('PUT /api/appointments/[id]/session-note', () => {
     expect(lastUpsertOptions).toEqual({ onConflict: 'appointment_id' })
     // NO escribe updated_at (trigger de DB)
     expect(lastUpsertPayload).not.toHaveProperty('updated_at')
+  })
+
+  describe('firma — author_name resuelto tras guardar (Fase 2)', () => {
+    it('devuelve author_name resuelto para el user que acaba de guardar (user.id), filtrado por tenant', async () => {
+      configureAdmin({ fullName: 'Ana Gómez' })
+      const res = await PUT(makePutRequest(validBody()), context)
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.author_name).toBe('Ana Gómez')
+      expect(mockCreateServiceRoleClient).toHaveBeenCalled()
+    })
+
+    it('author_name: null si dashboard_users no tiene la fila del usuario que guardó', async () => {
+      configureAdmin({ fullName: null })
+      const res = await PUT(makePutRequest(validBody()), context)
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.author_name).toBeNull()
+    })
   })
 
   it('turno suelto (sin package_id) → upsert con treatment_id: null (AC del epic)', async () => {

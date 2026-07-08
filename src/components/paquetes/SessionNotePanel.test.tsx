@@ -66,6 +66,34 @@ function mockGetNote(note: unknown) {
   })
 }
 
+// Variante que controla también author_name en la respuesta del GET y del PUT
+// (firma — Fase 2).
+function mockGetNoteWithAuthor(
+  note: unknown,
+  getAuthorName: string | null,
+  putAuthorName: string | null = getAuthorName,
+) {
+  mockFetch.mockImplementation((_url: string, init?: RequestInit) => {
+    if (init?.method === 'PUT') {
+      const sent = init.body ? (JSON.parse(init.body as string) as { worked_on: string; progress: string }) : undefined
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            note: makeNote(sent ? { worked_on: sent.worked_on, progress: sent.progress } : {}),
+            author_name: putAuthorName,
+          }),
+      })
+    }
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ note, author_name: getAuthorName }),
+    })
+  })
+}
+
 function renderPanel(props: Partial<React.ComponentProps<typeof SessionNotePanel>> = {}) {
   return render(
     <SessionNotePanel appointmentId={APPOINTMENT_ID} {...props} />,
@@ -462,5 +490,84 @@ describe('SessionNotePanel — autosave con debounce 1200ms (fake timers)', () =
       vi.advanceTimersByTime(5000)
     })
     expect(putCalls()).toHaveLength(0)
+  })
+})
+
+describe('SessionNotePanel — firma (Fase 2: nombre del autor + fecha)', () => {
+  it('muestra "Firma: {nombre} · {fecha}" cuando la nota tiene autor resuelto', async () => {
+    mockGetNoteWithAuthor(makeNote(), 'Dra. López')
+    renderPanel()
+    await userEvent.click(screen.getByRole('button', { name: /evolución de la sesión/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/^Firma: Dra\. López · /)).toBeInTheDocument()
+    })
+  })
+
+  it('NO muestra la línea de firma cuando la nota aún no existe (nada guardado)', async () => {
+    mockGetNoteWithAuthor(null, null)
+    renderPanel()
+    await userEvent.click(screen.getByRole('button', { name: /evolución de la sesión/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/qué se trabajó/i)).toHaveValue('')
+    })
+    expect(screen.queryByText(/^Firma:/)).not.toBeInTheDocument()
+  })
+
+  it('muestra un guion en el nombre cuando la nota existe pero author_name es null (autor no resuelto)', async () => {
+    mockGetNoteWithAuthor(makeNote(), null)
+    renderPanel()
+    await userEvent.click(screen.getByRole('button', { name: /evolución de la sesión/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/^Firma: — · /)).toBeInTheDocument()
+    })
+  })
+
+  it('tras guardar una nota nueva, la firma aparece al instante con el autor devuelto por el PUT', async () => {
+    vi.useFakeTimers()
+    mockGetNoteWithAuthor(null, null, 'Ana Gómez')
+    renderPanel()
+    fireEvent.click(screen.getByRole('button', { name: /evolución de la sesión/i }))
+    await flushMicrotasks()
+
+    // Sin nota todavía: no hay firma
+    expect(screen.queryByText(/^Firma:/)).not.toBeInTheDocument()
+
+    act(() => {
+      fireEvent.change(screen.getByLabelText(/qué se trabajó/i), { target: { value: 'Primer registro' } })
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1200)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText(/^Firma: Ana Gómez · /)).toBeInTheDocument()
+  })
+
+  it('al editar una nota existente, la firma se actualiza con el autor de ESTE guardado (no queda con el autor original)', async () => {
+    vi.useFakeTimers()
+    // El GET inicial trae la nota firmada por otro usuario; el PUT devuelve
+    // el autor de quien acaba de guardar (el usuario actual).
+    mockGetNoteWithAuthor(makeNote(), 'Dr. Original', 'Ana Gómez')
+    renderPanel()
+    fireEvent.click(screen.getByRole('button', { name: /evolución de la sesión/i }))
+    await flushMicrotasks()
+
+    expect(screen.getByText(/^Firma: Dr\. Original · /)).toBeInTheDocument()
+
+    act(() => {
+      fireEvent.change(screen.getByLabelText(/qué se trabajó/i), { target: { value: 'Editado ahora' } })
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(1200)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText(/^Firma: Ana Gómez · /)).toBeInTheDocument()
+    expect(screen.queryByText(/^Firma: Dr\. Original · /)).not.toBeInTheDocument()
   })
 })
