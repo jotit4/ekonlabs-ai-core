@@ -285,6 +285,26 @@ export default function PacienteFichaPage() {
       >
         <h1 style={{ fontSize: 28, fontWeight: 600 }}>{patient.full_name}</h1>
         <PatientStatusBadge threadState={threadState} />
+
+        {/* Ficha kinesiológica imprimible (Fase 3) — réplica del papel de ISADI.
+            Visible para los 3 roles (todos la cargan en ISADI); solo lectura,
+            por eso queda disponible incluso con eliminación pendiente. */}
+        <button
+          type="button"
+          onClick={() => router.push(`/pacientes/${patientId}/ficha`)}
+          style={{
+            marginLeft: 'auto',
+            color: '#0071e3',
+            fontSize: 15,
+            fontWeight: 400,
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            padding: '4px 0',
+          }}
+        >
+          Imprimir ficha
+        </button>
       </header>
 
       {/* Banner de eliminación programada */}
