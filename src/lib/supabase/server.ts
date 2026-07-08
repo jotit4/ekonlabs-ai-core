@@ -1,4 +1,7 @@
 import "server-only"
+// Side-effect import: configures a keep-alive global fetch dispatcher so
+// server → Supabase connections (JWKS, refresh, PostgREST) reuse TLS sessions.
+import "./keep-alive"
 import { createServerClient } from "@supabase/ssr"
 import { cookies } from "next/headers"
 

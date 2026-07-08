@@ -48,12 +48,15 @@ export async function proxy(request: NextRequest) {
     },
   })
 
-  // getSession() reads from cookies (no HTTP round-trip) — fast for every request.
-  // Security: API routes and the dashboard layout still call getUser() for server-side validation.
+  // This is the ONE place that reaches the Supabase Auth server, once per
+  // navigation. getUser() (a) refreshes an expiring session and persists the new
+  // tokens here — the only context that can write cookies to the response — and
+  // (b) validates the user server-side, giving us periodic revocation detection.
+  // The dashboard layout and API routes then validate the JWT LOCALLY (signature
+  // + exp) with zero network round-trips per request.
   const {
-    data: { session },
-  } = await supabase.auth.getSession()
-  const user = session?.user
+    data: { user },
+  } = await supabase.auth.getUser()
 
   const { pathname } = request.nextUrl
 
@@ -61,10 +64,16 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  if (user && session?.access_token && isProtectedPath(pathname)) {
-    const claims = parseJwtPayload(session.access_token)
-    if (claims?.tenant_id) {
-      supabaseResponse.headers.set('x-tenant-id', claims.tenant_id as string)
+  if (user && isProtectedPath(pathname)) {
+    // Read the (possibly refreshed) access token from cookies — local, no round-trip.
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (session?.access_token) {
+      const claims = parseJwtPayload(session.access_token)
+      if (claims?.tenant_id) {
+        supabaseResponse.headers.set('x-tenant-id', claims.tenant_id as string)
+      }
     }
   }
 

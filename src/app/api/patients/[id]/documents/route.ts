@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { getAuthClaims } from '@/lib/auth/claims'
 import { logAudit } from '@/lib/audit'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 import { DocumentMetadataSchema } from '@/lib/schemas/document.schema'
@@ -29,9 +30,8 @@ function sanitizeFileName(name: string): string {
 export async function GET(_request: Request, context: RouteContext) {
   const { id } = await context.params
   const supabase = await createSupabaseServerClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const sessionAuth = await getAuthClaims()
+  const user = sessionAuth ? { id: sessionAuth.userId, email: sessionAuth.claims.email as string | undefined } : null
   if (!user) return Response.json({ error: 'No autorizado' }, { status: 401 })
 
   const { data: sessionData } = await supabase.auth.getSession()
@@ -57,10 +57,9 @@ export async function GET(_request: Request, context: RouteContext) {
 export async function POST(request: Request, context: RouteContext) {
   const { id } = await context.params
   const supabase = await createSupabaseServerClient()
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser()
+  const sessionAuth = await getAuthClaims()
+  const authError = null
+  const user = sessionAuth ? { id: sessionAuth.userId, email: sessionAuth.claims.email as string | undefined } : null
   if (!user || authError) return Response.json({ error: 'No autorizado' }, { status: 401 })
 
   const { data: sessionData } = await supabase.auth.getSession()

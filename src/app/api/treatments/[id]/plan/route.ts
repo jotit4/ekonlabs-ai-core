@@ -1,5 +1,6 @@
 import 'server-only'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { getAuthClaims } from '@/lib/auth/claims'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 import { logAudit } from '@/lib/audit'
 import { treatmentPlanInputSchema } from '@/lib/schemas/treatment-plan.schema'
@@ -29,7 +30,8 @@ export async function GET(_request: Request, context: RouteContext): Promise<Res
   const supabase = await createSupabaseServerClient()
 
   // 1. Autenticación
-  const { data: { user } } = await supabase.auth.getUser()
+  const sessionAuth = await getAuthClaims()
+  const user = sessionAuth ? { id: sessionAuth.userId, email: sessionAuth.claims.email as string | undefined } : null
   const { data: { session } } = await supabase.auth.getSession()
   if (!user || !session) {
     return Response.json({ error: 'No autorizado' }, { status: 401 })
@@ -77,7 +79,8 @@ export async function PUT(request: Request, context: RouteContext): Promise<Resp
   const supabase = await createSupabaseServerClient()
 
   // 1. Autenticación
-  const { data: { user } } = await supabase.auth.getUser()
+  const sessionAuth = await getAuthClaims()
+  const user = sessionAuth ? { id: sessionAuth.userId, email: sessionAuth.claims.email as string | undefined } : null
   const { data: { session } } = await supabase.auth.getSession()
   if (!user || !session) {
     return Response.json({ error: 'No autorizado' }, { status: 401 })

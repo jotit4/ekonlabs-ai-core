@@ -1,6 +1,7 @@
 import 'server-only'
 import { NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { getAuthClaims } from '@/lib/auth/claims'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 import { FastAPIClient, FastAPIError } from '@/lib/fastapi/client'
 import type { RetentionStatusResponse } from '@/types/retention'
@@ -8,9 +9,8 @@ import type { RetentionStatusResponse } from '@/types/retention'
 export async function GET(): Promise<NextResponse> {
   // 1. Validar sesión
   const supabase = await createSupabaseServerClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const sessionAuth = await getAuthClaims()
+  const user = sessionAuth ? { id: sessionAuth.userId, email: sessionAuth.claims.email as string | undefined } : null
 
   if (!user) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 })

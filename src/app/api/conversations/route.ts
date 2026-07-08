@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { getAuthClaims } from '@/lib/auth/claims'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 import { isEvolutionPhone } from '@/lib/conversations/evolution-noise'
 import type { ConversationSummary, ConversationStatus, ConfidenceLevel } from '@/types/conversations'
@@ -51,9 +52,8 @@ const URGENCY_ORDER: Record<ConversationStatus, number> = {
 export async function GET() {
   // 1. Validar sesión — RLS requiere usuario autenticado
   const supabase = await createSupabaseServerClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const sessionAuth = await getAuthClaims()
+  const user = sessionAuth ? { id: sessionAuth.userId, email: sessionAuth.claims.email as string | undefined } : null
 
   if (!user) {
     return Response.json({ error: 'No autorizado' }, { status: 401 })
