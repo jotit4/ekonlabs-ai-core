@@ -1,5 +1,6 @@
 'use client'
 
+import { Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import { format, parseISO, isValid } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -44,6 +45,10 @@ export function FichaImprimibleView({ dossier }: FichaImprimibleViewProps) {
   const { patient, tratamientoObjetivo, treatments, evolucion, limitations } = dossier
 
   const edad = calculateAge(patient.date_of_birth)
+  // Filas de la grilla unificada de sesiones = el bono con más sesiones.
+  const maxSessions = treatments.length
+    ? Math.max(...treatments.map((t) => t.rows.length))
+    : 0
   const hayLimitaciones =
     limitations.clinicalFieldsUnavailable ||
     limitations.treatmentPlansUnavailable ||
@@ -191,36 +196,51 @@ export function FichaImprimibleView({ dossier }: FichaImprimibleViewProps) {
           {treatments.length === 0 ? (
             <p className="ficha-empty">Este paciente no tiene paquetes/tratamientos cargados.</p>
           ) : (
-            <div className="ficha-sesiones-grid">
-              {treatments.map((t) => (
-                <table key={t.treatment_id} className="ficha-table ficha-sesiones-table">
-                  <thead>
-                    <tr>
-                      <th colSpan={2}>{orDash(t.service_name)}</th>
-                    </tr>
-                    <tr>
+            <table className="ficha-table ficha-sesiones-unificada">
+              <thead>
+                <tr>
+                  {treatments.map((t) => (
+                    <th key={t.treatment_id} colSpan={2}>
+                      {orDash(t.service_name)}
+                    </th>
+                  ))}
+                </tr>
+                <tr>
+                  {treatments.map((t) => (
+                    <Fragment key={t.treatment_id}>
                       <th>N° sesión</th>
                       <th>Fecha</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {t.rows.map((row) => (
-                      <tr key={row.session_index}>
-                        <td>{row.session_index}</td>
-                        <td>
-                          {row.start_at ? fmtDate(row.start_at) : sessionStatusLabel(row.status)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ))}
-            </div>
+                    </Fragment>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: maxSessions }, (_, i) => (
+                  <tr key={i}>
+                    {treatments.map((t) => {
+                      const row = t.rows[i]
+                      return (
+                        <Fragment key={t.treatment_id}>
+                          <td>{row ? row.session_index : ''}</td>
+                          <td>
+                            {row
+                              ? row.start_at
+                                ? fmtDate(row.start_at)
+                                : sessionStatusLabel(row.status)
+                              : ''}
+                          </td>
+                        </Fragment>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </section>
 
         {/* Bloque 3 — Evolución por sesión (dorso del papel) */}
-        <section className="ficha-section ficha-page-break" aria-label="Evolución por sesión">
+        <section className="ficha-section" aria-label="Evolución por sesión">
           <h2>Evolución por sesión</h2>
           {evolucion.length === 0 ? (
             <p className="ficha-empty">Sin evoluciones registradas.</p>
@@ -262,15 +282,20 @@ export function FichaImprimibleView({ dossier }: FichaImprimibleViewProps) {
       <style>{`
         @page {
           size: A4;
-          margin: 15mm;
+          margin: 10mm;
+        }
+
+        .ficha-imprimible {
+          font-size: 12px;
+          color: #000;
         }
 
         .ficha-header {
           text-align: center;
-          margin-bottom: 16px;
+          margin-bottom: 8px;
         }
         .ficha-header h1 {
-          font-size: 18px;
+          font-size: 15px;
           font-weight: 700;
           letter-spacing: 0.02em;
         }
@@ -278,48 +303,44 @@ export function FichaImprimibleView({ dossier }: FichaImprimibleViewProps) {
         .ficha-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 20px;
-          font-size: 13px;
+          margin-bottom: 8px;
+          font-size: 12px;
         }
         .ficha-table th,
         .ficha-table td {
           border: 1px solid #000;
-          padding: 6px 8px;
+          padding: 3px 6px;
           text-align: left;
           vertical-align: top;
+          line-height: 1.35;
         }
         .ficha-label {
           font-weight: 600;
           background: #f2f2f2;
-          width: 140px;
+          width: 120px;
           white-space: nowrap;
         }
 
         .ficha-section {
-          margin-bottom: 24px;
+          margin-bottom: 10px;
         }
         .ficha-section h2 {
-          font-size: 15px;
+          font-size: 12px;
           font-weight: 600;
-          margin-bottom: 8px;
+          margin-bottom: 4px;
         }
         .ficha-empty {
-          font-size: 13px;
+          font-size: 11px;
           color: rgba(0, 0, 0, 0.56);
         }
 
-        .ficha-sesiones-grid {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 16px;
-        }
-        .ficha-sesiones-table {
-          width: auto;
-          min-width: 180px;
-          flex: 0 0 auto;
-        }
-        .ficha-sesiones-table th,
-        .ficha-sesiones-table td {
+        /* Control de sesiones: grilla de columnas de ancho consistente, alineadas
+           ARRIBA (align-items: start) — sin el estiramiento vertical del flex, que
+           igualaba la altura de todas las tablas a la más larga. */
+        /* Grilla de sesiones UNIFICADA: una sola tabla con las columnas de cada
+           bono contiguas (réplica del papel: N° | Fecha | N° | Fecha …), sin huecos. */
+        .ficha-sesiones-unificada th,
+        .ficha-sesiones-unificada td {
           text-align: center;
         }
 
@@ -328,10 +349,10 @@ export function FichaImprimibleView({ dossier }: FichaImprimibleViewProps) {
         }
 
         .ficha-observaciones {
-          min-height: 60px;
+          min-height: 32px;
           border: 1px solid #000;
-          padding: 8px;
-          font-size: 13px;
+          padding: 6px;
+          font-size: 11px;
           white-space: pre-wrap;
         }
 
@@ -352,8 +373,11 @@ export function FichaImprimibleView({ dossier }: FichaImprimibleViewProps) {
             top: 0;
             width: 100%;
           }
-          .ficha-page-break {
-            break-before: page;
+          /* Evitar cortar tablas/secciones a la mitad entre páginas, SIN forzar
+             página nueva (antes la evolución saltaba siempre a la página 2). */
+          .ficha-table,
+          .ficha-section {
+            break-inside: avoid;
           }
         }
       `}</style>
