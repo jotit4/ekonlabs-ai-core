@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useEffect, useState } from 'react'
+import { useRef, useEffect, useState, type CSSProperties } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Dialog } from '@base-ui/react/dialog'
@@ -80,15 +80,24 @@ function PatientFichaSkeleton() {
 
 // ─── Campo de dato personal ───────────────────────────────────────────────────
 
-function DataField({ label, value }: { label: string; value: string | null | undefined }) {
-  return (
-    <div>
-      <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 2 }}>
-        {label}
-      </p>
-      <p style={{ fontSize: 15 }}>{value || '—'}</p>
-    </div>
-  )
+// Estilos tipo "ficha médica" para el tab Datos personales (familiar para ISADI —
+// misma estética que la ficha imprimible: etiqueta gris + valor, con bordes).
+const dpLabel: CSSProperties = {
+  fontSize: 13,
+  fontWeight: 600,
+  color: 'var(--color-text-secondary)',
+  background: 'var(--color-bg, #f7f7f8)',
+  padding: '8px 12px',
+  border: '1px solid var(--color-border)',
+  whiteSpace: 'nowrap',
+  verticalAlign: 'top',
+}
+const dpValue: CSSProperties = {
+  fontSize: 15,
+  padding: '8px 12px',
+  border: '1px solid var(--color-border)',
+  verticalAlign: 'top',
+  wordBreak: 'break-word',
 }
 
 // ─── Componente principal ─────────────────────────────────────────────────────
@@ -455,30 +464,73 @@ export default function PacienteFichaPage() {
             )}
           </div>
 
-          <div
+          <table
             style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
-              gap: 16,
+              width: '100%',
+              maxWidth: 860,
+              borderCollapse: 'collapse',
+              tableLayout: 'fixed',
             }}
           >
-            <DataField label="Nombre completo" value={patient.full_name} />
-            <DataField label="Teléfono" value={patient.phone_number} />
-            <DataField label="DNI" value={patient.dni} />
-            <DataField label="Email" value={patient.email} />
-            <DataField label="Fecha de nacimiento" value={patient.date_of_birth} />
-            <DataField label="Obra social" value={patient.obra_social} />
-            <DataField label="Número de afiliado" value={patient.obra_social_number} />
-            <DataField label="Domicilio" value={patient.address} />
-            <DataField label="Motivo de consulta" value={patient.reason_for_visit} />
-            <DataField label="Notas" value={patient.notes} />
-            {/* Ficha de admisión (migración 047 — Fase 1 digitalización) */}
-            <DataField label="Lugar" value={patient.lugar} />
-            <DataField label="Ocupación" value={patient.ocupacion} />
-            <DataField label="Derivación" value={patient.derivacion} />
-            <DataField label="Actividad física" value={patient.actividad_fisica} />
-            <DataField label="KLGO a cargo" value={patient.professionals?.name} />
-          </div>
+            <colgroup>
+              <col style={{ width: 170 }} />
+              <col />
+              <col style={{ width: 170 }} />
+              <col />
+            </colgroup>
+            <tbody>
+              <tr>
+                <td style={dpLabel}>Nombre completo</td>
+                <td style={dpValue} colSpan={3}>{patient.full_name || '—'}</td>
+              </tr>
+              <tr>
+                <td style={dpLabel}>Fecha de nacimiento</td>
+                <td style={dpValue}>{patient.date_of_birth || '—'}</td>
+                <td style={dpLabel}>Lugar</td>
+                <td style={dpValue}>{patient.lugar || '—'}</td>
+              </tr>
+              <tr>
+                <td style={dpLabel}>Obra social</td>
+                <td style={dpValue}>{patient.obra_social || '—'}</td>
+                <td style={dpLabel}>N° de afiliado</td>
+                <td style={dpValue}>{patient.obra_social_number || '—'}</td>
+              </tr>
+              <tr>
+                <td style={dpLabel}>DNI</td>
+                <td style={dpValue}>{patient.dni || '—'}</td>
+                <td style={dpLabel}>Teléfono</td>
+                <td style={dpValue}>{patient.phone_number || '—'}</td>
+              </tr>
+              <tr>
+                <td style={dpLabel}>Email</td>
+                <td style={dpValue} colSpan={3}>{patient.email || '—'}</td>
+              </tr>
+              <tr>
+                <td style={dpLabel}>Domicilio</td>
+                <td style={dpValue} colSpan={3}>{patient.address || '—'}</td>
+              </tr>
+              <tr>
+                <td style={dpLabel}>KLGO a cargo</td>
+                <td style={dpValue}>{patient.professionals?.name || '—'}</td>
+                <td style={dpLabel}>Derivación</td>
+                <td style={dpValue}>{patient.derivacion || '—'}</td>
+              </tr>
+              <tr>
+                <td style={dpLabel}>Ocupación</td>
+                <td style={dpValue}>{patient.ocupacion || '—'}</td>
+                <td style={dpLabel}>Actividad física</td>
+                <td style={dpValue}>{patient.actividad_fisica || '—'}</td>
+              </tr>
+              <tr>
+                <td style={dpLabel}>Diagnóstico</td>
+                <td style={dpValue} colSpan={3}>{patient.reason_for_visit || '—'}</td>
+              </tr>
+              <tr>
+                <td style={dpLabel}>Notas</td>
+                <td style={dpValue} colSpan={3}>{patient.notes || '—'}</td>
+              </tr>
+            </tbody>
+          </table>
         </section>
       )}
 
