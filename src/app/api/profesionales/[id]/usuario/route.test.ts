@@ -72,6 +72,14 @@ function makeParams(id = 'prof-uuid-1') {
   return { params: Promise.resolve({ id }) }
 }
 
+// La query a dashboard_users usa service_role, que bypasea RLS: encadena
+// .eq('professional_id').eq('tenant_id') antes de .single(). El mock deja
+// encadenar .eq() las veces que haga falta.
+function makeLinkSelect(single: ReturnType<typeof vi.fn>) {
+  const chain = { eq: vi.fn(() => chain), single }
+  return vi.fn().mockReturnValue(chain)
+}
+
 function setupAdminAuth() {
   mockGetUser.mockResolvedValue({ data: { user: { id: 'admin-user-id' } }, error: null })
   mockGetSession.mockResolvedValue({
@@ -145,8 +153,7 @@ describe('POST /api/profesionales/[id]/usuario', () => {
       data: { user_id: 'existing-user', email: 'existing@test.com' },
       error: null,
     })
-    const existingEq = vi.fn().mockReturnValue({ single: existingSingle })
-    const existingSelect = vi.fn().mockReturnValue({ eq: existingEq })
+    const existingSelect = makeLinkSelect(existingSingle)
     mockAdminFrom.mockReturnValue({ select: existingSelect })
 
     const res = await POST(makeRequest({ email: 'doc@test.com' }), makeParams())
@@ -161,8 +168,7 @@ describe('POST /api/profesionales/[id]/usuario', () => {
 
     // Sin usuario vinculado
     const noLinkSingle = vi.fn().mockResolvedValue({ data: null, error: { message: 'not found' } })
-    const noLinkEq = vi.fn().mockReturnValue({ single: noLinkSingle })
-    const noLinkSelect = vi.fn().mockReturnValue({ eq: noLinkEq })
+    const noLinkSelect = makeLinkSelect(noLinkSingle)
     mockAdminFrom.mockReturnValue({ select: noLinkSelect })
 
     // Invite retorna error de duplicado
@@ -183,8 +189,7 @@ describe('POST /api/profesionales/[id]/usuario', () => {
 
     // Sin usuario vinculado
     const noLinkSingle = vi.fn().mockResolvedValue({ data: null, error: { message: 'not found' } })
-    const noLinkEq = vi.fn().mockReturnValue({ single: noLinkSingle })
-    const noLinkSelect = vi.fn().mockReturnValue({ eq: noLinkEq })
+    const noLinkSelect = makeLinkSelect(noLinkSingle)
 
     // Insert dashboard_users
     const insertSingle = vi.fn().mockResolvedValue({
@@ -226,8 +231,7 @@ describe('POST /api/profesionales/[id]/usuario', () => {
     setupProfessionalQuery({ professional_id: 'prof-uuid-1', name: 'Dr. García', email: 'garcia@clinica.com' })
 
     const noLinkSingle = vi.fn().mockResolvedValue({ data: null, error: { message: 'not found' } })
-    const noLinkEq = vi.fn().mockReturnValue({ single: noLinkSingle })
-    const noLinkSelect = vi.fn().mockReturnValue({ eq: noLinkEq })
+    const noLinkSelect = makeLinkSelect(noLinkSingle)
 
     // INSERT falla
     const insertSingle = vi.fn().mockResolvedValue({
@@ -265,8 +269,7 @@ describe('POST /api/profesionales/[id]/usuario', () => {
     setupProfessionalQuery({ professional_id: 'prof-uuid-1', name: 'Dr. García', email: 'garcia@clinica.com' })
 
     const noLinkSingle = vi.fn().mockResolvedValue({ data: null, error: { message: 'not found' } })
-    const noLinkEq = vi.fn().mockReturnValue({ single: noLinkSingle })
-    const noLinkSelect = vi.fn().mockReturnValue({ eq: noLinkEq })
+    const noLinkSelect = makeLinkSelect(noLinkSingle)
 
     const insertSingle = vi.fn().mockResolvedValue({
       data: { user_id: 'new-uuid', email: 'doc@test.com', full_name: 'Dr. García' },

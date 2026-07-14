@@ -94,11 +94,13 @@ const SAMPLE_PROFESSIONAL = {
   service_professionals: [],
 }
 
-// Helper para el admin chain de linked users (GET /api/profesionales usa admin para dashboard_users)
+// Helper para el admin chain de linked users (GET /api/profesionales usa admin para dashboard_users).
+// La query usa service_role (bypasea RLS) → cierra con .eq('tenant_id', ...), que es quien resuelve.
 function makeAdminLinkedUsersChain(linkedUsers: { professional_id: string; email: string }[] = []) {
   return {
     select: vi.fn().mockReturnThis(),
-    not: vi.fn().mockResolvedValue({ data: linkedUsers, error: null }),
+    not: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockResolvedValue({ data: linkedUsers, error: null }),
   }
 }
 
