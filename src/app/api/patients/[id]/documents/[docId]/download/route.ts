@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { getAuthClaims } from '@/lib/auth/claims'
 import { logAudit } from '@/lib/audit'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 
@@ -15,9 +16,8 @@ interface RouteContext {
 export async function GET(_request: Request, context: RouteContext) {
   const { id, docId } = await context.params
   const supabase = await createSupabaseServerClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const sessionAuth = await getAuthClaims()
+  const user = sessionAuth ? { id: sessionAuth.userId, email: sessionAuth.claims.email as string | undefined } : null
   if (!user) return Response.json({ error: 'No autorizado' }, { status: 401 })
 
   const { data: sessionData } = await supabase.auth.getSession()

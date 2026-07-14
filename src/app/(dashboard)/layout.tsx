@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { Toaster } from 'sonner'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
-import { parseJwtPayload } from '@/lib/utils/jwt'
+import { getAuthClaims } from '@/lib/auth/claims'
 import { AppSidebar } from '@/components/AppSidebar'
 import { AppTopbar } from '@/components/AppTopbar'
 import { DashboardProviders } from './providers'
@@ -16,19 +16,19 @@ const VALID_ROLES: UserRole[] = ['receptionist', 'doctor', 'admin']
 export default async function DashboardLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  const supabase = await createSupabaseServerClient()
+  // Double auth guard: proxy.ts ya redirige, aquí es segunda capa.
+  // Validación LOCAL de claims (firma ES256 + exp verificadas contra la JWKS
+  // cacheada) — sin round-trip de red por navegación. El refresh + la detección
+  // de revocación viven en el proxy (una vez por navegación).
+  const auth = await getAuthClaims()
+  if (!auth) redirect('/login')
 
-  // Double auth guard: proxy.ts ya redirige, aquí es segunda capa
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
-
-  const { data: { session } } = await supabase.auth.getSession()
-  const claims = parseJwtPayload(session?.access_token ?? '')
-  const role = (claims?.app_role ?? claims?.role) as UserRole | undefined
-  const tenantId = claims?.tenant_id as string | undefined
+  const role = auth.role as UserRole | undefined
+  const tenantId = auth.tenantId
 
   // If role or tenant_id missing — JWT is stale/incomplete, force re-login
   if (!role || !VALID_ROLES.includes(role) || !tenantId) {
+    const supabase = await createSupabaseServerClient()
     await supabase.auth.signOut()
     redirect('/login')
   }

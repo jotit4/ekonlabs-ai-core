@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { getAuthClaims } from '@/lib/auth/claims'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 import type { ConversationNote } from '@/types/conversations'
 
@@ -13,7 +14,8 @@ export async function GET(
   const { phone } = await context.params
 
   const supabase = await createSupabaseServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const sessionAuth = await getAuthClaims()
+  const user = sessionAuth ? { id: sessionAuth.userId, email: sessionAuth.claims.email as string | undefined } : null
 
   if (!user) {
     return Response.json({ error: 'No autorizado' }, { status: 401 })
@@ -44,7 +46,8 @@ export async function POST(
   const { phone } = await context.params
 
   const supabase = await createSupabaseServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const sessionAuth = await getAuthClaims()
+  const user = sessionAuth ? { id: sessionAuth.userId, email: sessionAuth.claims.email as string | undefined } : null
   const { data: { session } } = await supabase.auth.getSession()
 
   if (!user || !session) {

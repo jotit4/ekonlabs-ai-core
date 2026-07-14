@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { getAuthClaims } from '@/lib/auth/claims'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 import { FastAPIClient, FastAPIError } from '@/lib/fastapi/client'
 
@@ -10,7 +11,8 @@ const fastapi = new FastAPIClient(
 export async function POST(request: Request) {
   // 1. Validar sesión
   const supabase = await createSupabaseServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const sessionAuth = await getAuthClaims()
+  const user = sessionAuth ? { id: sessionAuth.userId, email: sessionAuth.claims.email as string | undefined } : null
   const { data: { session } } = await supabase.auth.getSession()
 
   if (!user || !session) {

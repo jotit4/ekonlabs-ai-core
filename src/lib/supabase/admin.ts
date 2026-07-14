@@ -1,4 +1,6 @@
 import "server-only"
+// Side-effect import: keep-alive global fetch dispatcher (see keep-alive.ts).
+import "./keep-alive"
 import { createClient } from "@supabase/supabase-js"
 
 export function createServiceRoleClient() {

@@ -1,5 +1,6 @@
 import 'server-only'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { getAuthClaims } from '@/lib/auth/claims'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 import { eachDayOfInterval, formatISO, parseISO, isValid, differenceInCalendarDays } from 'date-fns'
 import type { AvailabilityShift, DayShifts, DaySummary } from '@/types/availability'
@@ -26,7 +27,8 @@ export async function GET(request: Request): Promise<Response> {
   const supabase = await createSupabaseServerClient()
 
   // 1. Autenticación
-  const { data: { user } } = await supabase.auth.getUser()
+  const sessionAuth = await getAuthClaims()
+  const user = sessionAuth ? { id: sessionAuth.userId, email: sessionAuth.claims.email as string | undefined } : null
   if (!user) {
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }

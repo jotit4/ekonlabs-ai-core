@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { getAuthClaims } from '@/lib/auth/claims'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 
 interface RouteContext {
@@ -8,9 +9,8 @@ interface RouteContext {
 export async function PATCH(request: Request, context: RouteContext) {
   const { id, note_id } = await context.params
   const supabase = await createSupabaseServerClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const sessionAuth = await getAuthClaims()
+  const user = sessionAuth ? { id: sessionAuth.userId, email: sessionAuth.claims.email as string | undefined } : null
   if (!user) return Response.json({ error: 'No autorizado' }, { status: 401 })
 
   // Check de rol: admin, doctor y receptionist pueden editar notas clínicas (C-10 extendido)

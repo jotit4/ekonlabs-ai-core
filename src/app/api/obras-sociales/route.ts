@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { getAuthClaims } from '@/lib/auth/claims'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -11,7 +12,8 @@ export interface EntidadConPlanes {
 
 export async function GET() {
   const supabase = await createSupabaseServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const sessionAuth = await getAuthClaims()
+  const user = sessionAuth ? { id: sessionAuth.userId, email: sessionAuth.claims.email as string | undefined } : null
 
   if (!user) {
     return Response.json({ error: 'No autorizado' }, { status: 401 })

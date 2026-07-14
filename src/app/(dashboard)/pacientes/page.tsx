@@ -114,7 +114,10 @@ export default function PacientesPage() {
       const json = await res.json() as { conversations: ConversationSummary[] }
       return json.conversations
     },
-    staleTime: 0,
+    // El badge "tiene conversación" no necesita datos frescos al segundo:
+    // 60s (alineado al default global) evita redisparar el RPC+3-queries de
+    // /api/conversations cada vez que se vuelve a Pacientes.
+    staleTime: 60_000,
   })
 
   const threadStateByPhone = useMemo(() => {
