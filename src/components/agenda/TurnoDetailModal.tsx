@@ -11,6 +11,7 @@ import { SesionSerieBadge } from './SesionSerieBadge'
 import { SessionNotePanel } from '@/components/paquetes/SessionNotePanel'
 import { AbsenceDecisionDialog } from './AbsenceDecisionDialog'
 import { CancelConfirmInline } from './CancelConfirmInline'
+import { ColorSwatchPicker } from './ColorSwatchPicker'
 import { useAppointmentActions } from '@/hooks/use-appointment-actions'
 import type { AbsenceDecision } from '@/lib/schemas/absence-decision.schema'
 
@@ -209,6 +210,26 @@ export function TurnoDetailModal({
                   )}
                 </div>
               </div>
+
+              {/* ── Color manual del turno (paleta muda del turnero, pedido ISADI) ── */}
+              {appointment && (
+                <ColorSwatchPicker
+                  value={appointment.color ?? null}
+                  onChange={(color) => {
+                    // Elegir un color es la acción completa: si se guardó, el modal se cierra
+                    // solo (si falla, queda abierto mostrando el error).
+                    void actions.handleColorChange(appointment, color).then((saved) => {
+                      if (saved) handleClose()
+                    })
+                  }}
+                  disabled={actions.colorLoading}
+                />
+              )}
+              {actions.colorError && (
+                <p role="alert" className="text-xs text-red-600">
+                  {actions.colorError}
+                </p>
+              )}
 
               {/* ── Evolución de la sesión (auto-gateado por rol) ── */}
               {appointment && (

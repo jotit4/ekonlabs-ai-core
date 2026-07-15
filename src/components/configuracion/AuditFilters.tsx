@@ -1,5 +1,6 @@
 'use client'
 
+import { DateField } from '@/components/ui/date-field'
 import type { AuditAction } from '@/lib/audit'
 import type { AuditFilters } from '@/types/audit'
 
@@ -113,13 +114,11 @@ export function AuditFilters({ filters, onFiltersChange, users }: AuditFiltersPr
         >
           Desde
         </label>
-        <input
+        <DateField
           id="audit-filter-from"
-          type="date"
           aria-label="Fecha desde"
-          style={inputStyle}
           value={filters.dateFrom ?? ''}
-          onChange={(e) => onFiltersChange({ ...filters, dateFrom: e.target.value || null })}
+          onChange={(value) => onFiltersChange({ ...filters, dateFrom: value || null })}
         />
       </div>
 
@@ -131,13 +130,11 @@ export function AuditFilters({ filters, onFiltersChange, users }: AuditFiltersPr
         >
           Hasta
         </label>
-        <input
+        <DateField
           id="audit-filter-to"
-          type="date"
           aria-label="Fecha hasta"
-          style={inputStyle}
           value={filters.dateTo ?? ''}
-          onChange={(e) => onFiltersChange({ ...filters, dateTo: e.target.value || null })}
+          onChange={(value) => onFiltersChange({ ...filters, dateTo: value || null })}
         />
       </div>
 

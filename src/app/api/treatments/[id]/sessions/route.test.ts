@@ -180,7 +180,7 @@ describe('POST /api/treatments/[id]/sessions', () => {
     expect(res.status).toBe(409)
   })
 
-  it('422 si el paquete no tiene profesional', async () => {
+  it('422 si el paquete no tiene profesional fijo Y los slots no traen professional_id', async () => {
     configureFrom({ treatment: defaultTreatment({ professional_id: null }) })
     const res = await POST(makeRequest(validBody()), makeParams())
     expect(res.status).toBe(422)
@@ -285,5 +285,67 @@ describe('POST /api/treatments/[id]/sessions', () => {
         entity_id: TREATMENT_ID,
       }),
     )
+  })
+
+  describe('Pedido A #2/#3 (ISADI 2026-07-14) — paquete sin profesional fijo ("cualquier profesional")', () => {
+    const PROF_2 = '0bff67bd-87b2-41b9-bd93-1a37f3d335a2'
+
+    function anyBody(slots: { start_at: string; end_at: string; professional_id?: string }[]) {
+      return { slots }
+    }
+
+    it('201 usa el professional_id de CADA slot (no el del paquete, que es null)', async () => {
+      configureFrom({ treatment: defaultTreatment({ professional_id: null }) })
+      rpcCreates()
+
+      const res = await POST(
+        makeRequest(
+          anyBody([
+            { start_at: '2026-06-10T13:00:00.000Z', end_at: '2026-06-10T14:00:00.000Z', professional_id: PROF },
+            { start_at: '2026-06-11T13:00:00.000Z', end_at: '2026-06-11T14:00:00.000Z', professional_id: PROF_2 },
+          ]),
+        ),
+        makeParams(),
+      )
+      expect(res.status).toBe(201)
+      expect(mockRpc).toHaveBeenNthCalledWith(
+        1,
+        'create_appointment',
+        expect.objectContaining({ p_professional_id: PROF }),
+      )
+      expect(mockRpc).toHaveBeenNthCalledWith(
+        2,
+        'create_appointment',
+        expect.objectContaining({ p_professional_id: PROF_2 }),
+      )
+    })
+
+    it('422 si falta professional_id en AL MENOS un slot', async () => {
+      configureFrom({ treatment: defaultTreatment({ professional_id: null }) })
+      const res = await POST(
+        makeRequest(
+          anyBody([
+            { start_at: '2026-06-10T13:00:00.000Z', end_at: '2026-06-10T14:00:00.000Z', professional_id: PROF },
+            { start_at: '2026-06-11T13:00:00.000Z', end_at: '2026-06-11T14:00:00.000Z' },
+          ]),
+        ),
+        makeParams(),
+      )
+      expect(res.status).toBe(422)
+    })
+
+    it('con profesional FIJO en el paquete, ignora professional_id que traiga el slot y usa el del paquete', async () => {
+      configureFrom({}) // paquete con professional_id = PROF (default)
+      rpcCreates()
+      const res = await POST(
+        makeRequest(anyBody([{ start_at: '2026-06-10T13:00:00.000Z', end_at: '2026-06-10T14:00:00.000Z', professional_id: PROF_2 }])),
+        makeParams(),
+      )
+      expect(res.status).toBe(201)
+      expect(mockRpc).toHaveBeenCalledWith(
+        'create_appointment',
+        expect.objectContaining({ p_professional_id: PROF }),
+      )
+    })
   })
 })

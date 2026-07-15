@@ -118,4 +118,68 @@ describe('AvailabilitySlotPicker', () => {
       expect(screen.getByText(/no hay horarios libres/i)).toBeInTheDocument()
     })
   })
+
+  describe('modo "cualquier profesional" (professionalId=null)', () => {
+    it('consulta disponibilidad con allProfessionals=true en vez de exigir professionalId', () => {
+      render(
+        <AvailabilitySlotPicker serviceId={SERVICE} professionalId={null} selected={[]} onToggle={vi.fn()} />,
+      )
+      expect(vi.mocked(useAvailability)).toHaveBeenCalledWith(
+        expect.objectContaining({ enabled: false, serviceId: SERVICE, professionalId: null, allProfessionals: true }),
+      )
+    })
+
+    it('muestra el profesional junto a la hora en cada botón', async () => {
+      mockAvailability([
+        makeShift('10:00', '2026-06-15T13:00:00.000Z'),
+      ])
+      const user = userEvent.setup()
+      render(
+        <AvailabilitySlotPicker serviceId={SERVICE} professionalId={null} selected={[]} onToggle={vi.fn()} />,
+      )
+      await user.type(screen.getByLabelText('Fecha'), '2026-06-15')
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: '10:00 · Patricia Pérez' })).toBeInTheDocument()
+      })
+    })
+
+    it('emite onToggle con professional_id y professional_name del hueco', async () => {
+      mockAvailability([makeShift('10:00', '2026-06-15T13:00:00.000Z')])
+      const onToggle = vi.fn()
+      const user = userEvent.setup()
+      render(
+        <AvailabilitySlotPicker serviceId={SERVICE} professionalId={null} selected={[]} onToggle={onToggle} />,
+      )
+      await user.type(screen.getByLabelText('Fecha'), '2026-06-15')
+      await user.click(await screen.findByRole('button', { name: '10:00 · Patricia Pérez' }))
+      expect(onToggle).toHaveBeenCalledWith(
+        expect.objectContaining({ professional_id: PROF, professional_name: 'Patricia Pérez' }),
+      )
+    })
+
+    it('distingue por profesional dos huecos con la misma hora (no colapsa la selección)', async () => {
+      const shiftA = makeShift('10:00', '2026-06-15T13:00:00.000Z')
+      const shiftB = { ...shiftA, professional_id: 'prof-2', professional_name: 'Aldo Luque' }
+      mockAvailability([shiftA, shiftB])
+      const selected: SelectedSlot[] = [
+        {
+          start_at: '2026-06-15T13:00:00.000Z',
+          end_at: '2026-06-15T14:00:00.000Z',
+          date: '2026-06-15',
+          label: '10:00',
+          professional_id: PROF,
+          professional_name: 'Patricia Pérez',
+        },
+      ]
+      const user = userEvent.setup()
+      render(
+        <AvailabilitySlotPicker serviceId={SERVICE} professionalId={null} selected={selected} onToggle={vi.fn()} />,
+      )
+      await user.type(screen.getByLabelText('Fecha'), '2026-06-15')
+      const patriciaBtn = await screen.findByRole('button', { name: '10:00 · Patricia Pérez' })
+      const aldoBtn = await screen.findByRole('button', { name: '10:00 · Aldo Luque' })
+      expect(patriciaBtn).toHaveAttribute('aria-pressed', 'true')
+      expect(aldoBtn).toHaveAttribute('aria-pressed', 'false')
+    })
+  })
 })

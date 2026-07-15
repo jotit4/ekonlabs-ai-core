@@ -62,38 +62,69 @@ export async function POST(request: Request): Promise<Response> {
   const startDate = new Date().toLocaleDateString('en-CA') // 'YYYY-MM-DD'
   const emptyPattern = { slots: [] as unknown[] }
 
-  // 4. Validar que el ÚNICO profesional del paquete atienda el servicio.
-  //    (Antes se validaba uno por slot; ahora hay un solo profesional para toda la
-  //    serie.) RLS de service_professionals filtra por tenant via JOIN a professionals,
-  //    así que esta consulta sólo ve filas del tenant del usuario (AR14 — NO .eq('tenant_id')).
-  const { data: spRows, error: spError } = await supabase
-    .from('service_professionals')
-    .select('professional_id')
-    .eq('service_id', service_id)
-    .eq('professional_id', professional_id)
+  // 4. Validar el profesional del paquete — Pedido A #2/#3 (ISADI 2026-07-14):
+  //    el bono TAMBIÉN puede crearse sin profesional fijo ("cualquier profesional
+  //    disponible"). `professional_id` es OPCIONAL en el schema:
+  //    - Si viene: validar que ESE profesional atienda el servicio (comportamiento
+  //      sin cambios).
+  //    - Si NO viene: validar que el servicio tenga AL MENOS un profesional ACTIVO
+  //      que lo atienda (si no, el bono quedaría inagendable). RLS de
+  //      service_professionals filtra por tenant via JOIN a professionals — NO
+  //      `.eq('tenant_id')` (AR14).
+  if (professional_id) {
+    const { data: spRows, error: spError } = await supabase
+      .from('service_professionals')
+      .select('professional_id')
+      .eq('service_id', service_id)
+      .eq('professional_id', professional_id)
 
-  if (spError) {
-    console.error('[treatments/POST] service_professionals check error:', spError)
-    return Response.json({ error: 'Error al validar el profesional' }, { status: 500 })
-  }
+    if (spError) {
+      console.error('[treatments/POST] service_professionals check error:', spError)
+      return Response.json({ error: 'Error al validar el profesional' }, { status: 500 })
+    }
 
-  if (!spRows || spRows.length === 0) {
-    return Response.json(
-      { error: `El profesional ${professional_id} no atiende ese servicio` },
-      { status: 400 },
-    )
+    if (!spRows || spRows.length === 0) {
+      return Response.json(
+        { error: `El profesional ${professional_id} no atiende ese servicio` },
+        { status: 400 },
+      )
+    }
+  } else {
+    const { data: spRows, error: spError } = await supabase
+      .from('service_professionals')
+      .select('professional_id, professionals ( professional_id, active )')
+      .eq('service_id', service_id)
+
+    if (spError) {
+      console.error('[treatments/POST] service_professionals (any) check error:', spError)
+      return Response.json({ error: 'Error al validar los profesionales del servicio' }, { status: 500 })
+    }
+
+    type ProfRow = { professional_id: string; active: boolean } | null
+    const hasActiveProfessional = (spRows ?? [])
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((row: any) => row.professionals as ProfRow)
+      .some((p) => p != null && p.active === true)
+
+    if (!hasActiveProfessional) {
+      return Response.json(
+        { error: 'El servicio no tiene profesionales disponibles' },
+        { status: 400 },
+      )
+    }
   }
 
   // 5. Insertar la fila `treatments`.
   //    sessions_remaining = total_sessions (ninguna consumida aún), status = 'active'.
   //    tenant_id (del JWT) es NOT NULL + lo exige la policy WITH CHECK. created_by para trazabilidad.
+  //    professional_id: null cuando el bono queda sin profesional fijo (columna nullable).
   const { data: inserted, error: insertError } = await supabase
     .from('treatments')
     .insert({
       tenant_id: tenantId,
       patient_id,
       service_id,
-      professional_id,
+      professional_id: professional_id ?? null,
       total_sessions,
       sessions_remaining: total_sessions,
       start_date: startDate,

@@ -54,6 +54,20 @@ function makeServiceProfBuilder(rows: { professional_id: string }[], error: unkn
   return builder
 }
 
+// Builder para el camino "cualquier profesional" (professional_id ausente):
+// .select('..., professionals(...)').eq('service_id') — UN solo .eq, resuelve
+// con la lista de profesionales (activos o no) que atienden el servicio.
+function makeAnyProfessionalBuilder(
+  rows: { professionals: { professional_id: string; active: boolean } | null }[],
+  error: unknown = null,
+) {
+  const builder = {
+    select: vi.fn(() => builder),
+    eq: vi.fn(() => Promise.resolve({ data: rows, error })),
+  }
+  return builder
+}
+
 // Builder de treatments: .insert().select().single() resuelve a { data, error }
 let lastInsertPayload: Record<string, unknown> | null = null
 function makeTreatmentsBuilder(
@@ -76,12 +90,23 @@ interface FromConfig {
   spError?: unknown
   insertData?: { treatment_id: string } | null
   insertError?: unknown
+  // Camino "cualquier profesional" (professional_id ausente en el body).
+  anyProfessionalRows?: { professionals: { professional_id: string; active: boolean } | null }[]
+  anyProfessionalError?: unknown
 }
 
 function configureFrom(cfg: FromConfig) {
   const spRows = cfg.spRows ?? [{ professional_id: PROF_A }]
+  const anyRows = cfg.anyProfessionalRows ?? [{ professionals: { professional_id: PROF_A, active: true } }]
   mockFrom.mockImplementation((table: string) => {
-    if (table === 'service_professionals') return makeServiceProfBuilder(spRows, cfg.spError ?? null)
+    if (table === 'service_professionals') {
+      // Sin professional_id en el body → el route hace UN solo .eq('service_id')
+      // y espera la forma "any". Con professional_id → 2 .eq() (comportamiento
+      // sin cambios). Se distingue reutilizando el builder correcto según config.
+      return cfg.anyProfessionalRows !== undefined || cfg.anyProfessionalError !== undefined
+        ? makeAnyProfessionalBuilder(anyRows, cfg.anyProfessionalError ?? null)
+        : makeServiceProfBuilder(spRows, cfg.spError ?? null)
+    }
     if (table === 'treatments')
       return makeTreatmentsBuilder(
         cfg.insertData === undefined ? { treatment_id: NEW_TREATMENT_ID } : cfg.insertData,
@@ -191,6 +216,35 @@ describe('POST /api/treatments', () => {
     configureFrom({ spError: { message: 'sp fail' } })
     const res = await POST(makeRequest(validBody()))
     expect(res.status).toBe(500)
+  })
+
+  describe('Pedido A #2/#3 (ISADI 2026-07-14) — bono sin profesional fijo ("cualquier profesional")', () => {
+    it('201 + professional_id null cuando el body no trae profesional y el servicio tiene al menos uno activo', async () => {
+      configureFrom({
+        anyProfessionalRows: [{ professionals: { professional_id: PROF_A, active: true } }],
+      })
+      const res = await POST(makeRequest(validBody({ professional_id: undefined })))
+      expect(res.status).toBe(201)
+      expect(lastInsertPayload?.professional_id).toBeNull()
+    })
+
+    it('400 si el servicio no tiene NINGÚN profesional activo', async () => {
+      configureFrom({ anyProfessionalRows: [{ professionals: { professional_id: PROF_A, active: false } }] })
+      const res = await POST(makeRequest(validBody({ professional_id: undefined })))
+      expect(res.status).toBe(400)
+    })
+
+    it('400 si el servicio no tiene ningún profesional asociado', async () => {
+      configureFrom({ anyProfessionalRows: [] })
+      const res = await POST(makeRequest(validBody({ professional_id: undefined })))
+      expect(res.status).toBe(400)
+    })
+
+    it('500 si el check "cualquier profesional" falla', async () => {
+      configureFrom({ anyProfessionalError: { message: 'fail' } })
+      const res = await POST(makeRequest(validBody({ professional_id: undefined })))
+      expect(res.status).toBe(500)
+    })
   })
 
   it('500 si el insert falla', async () => {

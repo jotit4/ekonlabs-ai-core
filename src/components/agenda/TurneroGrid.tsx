@@ -2,14 +2,12 @@
 
 import { Fragment } from 'react'
 import { type Appointment, STATUS_LABELS } from '@/types/appointments'
-import type { AvailabilityShift } from '@/types/availability'
-import { getStatusColor } from '@/lib/agenda/status-colors'
+import { getReadableTextColor } from '@/lib/agenda/turnero-palette'
 import {
   hhmmFromDate,
   type TurneroColumn,
   type TurneroCell,
 } from '@/lib/agenda/turnero-grid'
-import { StatusDot, statusToVariant } from '@/components/shared/StatusDot'
 import { SesionSerieBadge } from './SesionSerieBadge'
 import { ReminderBadge } from './ReminderBadge'
 
@@ -24,27 +22,22 @@ export interface TurneroGridProps {
   /** Accessor: contenido de la celda dada (columna, hora). */
   getCell: (columnId: string, hour: string) => TurneroCell
   onAppointmentClick?: (apt: Appointment) => void
-  onFreeSlotClick?: (shift: AvailabilityShift) => void
+  /**
+   * Click en una celda VACÍA dentro del horario (sin turno) → atajo "Dar un
+   * turno" con esa fecha/hora prellenada. Reemplaza el click en hueco libre
+   * (retirado — pedido ISADI 2026-07-14 de no mostrar huecos en el calendario).
+   * Recibe (columnId, hour); cada vista (Día/Semana) traduce columnId a fecha
+   * y, si aplica, a profesional.
+   */
+  onEmptyCellClick?: (columnId: string, hour: string) => void
   /** En vista Semana el chip muestra el profesional (la columna es un día). */
   showProfessionalOnChip?: boolean
   /** ¿La celda (columna, hora) es una hora ya pasada de hoy? → se atenúa. */
   isPastCell?: (columnId: string, hour: string) => boolean
   /** Línea de "ahora": se dibuja sobre la fila `atHour` en las columnas que matchean. */
   nowLine?: { atHour: string; appliesToColumn: (columnId: string) => boolean }
-  /**
-   * La disponibilidad ("N libres") aún se está cargando (RPC pesada, 2-3s). Mientras
-   * es true, las celdas dentro del horario, sin turno y sin huecos todavía muestran un
-   * skeleton tenue ("buscando horarios") en vez de quedar vacías y llenarse de golpe.
-   */
-  availabilityLoading?: boolean
   ariaLabel?: string
 }
-
-// Con más de esta cantidad de huecos en una celda — o cuando la celda YA tiene
-// un turno — se colapsan a un contador discreto ("N libres") en vez de listar
-// cada uno. Evita el ruido de "10:00" repetido y que una celda cargada agrande
-// toda su fila (las filas de la grilla comparten alto).
-const MAX_INLINE_FREE = 1
 
 const HOUR_COL_WIDTH = 60
 const ROW_MIN_HEIGHT = 56
@@ -69,7 +62,6 @@ function TurnoChip({
   onClick?: (apt: Appointment) => void
 }) {
   const status = apt.status
-  const color = getStatusColor(status)
   const isCancelled = status === 'cancelled'
   const patientName = apt.patients?.full_name ?? 'Paciente'
   const serviceName = apt.services?.name ?? null
@@ -79,6 +71,15 @@ function TurnoChip({
   // (ej. un turno a las 09:30 dentro de la fila 09:00). Si coincide, la
   // columna HORA ya la ancla → no se repite (planilla limpia).
   const showTime = exactTime !== rowHour
+
+  // Color MANUAL (paleta muda del turnero, pedido ISADI 2026-07-14) — es el
+  // ÚNICO color que pinta el turno. Sin color manual, el chip queda neutro
+  // (como una celda sin pintar del Excel): NUNCA cae al color de estado.
+  // El estado sigue existiendo como dato (aria-label + TurnoDetailModal),
+  // solo desapareció su representación VISUAL del calendario.
+  const manualColor = apt.color ?? null
+  const textColor = manualColor ? getReadableTextColor(manualColor) : 'var(--color-text-primary)'
+  const secondaryTextColor = manualColor ? textColor : 'var(--color-text-secondary)'
 
   const ariaParts = [
     patientName,
@@ -103,20 +104,20 @@ function TurnoChip({
         gap: 1,
         width: '100%',
         textAlign: 'left',
-        background: `${color}1a`,
-        border: 'none',
-        borderLeft: `3px solid ${color}`,
-        borderRadius: '0 6px 6px 0',
+        background: manualColor ?? 'var(--color-surface)',
+        border: manualColor ? '1px solid transparent' : '1px solid var(--color-border)',
+        borderRadius: 6,
         padding: '4px 6px',
         cursor: onClick ? 'pointer' : 'default',
         opacity: isCancelled ? 0.55 : 1,
-        transition: 'background 0.12s',
+        boxShadow: 'none',
+        transition: 'box-shadow 0.12s',
       }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = `${color}2e` }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = `${color}1a` }}
+      onMouseEnter={(e) => { e.currentTarget.style.boxShadow = 'inset 0 0 0 100px rgba(0,0,0,0.06)' }}
+      onMouseLeave={(e) => { e.currentTarget.style.boxShadow = 'none' }}
     >
       {showTime && (
-        <span style={{ fontSize: 10, fontWeight: 700, color, lineHeight: 1.2 }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: secondaryTextColor, lineHeight: 1.2 }}>
           {exactTime}
         </span>
       )}
@@ -124,7 +125,7 @@ function TurnoChip({
         style={{
           fontSize: 12,
           fontWeight: 600,
-          color: 'var(--color-text-primary)',
+          color: textColor,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
@@ -138,7 +139,7 @@ function TurnoChip({
         <span
           style={{
             fontSize: 10.5,
-            color: 'var(--color-text-secondary)',
+            color: secondaryTextColor,
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
@@ -149,7 +150,6 @@ function TurnoChip({
         </span>
       )}
       <span style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, marginTop: 1 }}>
-        <StatusDot variant={statusToVariant(status)} label={STATUS_LABELS[status]} />
         <ReminderBadge
           reminderSentAt={apt.reminder_sent_at}
           attendanceConfirmed={apt.attendance_confirmed}
@@ -163,81 +163,61 @@ function TurnoChip({
   )
 }
 
-// ─── Hueco libre individual ───────────────────────────────────────────────────
+// ─── Celda vacía clickeable ───────────────────────────────────────────────────
+// Reemplaza el chip de hueco libre retirado (pedido ISADI 2026-07-14: no
+// mostrar huecos en el calendario). Sin datos de disponibilidad, la celda no
+// puede anunciar profesional/servicio — solo ofrece el atajo "Dar un turno" a
+// esa fecha/hora; el detalle se completa a mano en el modal.
 
-function FreeSlotButton({
-  shift,
+function EmptyCell({
+  columnId,
+  columnLabel,
+  hour,
+  nowBorder,
   onClick,
 }: {
-  shift: AvailabilityShift
-  onClick?: (shift: AvailabilityShift) => void
+  columnId: string
+  /** Etiqueta de la columna (profesional en Día, día en Semana) — sin esto,
+   * dos columnas vacías en la misma fila comparten el mismo texto accesible
+   * ("Dar un turno a las 10:00" × N columnas), ambiguo para lectores de
+   * pantalla. Con label: "Dar un turno a las 10:00 — Dra. Pérez" / "— mar 14". */
+  columnLabel?: string
+  hour: string
+  nowBorder?: string
+  onClick?: (columnId: string, hour: string) => void
 }) {
+  const label = `Dar un turno a las ${hour}${columnLabel ? ` — ${columnLabel}` : ''}`
   return (
     <button
       type="button"
-      onClick={() => onClick?.(shift)}
-      aria-label={`Agendar a las ${shift.open} con ${shift.professional_name}`}
-      title={`Agendar a las ${shift.open}${shift.service_name ? ` · ${shift.service_name}` : ''}`}
-      className="turnero-free-slot"
+      onClick={() => onClick?.(columnId, hour)}
+      aria-label={label}
+      title={label}
+      className="turnero-empty-cell"
       style={{
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 4,
         width: '100%',
-        minHeight: 26,
-        background: 'transparent',
-        border: '1px dashed transparent',
-        borderRadius: 6,
-        cursor: 'pointer',
-        color: 'var(--color-text-secondary)',
-        transition: 'background 0.12s, border-color 0.12s, opacity 0.12s',
+        minHeight: ROW_MIN_HEIGHT,
+        padding: 3,
+        background: 'var(--color-bg)',
+        border: 'none',
+        borderRight: '1px solid var(--color-border)',
+        borderBottom: '1px solid var(--color-border)',
+        borderTop: nowBorder,
+        borderRadius: 0,
+        cursor: onClick ? 'pointer' : 'default',
+        transition: 'background 0.12s',
       }}
     >
-      <span aria-hidden="true" className="turnero-free-plus" style={{ fontSize: 15, fontWeight: 400, lineHeight: 1, opacity: 0 }}>
+      <span
+        aria-hidden="true"
+        className="turnero-empty-plus"
+        style={{ fontSize: 15, fontWeight: 400, lineHeight: 1, opacity: 0, color: 'var(--color-text-secondary)' }}
+      >
         +
       </span>
-      <span style={{ fontSize: 10, opacity: 0.7 }}>{shift.open}</span>
-    </button>
-  )
-}
-
-// ─── Hueco colapsado ("N libres") ─────────────────────────────────────────────
-
-function FreeCountButton({
-  count,
-  hour,
-  shifts,
-  onClick,
-}: {
-  count: number
-  hour: string
-  shifts: AvailabilityShift[]
-  onClick?: (shift: AvailabilityShift) => void
-}) {
-  const first = shifts[0]
-  return (
-    <button
-      type="button"
-      onClick={() => first && onClick?.(first)}
-      aria-label={count === 1 ? `1 horario libre a las ${hour}` : `${count} horarios libres a las ${hour}`}
-      className="turnero-free-slot"
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: '100%',
-        minHeight: 26,
-        background: 'transparent',
-        border: '1px dashed transparent',
-        borderRadius: 6,
-        cursor: 'pointer',
-        color: 'var(--color-text-secondary)',
-        fontSize: 11,
-        transition: 'background 0.12s, border-color 0.12s',
-      }}
-    >
-      {count === 1 ? '1 libre' : `${count} libres`}
     </button>
   )
 }
@@ -246,27 +226,28 @@ function FreeCountButton({
 
 function GridCell({
   cell,
+  columnId,
+  columnLabel,
   hour,
   showProfessionalOnChip,
   isPast = false,
   showNowLine = false,
-  availabilityLoading = false,
   onAppointmentClick,
-  onFreeSlotClick,
+  onEmptyCellClick,
 }: {
   cell: TurneroCell
+  columnId: string
+  columnLabel?: string
   hour: string
   showProfessionalOnChip?: boolean
   isPast?: boolean
   showNowLine?: boolean
-  availabilityLoading?: boolean
   onAppointmentClick?: (apt: Appointment) => void
-  onFreeSlotClick?: (shift: AvailabilityShift) => void
+  onEmptyCellClick?: (columnId: string, hour: string) => void
 }) {
-  const { appointments, freeShifts, outOfHours } = cell
+  const { appointments, outOfHours } = cell
   const hasAppointments = appointments.length > 0
-  const hasFree = freeShifts.length > 0
-  const isEmpty = !hasAppointments && !hasFree
+  const isEmpty = !hasAppointments
   const nowBorder = showNowLine ? `2px solid ${NOW_COLOR}` : undefined
 
   // Hora ya pasada de HOY, sin contenido → gris liso tenue. Distinto del rayado
@@ -305,54 +286,19 @@ function GridCell({
     )
   }
 
-  // Hueco dentro del horario, sin turno y sin huecos. Dos casos:
-  //  - La disponibilidad todavía se está cargando → skeleton tenue: comunica
-  //    "buscando horarios" y reserva el alto donde luego irían los "libres",
-  //    evitando el salto visual de llenarse de golpe.
-  //  - Ya cargó y no hay hueco real que ofrecer → gap muy sutil, no clickeable.
+  // Hueco dentro del horario, sin turno → clickeable: abre "Dar un turno" con
+  // esa fecha/hora prellenada (reemplaza el chip de hueco libre retirado).
   if (isEmpty) {
-    if (availabilityLoading) {
-      return (
-        <div
-          aria-hidden="true"
-          style={{
-            minHeight: ROW_MIN_HEIGHT,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 3,
-            borderRight: '1px solid var(--color-border)',
-            borderBottom: '1px solid var(--color-border)',
-            borderTop: nowBorder,
-            background: 'var(--color-bg)',
-          }}
-        >
-          <span
-            data-testid="turnero-cell-skeleton"
-            className="turnero-skeleton"
-            style={{ width: '64%', height: 22, borderRadius: 6 }}
-          />
-        </div>
-      )
-    }
     return (
-      <div
-        style={{
-          minHeight: ROW_MIN_HEIGHT,
-          borderRight: '1px solid var(--color-border)',
-          borderBottom: '1px solid var(--color-border)',
-          borderTop: nowBorder,
-          background: 'var(--color-bg)',
-        }}
+      <EmptyCell
+        columnId={columnId}
+        columnLabel={columnLabel}
+        hour={hour}
+        nowBorder={nowBorder}
+        onClick={onEmptyCellClick}
       />
     )
   }
-
-  // Colapsar a "N libres" cuando la celda ya tiene un turno (para no inflar su
-  // alto) o cuando hay más de un hueco (varios profesionales a la misma hora →
-  // listarlos como "10:00" repetido no aporta). Solo se listan individualmente
-  // los huecos cuando la celda no tiene turno y hay exactamente uno.
-  const collapseFree = hasAppointments || freeShifts.length > MAX_INLINE_FREE
 
   return (
     <div
@@ -378,25 +324,6 @@ function GridCell({
           onClick={onAppointmentClick}
         />
       ))}
-
-      {/* En horas pasadas no se ofrecen huecos para agendar. */}
-      {hasFree && !isPast && collapseFree && (
-        <FreeCountButton
-          count={freeShifts.length}
-          hour={hour}
-          shifts={freeShifts}
-          onClick={onFreeSlotClick}
-        />
-      )}
-
-      {hasFree && !isPast && !collapseFree &&
-        freeShifts.map((shift, idx) => (
-          <FreeSlotButton
-            key={`free-${shift.slot_start_iso}-${shift.professional_id}-${shift.service_id}-${idx}`}
-            shift={shift}
-            onClick={onFreeSlotClick}
-          />
-        ))}
     </div>
   )
 }
@@ -408,11 +335,10 @@ export function TurneroGrid({
   hourRows,
   getCell,
   onAppointmentClick,
-  onFreeSlotClick,
+  onEmptyCellClick,
   showProfessionalOnChip,
   isPastCell,
   nowLine,
-  availabilityLoading = false,
   ariaLabel = 'Grilla de turnos',
 }: TurneroGridProps) {
   const gridTemplateColumns = `${HOUR_COL_WIDTH}px repeat(${columns.length}, minmax(120px, 1fr))`
@@ -429,27 +355,15 @@ export function TurneroGrid({
 
   return (
     <>
-      {/* Estilos de interacción para huecos libres (hover → aparece el "+") y
-          skeleton de disponibilidad (barra gris tenue con pulso). El pulso lo
-          neutraliza el prefers-reduced-motion global de globals.css. */}
+      {/* Estilos de interacción de la celda vacía clickeable (hover → aparece el "+"). */}
       <style>{`
-        .turnero-free-slot:hover {
-          background: var(--color-surface);
-          border-color: var(--color-border);
+        .turnero-empty-cell:hover {
+          background: var(--color-surface) !important;
         }
-        .turnero-free-slot:hover .turnero-free-plus { opacity: 0.6 !important; }
-        .turnero-free-slot:focus-visible {
+        .turnero-empty-cell:hover .turnero-empty-plus { opacity: 0.6 !important; }
+        .turnero-empty-cell:focus-visible {
           outline: 2px solid var(--color-interactive);
           outline-offset: -2px;
-        }
-        @keyframes turnero-skeleton-pulse {
-          0%, 100% { opacity: 0.4; }
-          50% { opacity: 0.75; }
-        }
-        .turnero-skeleton {
-          display: block;
-          background: var(--color-border);
-          animation: turnero-skeleton-pulse 1.4s ease-in-out infinite;
         }
       `}</style>
 
@@ -549,13 +463,14 @@ export function TurneroGrid({
                   <GridCell
                     key={`cell-${col.id}-${hour}`}
                     cell={getCell(col.id, hour)}
+                    columnId={col.id}
+                    columnLabel={col.label}
                     hour={hour}
                     showProfessionalOnChip={showProfessionalOnChip}
                     isPast={isPastCell?.(col.id, hour) ?? false}
                     showNowLine={isNowRow && nowLine!.appliesToColumn(col.id)}
-                    availabilityLoading={availabilityLoading}
                     onAppointmentClick={onAppointmentClick}
-                    onFreeSlotClick={onFreeSlotClick}
+                    onEmptyCellClick={onEmptyCellClick}
                   />
                 ))}
               </Fragment>

@@ -124,8 +124,12 @@ export function PaquetesTracking({ patientId }: PaquetesTrackingProps) {
 
             {/* Agendar sesión (MANUAL Y FLEXIBLE — reclamo ISADI): solo si el bono
                 está activo y le faltan sesiones por agendar. Abre el modal que
-                muestra la disponibilidad REAL del profesional+servicio del paquete. */}
-            {t.status === 'active' && por_agendar > 0 && t.professional_id && (
+                muestra la disponibilidad REAL del profesional+servicio del paquete.
+                Pedido A #2/#3 (ISADI 2026-07-14): el bono TAMBIÉN puede no tener
+                profesional fijo ("cualquier profesional disponible") — ya no se
+                oculta el botón en ese caso, el modal resuelve el profesional por
+                sesión. */}
+            {t.status === 'active' && por_agendar > 0 && (
               <button
                 type="button"
                 onClick={() => setAgendarFor(t.treatment_id)}
@@ -135,7 +139,7 @@ export function PaquetesTracking({ patientId }: PaquetesTrackingProps) {
               </button>
             )}
 
-            {agendarFor === t.treatment_id && t.professional_id && (
+            {agendarFor === t.treatment_id && (
               <AgendarSesionModal
                 open
                 onClose={() => setAgendarFor(null)}
@@ -153,7 +157,9 @@ export function PaquetesTracking({ patientId }: PaquetesTrackingProps) {
               <dt>Servicio</dt>
               <dd className="text-[var(--color-text-primary)]">{t.services?.name ?? '—'}</dd>
               <dt>Profesional</dt>
-              <dd className="text-[var(--color-text-primary)]">{t.professionals?.name ?? '—'}</dd>
+              <dd className="text-[var(--color-text-primary)]">
+                {t.professionals?.name ?? 'Cualquier profesional disponible'}
+              </dd>
               <dt>Vencimiento</dt>
               <dd className="text-[var(--color-text-primary)]">
                 {t.expires_at ? fmtDate(t.expires_at, "d 'de' MMMM 'de' yyyy") : 'Sin vencimiento'}

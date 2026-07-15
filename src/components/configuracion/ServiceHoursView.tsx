@@ -1,8 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, Controller } from 'react-hook-form'
 import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
+import { TimeField } from '@/components/ui/time-field'
+import { DateField } from '@/components/ui/date-field'
 import { useServiceHours } from '@/hooks/use-service-hours'
 import { useCreateServiceHour } from '@/hooks/use-create-service-hour'
 import { useDeleteServiceHour } from '@/hooks/use-delete-service-hour'
@@ -60,6 +62,7 @@ function AddServiceHourForm({ serviceId }: { serviceId: string }) {
     register,
     handleSubmit,
     reset,
+    control,
     formState: { errors },
   } = useForm<CreateServiceHourFormValues>({
     resolver: standardSchemaResolver(CreateServiceHourSchema),
@@ -107,16 +110,18 @@ function AddServiceHourForm({ serviceId }: { serviceId: string }) {
           <label htmlFor="start_time" className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">
             Hora inicio
           </label>
-          <input
-            id="start_time"
-            type="time"
-            {...register('start_time')}
-            className={[
-              'w-full px-2 py-1.5 rounded-[8px] border text-sm',
-              'bg-[var(--color-bg)] text-[var(--color-text-primary)]',
-              'focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]',
-              errors.start_time ? 'border-red-400' : 'border-[var(--color-border)]',
-            ].join(' ')}
+          <Controller
+            name="start_time"
+            control={control}
+            render={({ field }) => (
+              <TimeField
+                id="start_time"
+                value={field.value}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                aria-invalid={!!errors.start_time}
+              />
+            )}
           />
           {errors.start_time && (
             <p role="alert" className="mt-1 text-xs text-red-600">{errors.start_time.message}</p>
@@ -128,16 +133,18 @@ function AddServiceHourForm({ serviceId }: { serviceId: string }) {
           <label htmlFor="end_time" className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">
             Hora fin
           </label>
-          <input
-            id="end_time"
-            type="time"
-            {...register('end_time')}
-            className={[
-              'w-full px-2 py-1.5 rounded-[8px] border text-sm',
-              'bg-[var(--color-bg)] text-[var(--color-text-primary)]',
-              'focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]',
-              errors.end_time ? 'border-red-400' : 'border-[var(--color-border)]',
-            ].join(' ')}
+          <Controller
+            name="end_time"
+            control={control}
+            render={({ field }) => (
+              <TimeField
+                id="end_time"
+                value={field.value}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                aria-invalid={!!errors.end_time}
+              />
+            )}
           />
           {errors.end_time && (
             <p role="alert" className="mt-1 text-xs text-red-600">{errors.end_time.message}</p>
@@ -193,6 +200,7 @@ function AddServiceExceptionForm({ serviceId }: { serviceId: string }) {
     register,
     handleSubmit,
     reset,
+    control,
     formState: { errors },
   } = useForm<CreateServiceExceptionFormValues>({
     resolver: standardSchemaResolver(CreateServiceExceptionSchema),
@@ -215,16 +223,18 @@ function AddServiceExceptionForm({ serviceId }: { serviceId: string }) {
           <label htmlFor="exception_date" className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">
             Fecha
           </label>
-          <input
-            id="exception_date"
-            type="date"
-            {...register('exception_date')}
-            className={[
-              'w-full px-2 py-1.5 rounded-[8px] border text-sm',
-              'bg-[var(--color-bg)] text-[var(--color-text-primary)]',
-              'focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]',
-              errors.exception_date ? 'border-red-400' : 'border-[var(--color-border)]',
-            ].join(' ')}
+          <Controller
+            name="exception_date"
+            control={control}
+            render={({ field }) => (
+              <DateField
+                id="exception_date"
+                value={field.value}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                aria-invalid={!!errors.exception_date}
+              />
+            )}
           />
           {errors.exception_date && (
             <p role="alert" className="mt-1 text-xs text-red-600">{errors.exception_date.message}</p>

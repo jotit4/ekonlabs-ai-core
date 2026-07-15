@@ -13,9 +13,6 @@ import {
   parseISO,
   addDays,
   isToday,
-  startOfMonth,
-  endOfMonth,
-  eachDayOfInterval,
   formatISO,
 } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -24,8 +21,8 @@ import {
   type CalendarEvent,
   appointmentToCalendarEvent,
 } from '@/types/appointments'
-import type { AvailabilityShift, DaySummary } from '@/types/availability'
-import { getStatusColor } from '@/lib/agenda/status-colors'
+import type { DayStatusEntry } from '@/types/holidays'
+import { getReadableTextColor } from '@/lib/agenda/turnero-palette'
 import {
   buildCellMap,
   computeHourRows,
@@ -33,12 +30,13 @@ import {
   hhmmFromDate,
   makeGetCell,
   type ApptEntry,
-  type FreeEntry,
   type TurneroColumn,
 } from '@/lib/agenda/turnero-grid'
 import { TurneroGrid } from './TurneroGrid'
 import { AgendaDayViewSkeleton } from './AgendaDayView'
 import { SesionSerieBadge } from './SesionSerieBadge'
+import { DayStatusBadge } from './DayStatusBadge'
+import { makeMonthDateHeader, makeMonthDayPropGetter } from './MonthDayStatusHeader'
 
 const locales = { es }
 
@@ -59,20 +57,32 @@ const WEEK_STEP_MIN = 60
 // profesional indicado. Los huecos libres se muestran individualmente si son
 // pocos, o colapsados a "N libres" si son muchos (menos ruido).
 
+// Ancho de la columna HORA — DEBE coincidir con `HOUR_COL_WIDTH` (privado) de
+// TurneroGrid.tsx para que la fila de badges de estado del día quede alineada
+// con los encabezados de columna de la grilla que está justo debajo.
+const WEEK_HOUR_COL_WIDTH = 60
+
 function WeekGridView({
   weekDate,
   events,
   onEventClick,
-  freeShiftsByDate,
-  availabilityLoading = false,
-  onFreeSlotClick,
+  onEmptyCellClick,
+  dayStatusMap,
+  onDayStatusClick,
 }: {
   weekDate: Date
   events: CalendarEvent[]
   onEventClick?: (appointment: Appointment) => void
-  freeShiftsByDate?: Record<string, AvailabilityShift[]>
-  availabilityLoading?: boolean
-  onFreeSlotClick?: (shift: AvailabilityShift) => void
+  /** Click en una celda vacía → atajo "Dar un turno" con esa fecha (=colId, ya
+   * es un ISO de día) y hora. Reemplaza el click en hueco libre retirado
+   * (pedido ISADI 2026-07-14 de no mostrar huecos en el calendario). */
+  onEmptyCellClick?: (date: string, timeHHmm: string) => void
+  /** Feriados + decisión de la clínica por fecha (pedido ISADI 2026-07-14).
+   * `undefined` = feature sin datos (aún no cargó) → sin badges, sin cambios
+   * visuales; el resto del componente sigue funcionando igual que antes. */
+  dayStatusMap?: Record<string, DayStatusEntry>
+  /** Click en el badge de estado de un día → abre el modal "¿abre o no?". */
+  onDayStatusClick?: (date: string) => void
 }) {
   const grid = useMemo(() => {
     // Ventana de 7 días DESDE la fecha ancla (weekDate). El ancla es la PRIMERA
@@ -94,18 +104,6 @@ function WeekGridView({
       perDayCount.set(dayIso, (perDayCount.get(dayIso) ?? 0) + 1)
     }
 
-    const freeEntries: FreeEntry[] = []
-    for (const [dayIso, shifts] of Object.entries(freeShiftsByDate ?? {})) {
-      if (!dayIsos.has(dayIso)) continue
-      for (const shift of shifts) {
-        freeEntries.push({
-          colId: dayIso,
-          hour: floorToStep(shift.open, WEEK_STEP_MIN),
-          shift,
-        })
-      }
-    }
-
     const columns: TurneroColumn[] = days.map((day) => {
       const dayIso = formatISO(day, { representation: 'date' })
       const count = perDayCount.get(dayIso) ?? 0
@@ -120,14 +118,16 @@ function WeekGridView({
       }
     })
 
-    const times = [...apptEntries.map((e) => e.hour), ...freeEntries.map((e) => e.hour)]
+    const times = apptEntries.map((e) => e.hour)
     const hourRows = computeHourRows(times, { stepMin: WEEK_STEP_MIN })
 
-    const cellMap = buildCellMap(hourRows, apptEntries, freeEntries)
+    // Ya no hay huecos libres que ubicar en la grilla (pedido ISADI 2026-07-14):
+    // el tercer argumento siempre es [].
+    const cellMap = buildCellMap(hourRows, apptEntries, [])
     const getCell = makeGetCell(cellMap)
 
     return { columns, hourRows, getCell }
-  }, [weekDate, events, freeShiftsByDate])
+  }, [weekDate, events])
 
   // "Ahora": en la columna del día de hoy, las horas pasadas se atenúan y una
   // línea marca la hora actual. Solo si hoy cae dentro de la semana mostrada.
@@ -143,18 +143,63 @@ function WeekGridView({
     ? { atHour: nowAtHour, appliesToColumn: (colId: string) => colId === todayIso }
     : undefined
 
+  // ── Feriados + estado del día (pedido ISADI 2026-07-14) ─────────────────────
+  // Un día CERRADO debe verse inequívocamente cerrado en la grilla (no como un
+  // día vacío cualquiera). En vez de tocar TurneroGrid.tsx (compartido con la
+  // vista Día), se envuelve `getCell`: las celdas vacías de un día cerrado se
+  // fuerzan a `outOfHours: true` — el mismo estilo "rayado apagado, no
+  // clickeable" que ya usa la grilla para "fuera de horario". Los turnos YA
+  // agendados ese día (si los hubiera) se siguen mostrando normalmente — solo
+  // se bloquea ofrecer NUEVOS huecos.
+  const closedDayIds = useMemo(() => {
+    const set = new Set<string>()
+    if (!dayStatusMap) return set
+    for (const col of grid.columns) {
+      const entry = dayStatusMap[col.id]
+      if (entry && !entry.effectiveOpen) set.add(col.id)
+    }
+    return set
+  }, [dayStatusMap, grid.columns])
+
+  const getCell = (colId: string, hour: string) => {
+    const cell = grid.getCell(colId, hour)
+    if (closedDayIds.has(colId) && cell.appointments.length === 0 && !cell.outOfHours) {
+      return { ...cell, outOfHours: true }
+    }
+    return cell
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {/* Fila de badges "¿este día abre?" — alineada con las columnas de la
+          grilla de abajo (mismo ancho de columna HORA). `undefined` en
+          dayStatusMap (feature sin datos aún) → no renderiza nada. */}
+      {dayStatusMap && (
+        <div
+          role="row"
+          aria-label="Estado de los días de la semana"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: `${WEEK_HOUR_COL_WIDTH}px repeat(${grid.columns.length}, minmax(120px, 1fr))`,
+          }}
+        >
+          <div aria-hidden="true" />
+          {grid.columns.map((col) => (
+            <div key={`daystatus-${col.id}`} style={{ display: 'flex', justifyContent: 'center', padding: '0 4px' }}>
+              <DayStatusBadge entry={dayStatusMap[col.id]} onClick={() => onDayStatusClick?.(col.id)} />
+            </div>
+          ))}
+        </div>
+      )}
       <TurneroGrid
         columns={grid.columns}
         hourRows={grid.hourRows}
-        getCell={grid.getCell}
+        getCell={getCell}
         onAppointmentClick={onEventClick}
-        onFreeSlotClick={onFreeSlotClick}
+        onEmptyCellClick={onEmptyCellClick}
         showProfessionalOnChip
         isPastCell={isPastCell}
         nowLine={nowLine}
-        availabilityLoading={availabilityLoading}
         ariaLabel="Grilla semanal de turnos"
       />
     </div>
@@ -276,7 +321,10 @@ function DayEventsModal({ date, events, onClose, onAppointmentClick }: DayEvents
 
         <ul style={{ overflowY: 'auto', padding: '8px 0', margin: 0, listStyle: 'none' }} role="list">
           {sorted.map((ev) => {
-            const color = getStatusColor(ev.resource.status)
+            // Barra de color: el color MANUAL del turno si tiene (paleta muda del
+            // turnero, pedido ISADI), o un gris neutro si no — ya NO representa
+            // el estado (el estado se mantiene en TurnoDetailModal).
+            const color = ev.resource.color ?? 'var(--color-border)'
             const profName =
               ev.resource.professionals?.name ??
               ev.resource.services?.professional_name ??
@@ -352,86 +400,6 @@ function DayEventsModal({ date, events, onClose, onAppointmentClick }: DayEvents
   )
 }
 
-// ─── Vista Mes: resumen de disponibilidad (Story 10.7) ────────────────────────
-// El time-grid de RBC no expone una API simple para inyectar un indicador por
-// celda con el mock de tests; en su lugar mostramos un resumen compacto debajo
-// del calendario con "● N libres" / "lleno" por día del mes, leyendo
-// `availabilitySummary` (modo summary, liviano). Click → navega a ese día.
-function MonthAvailabilitySummary({
-  monthDate,
-  summary,
-  onDayClick,
-}: {
-  monthDate: Date
-  summary: Record<string, DaySummary>
-  onDayClick?: (isoDate: string) => void
-}) {
-  const days = eachDayOfInterval({
-    start: startOfMonth(monthDate),
-    end: endOfMonth(monthDate),
-  })
-
-  return (
-    <div
-      data-testid="month-availability-summary"
-      role="list"
-      aria-label="Disponibilidad por día"
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
-        gap: 6,
-        marginTop: 12,
-      }}
-    >
-      {days.map((day) => {
-        const iso = formatISO(day, { representation: 'date' })
-        const freeCount = summary[iso]?.free_count
-        const hasFree = typeof freeCount === 'number' && freeCount > 0
-        const label = format(day, "EEE d", { locale: es })
-
-        return (
-          <button
-            key={iso}
-            type="button"
-            role="listitem"
-            onClick={() => onDayClick?.(iso)}
-            aria-label={
-              hasFree
-                ? `${label}: ${freeCount} libres`
-                : `${label}: sin disponibilidad`
-            }
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'flex-start',
-              gap: 2,
-              padding: '6px 8px',
-              border: '1px solid var(--color-border)',
-              borderRadius: 6,
-              background: 'var(--color-bg)',
-              cursor: 'pointer',
-              textAlign: 'left',
-            }}
-          >
-            <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', textTransform: 'capitalize' }}>
-              {label}
-            </span>
-            {hasFree ? (
-              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-interactive)' }}>
-                ● {freeCount} libres
-              </span>
-            ) : (
-              <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
-                {typeof freeCount === 'number' ? 'lleno' : '—'}
-              </span>
-            )}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
 // ─── Componente principal ─────────────────────────────────────────────────────
 interface CalendarViewRangeReadOnlyProps {
   view: 'week' | 'month'
@@ -441,16 +409,26 @@ interface CalendarViewRangeReadOnlyProps {
   isError: boolean
   onRefetch: () => void
   onAppointmentClick?: (appointment: Appointment) => void
-  // Story 10.7 — disponibilidad (opcional, aditivo)
-  freeShiftsByDate?: Record<string, AvailabilityShift[]> // clave 'YYYY-MM-DD' local
-  availabilitySummary?: Record<string, DaySummary>
-  // Disponibilidad aún cargando → skeleton tenue en las celdas de la grilla Semana.
-  availabilityLoading?: boolean
-  // Aceptado por compatibilidad de la llamada actual; el profesional ahora se
-  // muestra en la cabecera de cada grupo dentro de la columna del día.
-  showProfessionalName?: boolean
-  onFreeSlotClick?: (shift: AvailabilityShift) => void
-  onDayClick?: (isoDate: string) => void
+  /**
+   * Click en una celda vacía de la grilla Semana → atajo "Dar un turno" con
+   * esa fecha y hora prellenadas. Reemplaza el click en hueco libre retirado
+   * (pedido ISADI 2026-07-14 de no mostrar huecos en el calendario). Solo
+   * aplica a la vista Semana — la vista Mes usa react-big-calendar, sin
+   * grilla de celdas propia.
+   */
+  onEmptyCellClick?: (date: string, timeHHmm: string) => void
+  /**
+   * Feriados + decisión de la clínica por fecha, ya mergeados (pedido ISADI
+   * 2026-07-14) — ver `useDayStatusRange`. Se recibe COMO PROP (no se fetchea
+   * acá adentro) para mantener este componente puramente presentacional,
+   * igual que `appointments`/`isLoading` — el fetch vive en AgendaView, que
+   * es quien sabe el rango visible (Semana/Mes) y ya tiene QueryClientProvider
+   * en producción. `undefined` = sin datos todavía → no se renderiza ningún
+   * badge/tinte (comportamiento idéntico al de antes de este feature).
+   */
+  dayStatusMap?: Record<string, DayStatusEntry>
+  /** Click en el badge de estado de un día (Semana o Mes) → abre el modal "¿abre o no?". */
+  onDayStatusClick?: (date: string) => void
 }
 
 export function CalendarViewRangeReadOnly({
@@ -461,13 +439,20 @@ export function CalendarViewRangeReadOnly({
   isError,
   onRefetch,
   onAppointmentClick,
-  freeShiftsByDate,
-  availabilitySummary,
-  availabilityLoading = false,
-  onFreeSlotClick,
-  onDayClick,
+  onEmptyCellClick,
+  dayStatusMap,
+  onDayStatusClick,
 }: CalendarViewRangeReadOnlyProps) {
   const [dayPopup, setDayPopup] = useState<{ date: Date; events: CalendarEvent[] } | null>(null)
+
+  // Vista Mes — factories memoizadas para no recrear la identidad del
+  // componente `dateHeader` en cada render (react-big-calendar las trata como
+  // definiciones de componente, no como JSX).
+  const monthDateHeader = useMemo(
+    () => makeMonthDateHeader(dayStatusMap, onDayStatusClick),
+    [dayStatusMap, onDayStatusClick],
+  )
+  const monthDayPropGetter = useMemo(() => makeMonthDayPropGetter(dayStatusMap), [dayStatusMap])
 
   if (isLoading) {
     return <AgendaDayViewSkeleton />
@@ -490,8 +475,13 @@ export function CalendarViewRangeReadOnly({
     )
   }
 
+  // Los CANCELADOS no se muestran en la agenda (Semana/Mes) — decisión 2026-07-14,
+  // igual criterio que la vista Día (ver CalendarView.tsx). Los no_show SÍ se
+  // muestran. Filtrado acá (no en useAppointmentsRange) porque ese hook no tiene
+  // otros consumidores hoy, pero mantenemos el mismo patrón que Día por
+  // consistencia y para no acoplar la regla de "qué muestra la agenda" al fetch.
   const events: CalendarEvent[] = appointments
-    .filter((apt) => apt && apt.start_at && apt.end_at)
+    .filter((apt) => apt && apt.start_at && apt.end_at && apt.status !== 'cancelled')
     .map(appointmentToCalendarEvent)
 
   // Vista Semana: grilla HORA × DÍA (planilla, sin time-grid de RBC)
@@ -501,9 +491,9 @@ export function CalendarViewRangeReadOnly({
         weekDate={parseISO(date)}
         events={events}
         onEventClick={onAppointmentClick}
-        freeShiftsByDate={freeShiftsByDate}
-        availabilityLoading={availabilityLoading}
-        onFreeSlotClick={onFreeSlotClick}
+        onEmptyCellClick={onEmptyCellClick}
+        dayStatusMap={dayStatusMap}
+        onDayStatusClick={onDayStatusClick}
       />
     )
   }
@@ -538,37 +528,34 @@ export function CalendarViewRangeReadOnly({
             showMore: (total: number) => `+${total} más`,
           }}
           eventPropGetter={(event: CalendarEvent) => {
-            // Mismo lenguaje visual que el chip de la grilla (Semana/Día): fondo
-            // tenue del color de estado + barra de color a la izquierda + texto
-            // oscuro. NO fondo sólido (se leía distinto y peor).
-            const color = getStatusColor(event.resource.status)
+            // Mismo lenguaje visual que el chip de la grilla (Semana/Día): el
+            // color MANUAL del turno (paleta muda del turnero, pedido ISADI) es
+            // el ÚNICO que pinta el fondo. Sin color manual, fondo neutro (como
+            // una celda sin pintar del Excel) — ya NO cae al color de estado.
+            const manualColor = event.resource.color ?? null
             const isCancelled = event.resource.status === 'cancelled'
             return {
               style: {
-                backgroundColor: `${color}1a`,
-                borderTop: 'none',
-                borderRight: 'none',
-                borderBottom: 'none',
-                borderLeft: `3px solid ${color}`,
-                borderRadius: '0 6px 6px 0',
-                color: 'var(--color-text-primary)',
+                backgroundColor: manualColor ?? 'var(--color-surface)',
+                border: manualColor ? '1px solid transparent' : '1px solid var(--color-border)',
+                borderRadius: 6,
+                color: manualColor ? getReadableTextColor(manualColor) : 'var(--color-text-primary)',
                 opacity: isCancelled ? 0.55 : 1,
               },
             }
           }}
+          dayPropGetter={monthDayPropGetter}
           components={{
             event: (props: { event: CalendarEvent }) => <RangeEvent event={props.event} />,
+            // `components.month.dateHeader` es la forma tipada (Components<T>
+            // de @types/react-big-calendar solo declara `dateHeader` anidado
+            // bajo `month`, no en la raíz) — a nivel runtime RBC hace merge de
+            // `components[view]` con el resto de `components` (Calendar.js),
+            // así que esto es equivalente a un `dateHeader` de nivel raíz.
+            month: { dateHeader: monthDateHeader },
           }}
         />
       </div>
-
-      {availabilitySummary && (
-        <MonthAvailabilitySummary
-          monthDate={parseISO(date)}
-          summary={availabilitySummary}
-          onDayClick={onDayClick}
-        />
-      )}
 
       {dayPopup && (
         <DayEventsModal

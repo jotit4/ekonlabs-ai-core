@@ -34,6 +34,11 @@ export interface AppointmentActionsState {
   absenceError: string | null
   clearAbsenceTarget: () => void
   handleAbsenceConfirm: (decision: AbsenceDecision, note?: string) => Promise<void>
+
+  // Color manual del turno (migración 051 — paleta muda del turnero, pedido ISADI)
+  colorLoading: boolean
+  colorError: string | null
+  handleColorChange: (appointment: Appointment, color: string | null) => Promise<boolean>
 }
 
 export function useAppointmentActions(date: string): AppointmentActionsState {
@@ -53,6 +58,10 @@ export function useAppointmentActions(date: string): AppointmentActionsState {
   >(null)
   const [absenceLoading, setAbsenceLoading] = useState(false)
   const [absenceError, setAbsenceError] = useState<string | null>(null)
+
+  // Color manual (migración 051)
+  const [colorLoading, setColorLoading] = useState(false)
+  const [colorError, setColorError] = useState<string | null>(null)
 
   async function updateStatus(
     appointmentId: string,
@@ -146,6 +155,36 @@ export function useAppointmentActions(date: string): AppointmentActionsState {
     }
   }
 
+  // Cambiar (o limpiar, color=null) el color manual del turno. Endpoint
+  // dedicado /color (no pasa por updateStatus: es un concepto independiente
+  // del estado). Invalida la agenda del día para refrescar el chip; el
+  // realtime (use-agenda-realtime) ya cubre semana/mes en cualquier caso.
+  // Devuelve true si el color se guardó, para que el modal pueda cerrarse solo.
+  async function handleColorChange(appointment: Appointment, color: string | null): Promise<boolean> {
+    setColorLoading(true)
+    setColorError(null)
+    try {
+      const response = await fetch(`/api/appointments/${appointment.appointment_id}/color`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ color }),
+      })
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}))
+        throw new Error((body as { error?: string }).error ?? 'Error al cambiar el color del turno')
+      }
+      // Prefijo 'agenda' a secas: el color se cambia también desde Semana y Mes,
+      // que consultan ['agenda', 'range', ...] — invalidar solo el día los dejaba stale.
+      queryClient.invalidateQueries({ queryKey: ['agenda'] })
+      return true
+    } catch (err) {
+      setColorError(err instanceof Error ? err.message : 'Error al cambiar el color del turno')
+      return false
+    } finally {
+      setColorLoading(false)
+    }
+  }
+
   return {
     cancelTarget,
     cancelLoading,
@@ -160,5 +199,8 @@ export function useAppointmentActions(date: string): AppointmentActionsState {
     absenceError,
     clearAbsenceTarget: () => { setAbsenceTarget(null); setAbsenceError(null) },
     handleAbsenceConfirm,
+    colorLoading,
+    colorError,
+    handleColorChange,
   }
 }

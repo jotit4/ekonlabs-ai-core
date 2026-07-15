@@ -10,11 +10,17 @@ vi.mock('date-fns-tz', () => ({
   formatInTimeZone: vi.fn().mockReturnValue('2026-05-01T00:00:00-03:00'),
 }))
 
-vi.mock('date-fns', () => ({
-  startOfMonth: vi.fn((d: Date) => d),
-  subDays: vi.fn((d: Date) => d),
-  startOfDay: vi.fn((d: Date) => d),
-}))
+// Mock parcial: preserva el resto de date-fns real (lo usa internamente DateField)
+// y solo fuerza determinismo en las 3 funciones que calcularRango() necesita.
+vi.mock('date-fns', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('date-fns')>()
+  return {
+    ...actual,
+    startOfMonth: vi.fn((d: Date) => d),
+    subDays: vi.fn((d: Date) => d),
+    startOfDay: vi.fn((d: Date) => d),
+  }
+})
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -112,8 +118,8 @@ describe('FiltroFechasMetricas', () => {
 
     const inputDesde = screen.getByLabelText('Fecha desde')
     const inputHasta = screen.getByLabelText('Fecha hasta')
-    fireEvent.change(inputDesde, { target: { value: '2026-05-13' } })
-    fireEvent.change(inputHasta, { target: { value: '2026-05-01' } })
+    fireEvent.change(inputDesde, { target: { value: '13/05/2026' } })
+    fireEvent.change(inputHasta, { target: { value: '01/05/2026' } })
 
     fireEvent.click(screen.getByLabelText('Aplicar filtro de fechas'))
 
@@ -139,8 +145,8 @@ describe('FiltroFechasMetricas', () => {
 
     const inputDesde = screen.getByLabelText('Fecha desde')
     const inputHasta = screen.getByLabelText('Fecha hasta')
-    fireEvent.change(inputDesde, { target: { value: '2026-05-13' } })
-    fireEvent.change(inputHasta, { target: { value: '2026-05-01' } })
+    fireEvent.change(inputDesde, { target: { value: '13/05/2026' } })
+    fireEvent.change(inputHasta, { target: { value: '01/05/2026' } })
 
     fireEvent.click(screen.getByLabelText('Aplicar filtro de fechas'))
 
@@ -157,8 +163,8 @@ describe('FiltroFechasMetricas', () => {
 
     const inputDesde = screen.getByLabelText('Fecha desde')
     const inputHasta = screen.getByLabelText('Fecha hasta')
-    fireEvent.change(inputDesde, { target: { value: '2026-05-01' } })
-    fireEvent.change(inputHasta, { target: { value: '2026-05-13' } })
+    fireEvent.change(inputDesde, { target: { value: '01/05/2026' } })
+    fireEvent.change(inputHasta, { target: { value: '13/05/2026' } })
 
     fireEvent.click(screen.getByLabelText('Aplicar filtro de fechas'))
 
@@ -181,7 +187,7 @@ describe('FiltroFechasMetricas', () => {
 
     // Cambiar una fecha limpia el error
     const inputDesde = screen.getByLabelText('Fecha desde')
-    fireEvent.change(inputDesde, { target: { value: '2026-05-01' } })
+    fireEvent.change(inputDesde, { target: { value: '01/05/2026' } })
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })

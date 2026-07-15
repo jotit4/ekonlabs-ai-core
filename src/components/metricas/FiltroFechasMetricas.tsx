@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { startOfMonth, subDays, startOfDay } from 'date-fns'
 import { toZonedTime, formatInTimeZone } from 'date-fns-tz'
+import { DateField } from '@/components/ui/date-field'
 
 const TZ = 'America/Argentina/Buenos_Aires'
 
@@ -90,7 +91,7 @@ export function FiltroFechasMetricas({
   const [periodoSeleccionado, setPeriodoSeleccionado] = useState<PeriodoPredef>(
     esRangoPorDefecto ? 'este-mes' : 'personalizado'
   )
-  const [desdeCustom, setDesdeCustom] = useState('') // YYYY-MM-DD (para input type="date")
+  const [desdeCustom, setDesdeCustom] = useState('') // YYYY-MM-DD (formato interno de DateField)
   const [hastaCustom, setHastaCustom] = useState('')
   const [errorFecha, setErrorFecha] = useState<string | null>(null)
 
@@ -158,16 +159,14 @@ export function FiltroFechasMetricas({
             >
               Desde
             </label>
-            <input
+            <DateField
               id="metricas-desde"
-              type="date"
               aria-label="Fecha desde"
               value={desdeCustom}
-              onChange={(e) => {
-                setDesdeCustom(e.target.value)
+              onChange={(value) => {
+                setDesdeCustom(value)
                 setErrorFecha(null)
               }}
-              style={inputStyle}
             />
           </div>
           <div className="flex flex-col gap-1">
@@ -177,16 +176,14 @@ export function FiltroFechasMetricas({
             >
               Hasta
             </label>
-            <input
+            <DateField
               id="metricas-hasta"
-              type="date"
               aria-label="Fecha hasta"
               value={hastaCustom}
-              onChange={(e) => {
-                setHastaCustom(e.target.value)
+              onChange={(value) => {
+                setHastaCustom(value)
                 setErrorFecha(null)
               }}
-              style={inputStyle}
             />
           </div>
           <button

@@ -79,6 +79,11 @@ export async function PATCH(request: Request): Promise<Response> {
   if (parsed.data.agent_name !== undefined) updatePayload.agent_name = parsed.data.agent_name
   if (parsed.data.prompt_rules !== undefined) updatePayload.prompt_rules = parsed.data.prompt_rules
   if (parsed.data.operations_config !== undefined) {
+    // `operations_config` incluye `booking_windows` (franjas horarias del agente
+    // de WhatsApp, pedido ISADI 2026-07-14). Se persiste tal cual — jsonb, sin
+    // migración — y el form del dashboard siempre envía el sub-objeto completo
+    // (min_notice_hours + future_window_days + booking_windows juntos), por lo
+    // que el reemplazo directo no pisa datos no editados en este submit.
     updatePayload.operations_config = parsed.data.operations_config
   }
 

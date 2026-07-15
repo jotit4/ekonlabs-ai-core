@@ -20,6 +20,12 @@ export interface Appointment {
   status: AppointmentStatus
   calendar_event_id: string | null
   created_at: string
+  // Color MANUAL opcional elegido por la recepcionista (migración 051, paleta
+  // muda del turnero Excel — ver src/lib/agenda/turnero-palette.ts). Null =
+  // sin color asignado. Es el ÚNICO color que pinta el turno en la agenda; el
+  // `status` ya NO se representa por color en el calendario (se mantiene como
+  // dato y se muestra en TurnoDetailModal).
+  color?: string | null
   // Recordatorios (Story 12.4) — los pobla el agente (12.1 / 12.3); null por defecto
   reminder_sent_at: string | null
   attendance_confirmed: boolean | null

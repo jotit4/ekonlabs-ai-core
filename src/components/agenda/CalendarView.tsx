@@ -2,7 +2,6 @@
 
 import { useMemo } from 'react'
 import type { Appointment } from '@/types/appointments'
-import type { AvailabilityShift } from '@/types/availability'
 import {
   buildCellMap,
   computeHourRows,
@@ -10,7 +9,6 @@ import {
   hhmmFromDate,
   makeGetCell,
   type ApptEntry,
-  type FreeEntry,
   type TurneroColumn,
 } from '@/lib/agenda/turnero-grid'
 import { TurneroGrid } from './TurneroGrid'
@@ -30,14 +28,15 @@ interface CalendarViewProps {
   onRefetch: () => void
   // Aceptado por compatibilidad — la reprogramación vive ahora en TurnoDetailModal.
   onReschedule?: (appointment: Appointment) => void
-  freeShifts?: AvailabilityShift[]
-  // Disponibilidad aún cargando (RPC pesada). Mientras es true, la grilla muestra
-  // un skeleton tenue en las celdas donde luego irían los "libres".
-  availabilityLoading?: boolean
-  // Aceptado por compatibilidad — en la vista Día la columna ya es el profesional.
-  showProfessionalName?: boolean
-  onFreeSlotClick?: (shift: AvailabilityShift) => void
   onAppointmentClick?: (appointment: Appointment) => void
+  /**
+   * Click en una celda vacía de la grilla → atajo "Dar un turno" con fecha
+   * (=date), hora y — cuando la columna clickeada ya identifica a un
+   * profesional real (no la columna sintética "Sin profesional") — su
+   * professional_id. Reemplaza el click en hueco libre retirado (pedido ISADI
+   * 2026-07-14 de no mostrar huecos en el calendario).
+   */
+  onEmptyCellClick?: (date: string, timeHHmm: string, professionalId?: string) => void
 }
 
 function professionalColIdOf(apt: Appointment): { id: string; label: string } {
@@ -47,25 +46,36 @@ function professionalColIdOf(apt: Appointment): { id: string; label: string } {
   return { id, label }
 }
 
+// Un colId identifica a un profesional REAL solo cuando viene de
+// `apt.professional_id` (un UUID). Las columnas sintéticas ("Sin profesional"
+// o agrupadas solo por nombre) no tienen un id agendable.
+function isRealProfessionalId(colId: string): boolean {
+  return colId !== NO_PROFESSIONAL_ID && !colId.startsWith('name:')
+}
+
 export function CalendarView({
   date,
   appointments,
   isLoading,
   isError,
   onRefetch,
-  freeShifts,
-  availabilityLoading = false,
-  onFreeSlotClick,
+  onEmptyCellClick,
   onAppointmentClick,
 }: CalendarViewProps) {
+  // Los CANCELADOS no se muestran en la agenda (decisión 2026-07-14): desaparecen
+  // de la grilla y liberan el hueco, igual que borrar la celda en el Excel. El
+  // estado se sigue guardando y viendo en el historial/detalle del paciente — es
+  // solo un filtro de esta VISTA. Los no_show SÍ se siguen mostrando (el turno
+  // existió y ocupó el horario). Filtrado acá (no en el hook compartido
+  // useAppointments) porque ese hook también alimenta KPIStrip, SyncStatusBanner,
+  // /recepcion y /inicio, que SÍ necesitan ver los cancelados (conteo, ProximosTurnos).
   const validAppointments = useMemo(
-    () => appointments.filter((apt) => apt && apt.start_at && apt.end_at),
+    () => appointments.filter((apt) => apt && apt.start_at && apt.end_at && apt.status !== 'cancelled'),
     [appointments],
   )
 
   const grid = useMemo(() => {
-    const shifts = freeShifts ?? []
-    // Columnas = profesionales presentes (en turnos u horarios libres).
+    // Columnas = profesionales presentes en los turnos del día.
     const columnMap = new Map<string, { label: string; count: number }>()
 
     const apptEntries: ApptEntry[] = []
@@ -81,15 +91,6 @@ export function CalendarView({
       })
     }
 
-    const freeEntries: FreeEntry[] = []
-    for (const shift of shifts) {
-      const id = shift.professional_id || NO_PROFESSIONAL_ID
-      if (!columnMap.has(id)) {
-        columnMap.set(id, { label: shift.professional_name || NO_PROFESSIONAL_LABEL, count: 0 })
-      }
-      freeEntries.push({ colId: id, hour: floorToStep(shift.open, STEP_MIN), shift })
-    }
-
     const columns: TurneroColumn[] = Array.from(columnMap.entries())
       .sort((a, b) => a[1].label.localeCompare(b[1].label, 'es'))
       .map(([id, { label, count }]) => ({
@@ -98,14 +99,16 @@ export function CalendarView({
         sublabel: count > 0 ? `${count} ${count === 1 ? 'turno' : 'turnos'}` : 'Sin turnos',
       }))
 
-    const times = [...apptEntries.map((e) => e.hour), ...freeEntries.map((e) => e.hour)]
+    const times = apptEntries.map((e) => e.hour)
     const hourRows = computeHourRows(times, { stepMin: STEP_MIN })
 
-    const cellMap = buildCellMap(hourRows, apptEntries, freeEntries)
+    // Ya no hay huecos libres que ubicar en la grilla (pedido ISADI 2026-07-14):
+    // el tercer argumento siempre es [].
+    const cellMap = buildCellMap(hourRows, apptEntries, [])
     const getCell = makeGetCell(cellMap)
 
     return { columns, hourRows, getCell }
-  }, [validAppointments, freeShifts])
+  }, [validAppointments])
 
   if (isLoading) {
     return <AgendaDayViewSkeleton />
@@ -129,12 +132,6 @@ export function CalendarView({
   }
 
   if (grid.columns.length === 0) {
-    // Sin turnos aún, pero la disponibilidad sigue cargando: mostramos el skeleton
-    // del día en vez del vacío "Sin turnos" (que luego saltaría a una grilla con
-    // columnas de huecos libres al resolver la RPC).
-    if (availabilityLoading) {
-      return <AgendaDayViewSkeleton />
-    }
     return (
       <div
         style={{
@@ -149,8 +146,9 @@ export function CalendarView({
     )
   }
 
-  // "Ahora": las horas ya pasadas de hoy se atenúan y no ofrecen huecos; una
-  // línea marca la hora actual. Solo aplica si la fecha mostrada es hoy.
+  // "Ahora": las horas ya pasadas de hoy se atenúan y no ofrecen el atajo de
+  // agendar; una línea marca la hora actual. Solo aplica si la fecha mostrada
+  // es hoy.
   const now = new Date()
   const pad = (n: number) => String(n).padStart(2, '0')
   const todayIso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
@@ -169,10 +167,14 @@ export function CalendarView({
         hourRows={grid.hourRows}
         getCell={grid.getCell}
         onAppointmentClick={onAppointmentClick}
-        onFreeSlotClick={onFreeSlotClick}
+        onEmptyCellClick={
+          onEmptyCellClick
+            ? (colId, hour) =>
+                onEmptyCellClick(date, hour, isRealProfessionalId(colId) ? colId : undefined)
+            : undefined
+        }
         isPastCell={isPastCell}
         nowLine={nowLine}
-        availabilityLoading={availabilityLoading}
         ariaLabel="Grilla de turnos por profesional"
       />
     </div>

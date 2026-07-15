@@ -29,19 +29,20 @@ vi.mock('@tanstack/react-query', () => ({
 }))
 
 // El picker se mockea: expone botones que, al clickear, emiten onToggle con un slot
-// determinístico. Así el test del modal verifica la acumulación + confirmación sin
-// depender de la disponibilidad real.
+// determinístico (incluye professional_id, como haría el picker real en modo
+// "cualquier profesional" — Pedido A #3). Así el test del modal verifica la
+// acumulación + confirmación sin depender de la disponibilidad real.
 vi.mock('@/components/agenda/AvailabilitySlotPicker', () => ({
   AvailabilitySlotPicker: ({
     onToggle,
   }: {
-    onToggle: (s: { start_at: string; end_at: string; date: string; label: string }) => void
+    onToggle: (s: { start_at: string; end_at: string; date: string; label: string; professional_id?: string }) => void
   }) => (
     <div data-testid="slot-picker">
       <button
         type="button"
         onClick={() =>
-          onToggle({ start_at: '2026-06-15T13:00:00.000Z', end_at: '2026-06-15T14:00:00.000Z', date: '2026-06-15', label: '10:00' })
+          onToggle({ start_at: '2026-06-15T13:00:00.000Z', end_at: '2026-06-15T14:00:00.000Z', date: '2026-06-15', label: '10:00', professional_id: 'prof-1' })
         }
       >
         slot-1000
@@ -49,7 +50,7 @@ vi.mock('@/components/agenda/AvailabilitySlotPicker', () => ({
       <button
         type="button"
         onClick={() =>
-          onToggle({ start_at: '2026-06-16T13:00:00.000Z', end_at: '2026-06-16T14:00:00.000Z', date: '2026-06-16', label: '10:00' })
+          onToggle({ start_at: '2026-06-16T13:00:00.000Z', end_at: '2026-06-16T14:00:00.000Z', date: '2026-06-16', label: '10:00', professional_id: 'prof-2' })
         }
       >
         slot-1001
@@ -144,5 +145,47 @@ describe('AgendarSesionModal', () => {
 
     expect(screen.getByText(/Sesiones elegidas \(1\/1\)/)).toBeInTheDocument()
     expect(screen.getByText(/Completaste las 1/i)).toBeInTheDocument()
+  })
+
+  describe('Pedido A #2/#3 (ISADI 2026-07-14) — paquete SIN profesional fijo ("cualquier profesional")', () => {
+    it('con professionalId=null, cada sesión confirmada viaja con SU PROPIO professional_id', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 201, json: async () => ({ success: true, creadas: 2, skipped: [] }) })
+      const user = userEvent.setup()
+      render(<AgendarSesionModal {...baseProps} onClose={vi.fn()} professionalId={null} professionalName={null} />)
+
+      // El encabezado indica "cualquier profesional" en vez del nombre fijo.
+      expect(screen.getByText(/Cualquier profesional disponible/i)).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'slot-1000' }))
+      await user.click(screen.getByRole('button', { name: 'slot-1001' }))
+      await user.click(screen.getByRole('button', { name: /agendar 2 sesiones/i }))
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          '/api/treatments/trt-1/sessions',
+          expect.objectContaining({ method: 'POST' }),
+        )
+      })
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      expect(body.slots).toEqual([
+        { start_at: '2026-06-15T13:00:00.000Z', end_at: '2026-06-15T14:00:00.000Z', professional_id: 'prof-1' },
+        { start_at: '2026-06-16T13:00:00.000Z', end_at: '2026-06-16T14:00:00.000Z', professional_id: 'prof-2' },
+      ])
+    })
+
+    it('con profesional FIJO (baseProps), NO manda professional_id por slot', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 201, json: async () => ({ success: true, creadas: 1, skipped: [] }) })
+      const user = userEvent.setup()
+      render(<AgendarSesionModal {...baseProps} onClose={vi.fn()} />)
+
+      await user.click(screen.getByRole('button', { name: 'slot-1000' }))
+      await user.click(screen.getByRole('button', { name: /agendar sesión/i }))
+
+      await waitFor(() => expect(mockFetch).toHaveBeenCalled())
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      expect(body.slots).toEqual([
+        { start_at: '2026-06-15T13:00:00.000Z', end_at: '2026-06-15T14:00:00.000Z' },
+      ])
+    })
   })
 })

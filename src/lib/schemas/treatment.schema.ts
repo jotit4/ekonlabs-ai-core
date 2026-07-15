@@ -43,8 +43,11 @@ export type TreatmentPattern = z.infer<typeof patternSchema>
 export const newTreatmentApiSchema = z.object({
   patient_id: z.string().uuid({ error: 'patient_id inválido' }),
   service_id: z.string().uuid({ error: 'service_id inválido' }),
-  // professional_id principal del paquete (obligatorio en el body de la API)
-  professional_id: z.string().uuid({ error: 'professional_id inválido' }),
+  // professional_id principal del paquete — OPCIONAL (Pedido A #2/#3 ISADI
+  // 2026-07-14: "el bono debe poder crearse sin profesional fijo"). Omitido =
+  // "cualquier profesional disponible" del servicio; cada sesión resuelve su
+  // propio profesional al agendarse (POST /api/treatments/[id]/sessions).
+  professional_id: z.string().uuid({ error: 'professional_id inválido' }).optional(),
   total_sessions: z
     .number({ error: 'total_sessions requerido' })
     .int({ error: 'total_sessions debe ser entero' })
@@ -62,6 +65,10 @@ export type NewTreatmentApiBody = z.infer<typeof newTreatmentApiSchema>
 // vencimiento (opcional). NO pide patrón semanal (días/horas) ni fecha de inicio:
 // las sesiones se agendan después, una a una o varias, eligiendo de la
 // disponibilidad real (reclamo ISADI — el patrón semanal confundía a la clínica).
+// `professional_id` sigue siendo obligatorio A NIVEL DE FORM (min(1)) — pero el
+// centinela `ANY_PROFESSIONAL` (src/lib/agenda/any-professional.ts) es un string
+// no vacío que también lo satisface. El componente lo resuelve a `undefined`
+// antes de mandarlo a la API (Pedido A #2: bono sin profesional fijo).
 export const newTreatmentFormSchema = z.object({
   patient_id: z.string().min(1, { error: 'Seleccioná un paciente' }),
   service_id: z.string().min(1, { error: 'Seleccioná un servicio' }),

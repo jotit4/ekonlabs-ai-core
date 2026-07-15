@@ -210,6 +210,26 @@ describe('PaquetesTracking', () => {
     expect(screen.queryByRole('button', { name: /agendar sesión/i })).not.toBeInTheDocument()
   })
 
+  it('Pedido A #2/#3 — muestra "Agendar sesión" y "Cualquier profesional disponible" aunque el bono NO tenga profesional fijo', async () => {
+    const t = makeTreatment()
+    t.professional_id = null as unknown as string
+    t.professionals = null as unknown as { name: string }
+    mockOrder.mockResolvedValue({ data: [t], error: null })
+    const user = userEvent.setup()
+
+    render(<PaquetesTracking patientId={PATIENT_ID} />, { wrapper: makeWrapper() })
+
+    await waitFor(() => {
+      expect(screen.getByText('Cualquier profesional disponible')).toBeInTheDocument()
+    })
+    const btn = screen.getByRole('button', { name: /agendar sesión/i })
+    expect(btn).toBeInTheDocument()
+    await user.click(btn)
+    await waitFor(() => {
+      expect(screen.getByTestId('agendar-sesion-modal')).toBeInTheDocument()
+    })
+  })
+
   it('paquete sin vencimiento muestra "Sin vencimiento"', async () => {
     const t = makeTreatment()
     t.expires_at = null as unknown as string

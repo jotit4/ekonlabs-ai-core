@@ -138,8 +138,9 @@ describe('AuditFilters', () => {
       />,
     )
 
+    // DateField recibe dd/mm/aaaa (español) y emite el ISO yyyy-MM-dd correspondiente
     const fromInput = screen.getByLabelText(/fecha desde/i)
-    await user.type(fromInput, '2026-01-01')
+    await user.type(fromInput, '01012026')
 
     expect(onFiltersChange).toHaveBeenCalled()
     const lastCall = onFiltersChange.mock.calls[onFiltersChange.mock.calls.length - 1][0]

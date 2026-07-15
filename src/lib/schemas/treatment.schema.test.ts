@@ -111,6 +111,17 @@ describe('newTreatmentApiSchema (bono — sin pattern ni start_date)', () => {
   it('rechaza uuid inválido en patient_id', () => {
     expect(newTreatmentApiSchema.safeParse(validApiBody({ patient_id: 'xx' })).success).toBe(false)
   })
+
+  it('acepta professional_id ausente (Pedido A #2 — bono sin profesional fijo)', () => {
+    const { professional_id: _omit, ...body } = validApiBody()
+    const parsed = newTreatmentApiSchema.safeParse(body)
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && parsed.data.professional_id).toBeUndefined()
+  })
+
+  it('rechaza professional_id inválido cuando SÍ viene', () => {
+    expect(newTreatmentApiSchema.safeParse(validApiBody({ professional_id: 'xx' })).success).toBe(false)
+  })
 })
 
 describe('newTreatmentFormSchema (bono — sin slots ni start_date)', () => {

@@ -91,10 +91,11 @@ describe('BlockedTimesView', () => {
     const { mutateFn } = setupDefaultMocks({ blockedTimes: [] })
     render(<BlockedTimesView professionalId="prof-1" professionalName="Patricia Pérez" />)
 
+    // DateField muestra/recibe dd/mm/aaaa (español) — no el formato ISO del input nativo
     const dateFromInput = screen.getByLabelText('Fecha desde')
     const dateToInput = screen.getByLabelText('Fecha hasta')
-    fireEvent.change(dateFromInput, { target: { value: '2026-07-01' } })
-    fireEvent.change(dateToInput, { target: { value: '2026-07-14' } })
+    fireEvent.change(dateFromInput, { target: { value: '01/07/2026' } })
+    fireEvent.change(dateToInput, { target: { value: '14/07/2026' } })
 
     const submitBtn = screen.getByRole('button', { name: 'Registrar bloqueo' })
     fireEvent.click(submitBtn)

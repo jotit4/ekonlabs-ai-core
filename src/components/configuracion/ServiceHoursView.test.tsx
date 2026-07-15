@@ -240,8 +240,9 @@ describe('ServiceHoursView', () => {
     const { mutateException } = setupDefaultMocks({ exceptions: [] })
     render(<ServiceHoursView serviceId="svc-1" serviceName="Cardiología" />)
 
+    // DateField muestra/recibe dd/mm/aaaa (español) — no el formato ISO del input nativo
     const dateInput = screen.getByLabelText('Fecha')
-    fireEvent.change(dateInput, { target: { value: '2026-12-25' } })
+    fireEvent.change(dateInput, { target: { value: '25/12/2026' } })
 
     const submitBtn = screen.getByRole('button', { name: 'Agregar excepción' })
     fireEvent.click(submitBtn)

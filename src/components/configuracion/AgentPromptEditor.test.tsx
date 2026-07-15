@@ -335,4 +335,190 @@ describe('AgentPromptEditor', () => {
     expect(screen.queryByText('Override personalizado')).not.toBeInTheDocument()
     expect(screen.queryByText('Reglas del tenant')).not.toBeInTheDocument()
   })
+
+  // ── Horarios de turnos por WhatsApp (booking_windows, pedido ISADI 2026-07-14) ──
+
+  describe('booking_windows', () => {
+    function goToAvanzado() {
+      fireEvent.click(screen.getByRole('tab', { name: /avanzado/i }))
+    }
+
+    it('muestra el copy humano explicando qué son las franjas y el default sin restricción', () => {
+      mockConfigLoaded()
+      render(<AgentPromptEditor />)
+      goToAvanzado()
+
+      expect(
+        screen.getByText(/en qué horarios puede el asistente de whatsapp dar turnos/i),
+      ).toBeInTheDocument()
+      expect(screen.getByText(/los turnos los da la recepción a mano/i)).toBeInTheDocument()
+    })
+
+    it('sin franjas cargadas: muestra el mensaje de "todo el horario de atención"', () => {
+      mockConfigLoaded() // MOCK_CONFIG no trae booking_windows
+      render(<AgentPromptEditor />)
+      goToAvanzado()
+
+      expect(
+        screen.getByText(/no hay franjas cargadas.*todo el horario de atención/i),
+      ).toBeInTheDocument()
+      expect(screen.queryByLabelText(/desde \(franja 1\)/i)).not.toBeInTheDocument()
+    })
+
+    it('puebla las franjas existentes del config cargado', () => {
+      mockConfigLoaded({
+        ...MOCK_CONFIG,
+        operations_config: {
+          min_notice_hours: 2,
+          future_window_days: 30,
+          booking_windows: [
+            { start: '08:00', end: '12:00' },
+            { start: '15:00', end: '18:00' },
+          ],
+        },
+      })
+      render(<AgentPromptEditor />)
+      goToAvanzado()
+
+      expect(screen.getByLabelText(/desde \(franja 1\)/i)).toHaveValue('08:00')
+      expect(screen.getByLabelText(/hasta \(franja 1\)/i)).toHaveValue('12:00')
+      expect(screen.getByLabelText(/desde \(franja 2\)/i)).toHaveValue('15:00')
+      expect(screen.getByLabelText(/hasta \(franja 2\)/i)).toHaveValue('18:00')
+    })
+
+    it('agrega una franja nueva con "+ Agregar franja horaria"', () => {
+      mockConfigLoaded()
+      render(<AgentPromptEditor />)
+      goToAvanzado()
+
+      fireEvent.click(screen.getByRole('button', { name: /agregar franja horaria/i }))
+
+      expect(screen.getByLabelText(/desde \(franja 1\)/i)).toBeInTheDocument()
+      expect(screen.getByLabelText(/hasta \(franja 1\)/i)).toBeInTheDocument()
+    })
+
+    it('quita una franja con el botón "Quitar"', () => {
+      mockConfigLoaded({
+        ...MOCK_CONFIG,
+        operations_config: {
+          min_notice_hours: 2,
+          future_window_days: 30,
+          booking_windows: [{ start: '08:00', end: '12:00' }],
+        },
+      })
+      render(<AgentPromptEditor />)
+      goToAvanzado()
+
+      expect(screen.getByLabelText(/desde \(franja 1\)/i)).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: /quitar franja horaria 1/i }))
+
+      expect(screen.queryByLabelText(/desde \(franja 1\)/i)).not.toBeInTheDocument()
+      expect(
+        screen.getByText(/no hay franjas cargadas.*todo el horario de atención/i),
+      ).toBeInTheDocument()
+    })
+
+    it(`no muestra "Agregar franja horaria" al llegar al máximo de franjas`, () => {
+      mockConfigLoaded({
+        ...MOCK_CONFIG,
+        operations_config: {
+          min_notice_hours: 2,
+          future_window_days: 30,
+          booking_windows: [
+            { start: '00:00', end: '01:00' },
+            { start: '01:00', end: '02:00' },
+            { start: '02:00', end: '03:00' },
+            { start: '03:00', end: '04:00' },
+          ],
+        },
+      })
+      render(<AgentPromptEditor />)
+      goToAvanzado()
+
+      expect(
+        screen.queryByRole('button', { name: /agregar franja horaria/i }),
+      ).not.toBeInTheDocument()
+    })
+
+    it('muestra error de formato al escribir una hora incompleta y enviar', async () => {
+      mockConfigLoaded()
+      render(<AgentPromptEditor />)
+      goToAvanzado()
+
+      fireEvent.click(screen.getByRole('button', { name: /agregar franja horaria/i }))
+      const startInput = screen.getByLabelText(/desde \(franja 1\)/i)
+      // 3 dígitos = borrador incompleto, no llega a autocommit (requiere 4)
+      fireEvent.change(startInput, { target: { value: '800' } })
+      fireEvent.blur(startInput)
+
+      fireEvent.click(screen.getByRole('button', { name: /^guardar$/i }))
+
+      await waitFor(() => {
+        // El campo "start" quedó vacío (commit revierte el borrador incompleto) y
+        // "end" también está vacío (recién agregada) → ambos disparan el mismo
+        // mensaje de formato.
+        expect(
+          screen.getAllByText(/la hora debe tener el formato hh:mm/i).length,
+        ).toBeGreaterThan(0)
+      })
+      expect(mockMutate).not.toHaveBeenCalled()
+    })
+
+    it('muestra error cuando dos franjas se solapan y NO llama a mutate', async () => {
+      mockConfigLoaded({
+        ...MOCK_CONFIG,
+        operations_config: {
+          min_notice_hours: 2,
+          future_window_days: 30,
+          booking_windows: [],
+        },
+      })
+      render(<AgentPromptEditor />)
+      goToAvanzado()
+
+      fireEvent.click(screen.getByRole('button', { name: /agregar franja horaria/i }))
+      fireEvent.change(screen.getByLabelText(/desde \(franja 1\)/i), { target: { value: '0800' } })
+      fireEvent.change(screen.getByLabelText(/hasta \(franja 1\)/i), { target: { value: '1200' } })
+
+      fireEvent.click(screen.getByRole('button', { name: /agregar franja horaria/i }))
+      fireEvent.change(screen.getByLabelText(/desde \(franja 2\)/i), { target: { value: '1100' } })
+      fireEvent.change(screen.getByLabelText(/hasta \(franja 2\)/i), { target: { value: '1800' } })
+
+      fireEvent.click(screen.getByRole('button', { name: /^guardar$/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText(/no pueden superponerse/i)).toBeInTheDocument()
+      })
+      expect(mockMutate).not.toHaveBeenCalled()
+    })
+
+    it('submit con franjas válidas envía booking_windows dentro de operations_config', async () => {
+      mockConfigLoaded({
+        ...MOCK_CONFIG,
+        operations_config: {
+          min_notice_hours: 2,
+          future_window_days: 30,
+          booking_windows: [],
+        },
+      })
+      render(<AgentPromptEditor />)
+      goToAvanzado()
+
+      fireEvent.click(screen.getByRole('button', { name: /agregar franja horaria/i }))
+      fireEvent.change(screen.getByLabelText(/desde \(franja 1\)/i), { target: { value: '0800' } })
+      fireEvent.change(screen.getByLabelText(/hasta \(franja 1\)/i), { target: { value: '1200' } })
+
+      fireEvent.click(screen.getByRole('button', { name: /^guardar$/i }))
+
+      await waitFor(() => {
+        expect(mockMutate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            operations_config: expect.objectContaining({
+              booking_windows: [{ start: '08:00', end: '12:00' }],
+            }),
+          }),
+        )
+      })
+    })
+  })
 })

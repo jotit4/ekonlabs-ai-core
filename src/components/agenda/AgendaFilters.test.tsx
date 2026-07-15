@@ -23,32 +23,38 @@ vi.mock('@refinedev/core', () => ({
   }),
 }))
 
-import { AgendaFilters } from './AgendaFilters'
+import { AgendaFilters, AgendaServiceButtons } from './AgendaFilters'
 
 const defaultProps = {
   professionalId: null,
   serviceId: null,
   onProfessionalChange: vi.fn(),
-  onServiceChange: vi.fn(),
   onClear: vi.fn(),
   showFilters: true,
 }
 
-describe('AgendaFilters', () => {
+describe('AgendaFilters (Profesional + Área + Limpiar)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('renderiza los selectores cuando showFilters=true', () => {
+  it('renderiza el selector de profesional y "Limpiar" cuando showFilters=true', () => {
     render(<AgendaFilters {...defaultProps} />)
     expect(screen.getByLabelText('Filtrar por profesional')).toBeInTheDocument()
-    expect(screen.getByLabelText('Filtrar por servicio')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /limpiar/i })).toBeInTheDocument()
   })
 
   it('NO renderiza nada cuando showFilters=false', () => {
     render(<AgendaFilters {...defaultProps} showFilters={false} />)
     expect(screen.queryByLabelText('Filtrar por profesional')).not.toBeInTheDocument()
+  })
+
+  // El <select> de Servicio se retiró de este componente (pedido ISADI
+  // 2026-07-14: reemplazado por botones toggle en <AgendaServiceButtons>,
+  // siempre visible). AgendaFilters solo conserva `serviceId` para el estado
+  // de "Limpiar" — no renderiza ningún control de servicio.
+  it('NO renderiza un <select> de servicio (movido a AgendaServiceButtons)', () => {
+    render(<AgendaFilters {...defaultProps} />)
     expect(screen.queryByLabelText('Filtrar por servicio')).not.toBeInTheDocument()
   })
 
@@ -60,21 +66,18 @@ describe('AgendaFilters', () => {
     expect(onProfessionalChange).toHaveBeenCalledWith('prof-1')
   })
 
-  it('llama onServiceChange al cambiar el selector de servicio', () => {
-    const onServiceChange = vi.fn()
-    render(<AgendaFilters {...defaultProps} onServiceChange={onServiceChange} />)
-    const select = screen.getByLabelText('Filtrar por servicio')
-    fireEvent.change(select, { target: { value: 'svc-1' } })
-    expect(onServiceChange).toHaveBeenCalledWith('svc-1')
-  })
-
   it('botón "Limpiar" está deshabilitado cuando ambos filtros son null', () => {
     render(<AgendaFilters {...defaultProps} professionalId={null} serviceId={null} />)
     expect(screen.getByRole('button', { name: /limpiar/i })).toBeDisabled()
   })
 
-  it('botón "Limpiar" está habilitado cuando hay al menos un filtro activo', () => {
+  it('botón "Limpiar" está habilitado cuando hay al menos un filtro activo (profesional)', () => {
     render(<AgendaFilters {...defaultProps} professionalId="prof-1" serviceId={null} />)
+    expect(screen.getByRole('button', { name: /limpiar/i })).not.toBeDisabled()
+  })
+
+  it('botón "Limpiar" está habilitado cuando hay un service_id activo (aunque el control viva afuera)', () => {
+    render(<AgendaFilters {...defaultProps} professionalId={null} serviceId="svc-1" />)
     expect(screen.getByRole('button', { name: /limpiar/i })).not.toBeDisabled()
   })
 
@@ -135,27 +138,6 @@ describe('AgendaFilters', () => {
       expect(screen.getByRole('radio', { name: /ver todo/i })).toBeInTheDocument()
     })
 
-    it('con areaFocus="rehab" el dropdown de servicio solo lista servicios de rehab', () => {
-      // El mock de useList devuelve Kinesiología (rehab) + Pediatría (no rehab).
-      render(<AgendaFilters {...defaultProps} areaFocus="rehab" onAreaFocusChange={vi.fn()} />)
-      const select = screen.getByLabelText('Filtrar por servicio')
-      expect(select).toHaveTextContent('Kinesiología')
-      expect(select).not.toHaveTextContent('Pediatría')
-    })
-
-    it('con areaFocus="todos" el dropdown lista todos los servicios', () => {
-      render(<AgendaFilters {...defaultProps} areaFocus="todos" onAreaFocusChange={vi.fn()} />)
-      const select = screen.getByLabelText('Filtrar por servicio')
-      expect(select).toHaveTextContent('Kinesiología')
-      expect(select).toHaveTextContent('Pediatría')
-    })
-
-    it('default (sin areaFocus) recorta a rehab', () => {
-      render(<AgendaFilters {...defaultProps} onAreaFocusChange={vi.fn()} />)
-      const select = screen.getByLabelText('Filtrar por servicio')
-      expect(select).not.toHaveTextContent('Pediatría')
-    })
-
     it('click en "Ver todo" notifica onAreaFocusChange("todos")', () => {
       const onAreaFocusChange = vi.fn()
       render(<AgendaFilters {...defaultProps} areaFocus="rehab" onAreaFocusChange={onAreaFocusChange} />)
@@ -168,5 +150,87 @@ describe('AgendaFilters', () => {
       expect(screen.getByRole('radio', { name: /ver todo/i })).toHaveAttribute('aria-checked', 'true')
       expect(screen.getByRole('radio', { name: /rehabilitación/i })).toHaveAttribute('aria-checked', 'false')
     })
+  })
+})
+
+// ─── AgendaServiceButtons (pedido ISADI 2026-07-14) ───────────────────────────
+// Reemplaza el <select> de Servicio por una fila de botones toggle, siempre
+// visible (no gated detrás de "Filtrar" como el resto de los controles).
+describe('AgendaServiceButtons', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  const buttonProps = {
+    serviceId: null,
+    onServiceChange: vi.fn(),
+  }
+
+  it('renderiza un botón por cada servicio (foco por defecto = rehab)', () => {
+    render(<AgendaServiceButtons {...buttonProps} />)
+    expect(screen.getByRole('button', { name: 'Kinesiología' })).toBeInTheDocument()
+    // Pediatría no es un servicio de rehab → no aparece con el foco default.
+    expect(screen.queryByRole('button', { name: 'Pediatría' })).not.toBeInTheDocument()
+  })
+
+  it('con areaFocus="todos" lista todos los servicios', () => {
+    render(<AgendaServiceButtons {...buttonProps} areaFocus="todos" />)
+    expect(screen.getByRole('button', { name: 'Kinesiología' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Pediatría' })).toBeInTheDocument()
+  })
+
+  it('el botón min-height cumple el mínimo táctil de 44px', () => {
+    render(<AgendaServiceButtons {...buttonProps} areaFocus="todos" />)
+    expect(screen.getByRole('button', { name: 'Kinesiología' }).className).toContain('min-h-[44px]')
+  })
+
+  it('el contenedor tiene role="group" con aria-label "Filtrar por servicio"', () => {
+    render(<AgendaServiceButtons {...buttonProps} areaFocus="todos" />)
+    expect(screen.getByRole('group', { name: /filtrar por servicio/i })).toBeInTheDocument()
+  })
+
+  it('un servicio sin seleccionar tiene aria-pressed="false"', () => {
+    render(<AgendaServiceButtons {...buttonProps} areaFocus="todos" />)
+    expect(screen.getByRole('button', { name: 'Kinesiología' })).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('click en un servicio no seleccionado llama onServiceChange con su id', () => {
+    const onServiceChange = vi.fn()
+    render(<AgendaServiceButtons {...buttonProps} areaFocus="todos" onServiceChange={onServiceChange} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Kinesiología' }))
+    expect(onServiceChange).toHaveBeenCalledWith('svc-1')
+  })
+
+  it('el servicio activo tiene aria-pressed="true"', () => {
+    render(<AgendaServiceButtons {...buttonProps} areaFocus="todos" serviceId="svc-1" />)
+    expect(screen.getByRole('button', { name: 'Kinesiología' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('click en el servicio YA activo lo deselecciona (llama onServiceChange con null)', () => {
+    const onServiceChange = vi.fn()
+    render(
+      <AgendaServiceButtons
+        {...buttonProps}
+        areaFocus="todos"
+        serviceId="svc-1"
+        onServiceChange={onServiceChange}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Kinesiología' }))
+    expect(onServiceChange).toHaveBeenCalledWith(null)
+  })
+
+  it('click en un servicio distinto al activo cambia la selección (no la limpia)', () => {
+    const onServiceChange = vi.fn()
+    render(
+      <AgendaServiceButtons
+        {...buttonProps}
+        areaFocus="todos"
+        serviceId="svc-1"
+        onServiceChange={onServiceChange}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Pediatría' }))
+    expect(onServiceChange).toHaveBeenCalledWith('svc-2')
   })
 })

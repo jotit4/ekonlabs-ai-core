@@ -41,15 +41,20 @@ vi.mock('@/hooks/use-appointments-range', () => ({
   })),
 }))
 
-vi.mock('@/hooks/use-availability', () => ({
-  useAvailability: vi.fn(() => ({
-    daysShifts: {},
-    daysSummary: {},
-    isLoading: false,
-    isError: false,
-    refetch: vi.fn(),
-    shiftsForDate: () => [],
-  })),
+// Feriados + estado del día (pedido ISADI 2026-07-14) — mockeados igual que
+// el resto de los hooks de datos: CalendarViewRangeReadOnly también está
+// mockeado más abajo, así que estos hooks solo importan para que AgendaView
+// no truene por falta de QueryClientProvider en este test.
+vi.mock('@/hooks/use-day-status', () => ({
+  useDayStatusRange: vi.fn(() => ({ days: {}, isLoading: false, isError: false, refetch: vi.fn() })),
+}))
+
+vi.mock('@/hooks/use-set-day-status', () => ({
+  useSetDayStatus: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+}))
+
+vi.mock('@/components/agenda/DayStatusModal', () => ({
+  DayStatusModal: ({ open }: { open: boolean }) => (open ? <div data-testid="day-status-modal" /> : null),
 }))
 
 vi.mock('@/hooks/use-gcal-channel-status', () => ({
@@ -73,11 +78,36 @@ vi.mock('@/hooks/use-user-role', () => ({
 }))
 
 vi.mock('@/components/agenda/CalendarView', () => ({
-  CalendarView: () => <div data-testid="calendar-view" />,
+  CalendarView: ({
+    onEmptyCellClick,
+  }: {
+    onEmptyCellClick?: (date: string, timeHHmm: string, professionalId?: string) => void
+  }) => (
+    <div data-testid="calendar-view">
+      <button onClick={() => onEmptyCellClick?.('2026-07-14', '10:00', 'prof-9')}>
+        mock-empty-cell-dia
+      </button>
+    </div>
+  ),
 }))
 
 vi.mock('@/components/agenda/CalendarViewRangeReadOnly', () => ({
-  CalendarViewRangeReadOnly: () => <div data-testid="calendar-view-range" />,
+  CalendarViewRangeReadOnly: ({
+    onEmptyCellClick,
+    onDayStatusClick,
+  }: {
+    onEmptyCellClick?: (date: string, timeHHmm: string) => void
+    onDayStatusClick?: (date: string) => void
+  }) => (
+    <div data-testid="calendar-view-range">
+      <button onClick={() => onEmptyCellClick?.('2026-07-15', '11:00')}>
+        mock-empty-cell-semana
+      </button>
+      <button onClick={() => onDayStatusClick?.('2026-07-16')}>
+        mock-day-status-click
+      </button>
+    </div>
+  ),
 }))
 
 vi.mock('@/components/agenda/CalendarViewSelector', () => ({
@@ -105,7 +135,25 @@ vi.mock('@/components/agenda/KPIStrip', () => ({
 }))
 
 vi.mock('@/components/agenda/NewTurnoModal', () => ({
-  NewTurnoModal: () => null,
+  NewTurnoModal: ({
+    open,
+    initialDate,
+    initialTimeHHmm,
+    initialProfessionalId,
+  }: {
+    open: boolean
+    initialDate?: string
+    initialTimeHHmm?: string
+    initialProfessionalId?: string
+  }) =>
+    open ? (
+      <div
+        data-testid="new-turno-modal"
+        data-date={initialDate}
+        data-time={initialTimeHHmm}
+        data-prof={initialProfessionalId}
+      />
+    ) : null,
 }))
 
 vi.mock('@/components/agenda/RescheduleTurnoModal', () => ({
@@ -122,26 +170,41 @@ vi.mock('@/components/agenda/AgendaFilters', () => ({
   AgendaFilters: ({
     showFilters,
     onProfessionalChange,
-    onServiceChange,
+    areaFocus,
+    onAreaFocusChange,
   }: {
     showFilters: boolean
     onProfessionalChange: (id: string | null) => void
-    onServiceChange: (id: string | null) => void
+    areaFocus?: string
+    onAreaFocusChange?: (focus: string) => void
   }) =>
     showFilters ? (
-      <div data-testid="agenda-filters">
-        {/* Botones stub para ejercitar la exclusión mutua desde AgendaView */}
+      <div data-testid="agenda-filters" data-area-focus={areaFocus}>
+        {/* Botón stub para ejercitar la exclusión mutua desde AgendaView */}
         <button onClick={() => onProfessionalChange('prof-1')}>mock-pick-prof</button>
-        <button onClick={() => onServiceChange('svc-1')}>mock-pick-svc</button>
+        {/* Botón stub del radiogroup real "Rehabilitación | Ver todo" */}
+        <button onClick={() => onAreaFocusChange?.('todos')}>mock-ver-todo</button>
       </div>
     ) : null,
+  // Los botones de Servicio viven en un componente aparte, siempre visible
+  // (pedido ISADI 2026-07-14) — no gated por showFilters/secondaryVisible.
+  AgendaServiceButtons: ({
+    onServiceChange,
+    areaFocus,
+  }: {
+    onServiceChange: (id: string | null) => void
+    areaFocus?: string
+  }) => (
+    <div data-testid="agenda-service-buttons" data-area-focus={areaFocus}>
+      <button onClick={() => onServiceChange('svc-1')}>mock-pick-svc</button>
+    </div>
+  ),
 }))
 
 import { AgendaView as AgendaPage } from './AgendaView'
 import { useUserRole } from '@/hooks/use-user-role'
 import { useAppointments } from '@/hooks/use-appointments'
 import { useAppointmentsRange } from '@/hooks/use-appointments-range'
-import { useAvailability } from '@/hooks/use-availability'
 import { useTenantConfig } from '@/hooks/use-tenant-config'
 import { useGCalChannelStatus } from '@/hooks/use-gcal-channel-status'
 
@@ -166,14 +229,6 @@ describe('AgendaPage', () => {
       refetch: vi.fn(),
     })
     vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, isPending: false })
-    vi.mocked(useAvailability).mockReturnValue({
-      daysShifts: {},
-      daysSummary: {},
-      isLoading: false,
-      isError: false,
-      refetch: vi.fn(),
-      shiftsForDate: () => [],
-    })
   })
 
   it('sin ?vista en URL → renderiza vista Semana (default, AC6)', () => {
@@ -204,20 +259,30 @@ describe('AgendaPage', () => {
     expect(screen.queryByTestId('calendar-view')).not.toBeInTheDocument()
   })
 
-  it('llama useAvailability con summary=true en vista mes', () => {
-    mockSearchParamsData = { vista: 'mes' }
-    render(<AgendaPage />)
-    expect(vi.mocked(useAvailability)).toHaveBeenCalledWith(
-      expect.objectContaining({ summary: true }),
-    )
-  })
+  // ─── Atajo "Dar un turno" desde una celda vacía (pedido ISADI 2026-07-14) ───
+  // Reemplaza el flujo de "click en hueco libre" (retirado junto con los huecos
+  // del calendario): AgendaView ya no consulta disponibilidad para pintar la
+  // grilla, así que el prefill del NewTurnoModal se arma solo con fecha/hora
+  // (+ profesional cuando la vista Día ya lo identifica).
+  describe('atajo "Dar un turno" desde celda vacía', () => {
+    it('vista día: click en la celda vacía abre NewTurnoModal con fecha/hora/profesional prellenados', () => {
+      mockSearchParamsData = { vista: 'dia' }
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'mock-empty-cell-dia' }))
+      const modal = screen.getByTestId('new-turno-modal')
+      expect(modal).toHaveAttribute('data-date', '2026-07-14')
+      expect(modal).toHaveAttribute('data-time', '10:00')
+      expect(modal).toHaveAttribute('data-prof', 'prof-9')
+    })
 
-  it('llama useAvailability con summary=false en vista semana (default)', () => {
-    mockSearchParamsData = {}
-    render(<AgendaPage />)
-    expect(vi.mocked(useAvailability)).toHaveBeenCalledWith(
-      expect.objectContaining({ summary: false }),
-    )
+    it('vista semana: click en la celda vacía abre NewTurnoModal con fecha/hora prellenados', () => {
+      mockSearchParamsData = {}
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'mock-empty-cell-semana' }))
+      const modal = screen.getByTestId('new-turno-modal')
+      expect(modal).toHaveAttribute('data-date', '2026-07-15')
+      expect(modal).toHaveAttribute('data-time', '11:00')
+    })
   })
 
   it('KPIStrip solo aparece en vista día (no en semana)', () => {
@@ -338,6 +403,50 @@ describe('AgendaPage', () => {
     })
   })
 
+  // ── Default de foco de área "Rehabilitación" por rol (decisión ISADI + usuario,
+  //    2026-07-14) ────────────────────────────────────────────────────────────
+  // Recepción abre el calendario YA filtrado en Rehabilitación (su trabajo
+  // diario) — pero no es un candado: un toque en "Ver todo" lo saca del recorte
+  // para el resto de la sesión. Admin/doctor no cambian: ya arrancaban en
+  // 'rehab'. El recorte depende de `isRehabService` (heurística PROVISIONAL por
+  // nombre — ver service-visuals.ts).
+  describe('Default de foco de área (Rehabilitación) por rol', () => {
+    it('receptionist: entra con el foco en Rehabilitación por defecto', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      render(<AgendaPage />)
+      // Los botones de Servicio son visibles directo para recepción (no
+      // gated por "Filtrar") — ahí se ve el foco aplicado de entrada.
+      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute('data-area-focus', 'rehab')
+    })
+
+    it('receptionist: puede cambiar a "Ver todo" (no es un candado)', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      render(<AgendaPage />)
+      // El radiogroup de área vive en AgendaFilters, detrás de "Filtrar" en
+      // modo turnero.
+      fireEvent.click(screen.getByRole('button', { name: /^filtrar$/i }))
+      fireEvent.click(screen.getByRole('button', { name: 'mock-ver-todo' }))
+      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute('data-area-focus', 'todos')
+      expect(screen.getByTestId('agenda-filters')).toHaveAttribute('data-area-focus', 'todos')
+    })
+
+    it('admin: mantiene el foco en Rehabilitación por defecto (sin cambios)', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      render(<AgendaPage />)
+      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute('data-area-focus', 'rehab')
+    })
+
+    it('doctor: sin cambios respecto de hoy (no ve filtros de agenda, igual que antes)', () => {
+      // El rol 'doctor' ya no mostraba AgendaFilters/AgendaServiceButtons antes
+      // de este cambio (showFilters = admin || receptionist) — el default de
+      // área nuevo no le agrega ni le saca nada.
+      vi.mocked(useUserRole).mockReturnValue('doctor')
+      render(<AgendaPage />)
+      expect(screen.queryByTestId('agenda-service-buttons')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('agenda-filters')).not.toBeInTheDocument()
+    })
+  })
+
   // ── FIX A — rol del server (initialRole) evita el parpadeo de cabecera ──────
   describe('initialRole (rol del server, sin parpadeo)', () => {
     it('con initialRole="receptionist" arranca en modo turnero aunque useUserRole aún sea null', () => {
@@ -443,6 +552,20 @@ describe('AgendaPage', () => {
       vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, isPending: true })
       render(<AgendaPage />)
       expect(vi.mocked(useGCalChannelStatus)).toHaveBeenCalledWith(false)
+    })
+  })
+
+  // ─── Feriados + estado del día (pedido ISADI 2026-07-14) ───────────────────
+  describe('estado del día — modal "¿abre o no?"', () => {
+    it('el modal arranca cerrado (sin click en ningún badge)', () => {
+      render(<AgendaPage />)
+      expect(screen.queryByTestId('day-status-modal')).not.toBeInTheDocument()
+    })
+
+    it('click en el badge de estado del día (vía CalendarViewRangeReadOnly) abre el modal', async () => {
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByText('mock-day-status-click'))
+      expect(screen.getByTestId('day-status-modal')).toBeInTheDocument()
     })
   })
 })

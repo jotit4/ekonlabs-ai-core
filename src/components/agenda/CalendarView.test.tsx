@@ -2,7 +2,6 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import type { Appointment } from '@/types/appointments'
-import type { AvailabilityShift } from '@/types/availability'
 
 // Mock next/link (TurnoDetailModal — no se monta acá, pero por seguridad de imports)
 vi.mock('next/link', () => ({
@@ -31,18 +30,6 @@ const BASE_APPOINTMENT: Appointment = {
   patients: { full_name: 'Juan García' },
   services: { name: 'Kinesiología', professional: 'Dra. Patricia Pérez' },
   professionals: null,
-}
-
-const FREE_SHIFT: AvailabilityShift = {
-  open: '08:00',
-  close: '08:30',
-  slot_start_iso: '2026-05-07T11:00:00Z',
-  slot_end_iso: '2026-05-07T11:30:00Z',
-  service_id: 'svc-1',
-  service_name: 'Kinesiología',
-  require_referral: false,
-  professional_id: 'prof-1',
-  professional_name: 'Dra. Pérez',
 }
 
 const mockOnRefetch = vi.fn()
@@ -143,6 +130,54 @@ describe('CalendarView (grilla Día)', () => {
     })
   })
 
+  // ─── Filtro de estado en la agenda (decisión 2026-07-14) ─────────────────────
+  // Los CANCELADOS desaparecen de la grilla (como borrar la celda en el Excel);
+  // el estado se conserva en el modelo/detalle, solo se filtra ACÁ (la vista).
+  // Los no_show SÍ se siguen mostrando (el turno existió y ocupó el horario).
+  describe('filtro de cancelados (no se muestran en la agenda)', () => {
+    it('NO muestra un turno cancelado', () => {
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[{ ...BASE_APPOINTMENT, status: 'cancelled' }]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      expect(screen.queryByText('Juan García')).not.toBeInTheDocument()
+      expect(screen.getByText(/sin turnos para este día/i)).toBeInTheDocument()
+    })
+
+    it('SÍ muestra un turno no_show (junto a uno cancelado, que se oculta)', () => {
+      const noShowApt: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-no-show',
+        status: 'no_show',
+        patients: { full_name: 'Pedro Ausente' },
+      }
+      const cancelledApt: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-cancelled',
+        status: 'cancelled',
+        patients: { full_name: 'Ana Cancelada' },
+        start_at: '2026-05-07T11:00:00',
+        end_at: '2026-05-07T12:00:00',
+      }
+      render(
+        <CalendarView
+          date="2026-05-07"
+          appointments={[noShowApt, cancelledApt]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      expect(screen.getByText('Pedro Ausente')).toBeInTheDocument()
+      expect(screen.queryByText('Ana Cancelada')).not.toBeInTheDocument()
+    })
+  })
+
   describe('columnas por profesional', () => {
     const aptPerez: Appointment = {
       ...BASE_APPOINTMENT,
@@ -203,149 +238,90 @@ describe('CalendarView (grilla Día)', () => {
     })
   })
 
-  describe('celdas libres', () => {
-    it('renderiza un hueco libre clickeable (sin texto "+ Libre")', () => {
-      render(
-        <CalendarView
-          date="2026-05-07"
-          appointments={[]}
-          isLoading={false}
-          isError={false}
-          onRefetch={mockOnRefetch}
-          freeShifts={[FREE_SHIFT]}
-        />,
-      )
-      expect(screen.queryByText(/\+ Libre/)).not.toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /agendar a las 08:00 con dra\. pérez/i })).toBeInTheDocument()
-    })
-
-    it('el profesional del hueco aparece como encabezado de columna', () => {
-      render(
-        <CalendarView
-          date="2026-05-07"
-          appointments={[]}
-          isLoading={false}
-          isError={false}
-          onRefetch={mockOnRefetch}
-          freeShifts={[FREE_SHIFT]}
-        />,
-      )
-      expect(screen.getByText('Dra. Pérez')).toBeInTheDocument()
-    })
-
-    it('click en un hueco libre llama onFreeSlotClick con el shift', async () => {
+  // ─── Celda vacía → atajo "Dar un turno" (pedido ISADI 2026-07-14) ──────────
+  // Los huecos libres ("N libres" / chip individual) se retiraron del
+  // calendario. El atajo "click en hueco → Nuevo turno prellenado" se preserva,
+  // pero ahora lo dispara la CELDA VACÍA de la grilla (ya no hay datos de
+  // disponibilidad: solo se conocen fecha/hora, y el profesional cuando la
+  // columna clickeada ya identifica a uno real).
+  describe('celda vacía → atajo "Dar un turno"', () => {
+    it('una celda vacía dentro del horario activo de la columna es clickeable', async () => {
       const user = userEvent.setup()
-      const onFreeSlotClick = vi.fn()
+      const onEmptyCellClick = vi.fn()
+      // Dos turnos en la columna "Sin profesional" (09:00 y 11:00) → la ventana
+      // activa 09–11 deja la celda 10:00 vacía y dentro del horario.
+      const aptLater: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-later',
+        start_at: '2026-05-07T11:00:00',
+        end_at: '2026-05-07T12:00:00',
+      }
       render(
         <CalendarView
           date="2026-05-07"
-          appointments={[]}
+          appointments={[BASE_APPOINTMENT, aptLater]}
           isLoading={false}
           isError={false}
           onRefetch={mockOnRefetch}
-          freeShifts={[FREE_SHIFT]}
-          onFreeSlotClick={onFreeSlotClick}
+          onEmptyCellClick={onEmptyCellClick}
         />,
       )
-      await user.click(screen.getByRole('button', { name: /agendar a las 08:00/i }))
-      expect(onFreeSlotClick).toHaveBeenCalledWith(FREE_SHIFT)
+      const emptyCellBtn = screen.getByRole('button', { name: /dar un turno a las 10:00/i })
+      await user.click(emptyCellBtn)
+      // BASE_APPOINTMENT no tiene professional_id ni professionals/services.professional_name
+      // reales → columna sintética "Sin profesional" → professionalId=undefined.
+      expect(onEmptyCellClick).toHaveBeenCalledWith('2026-05-07', '10:00', undefined)
     })
 
-    it('sin freeShifts no hay botones de agendar (no regresión)', () => {
-      render(
-        <CalendarView date="2026-05-07" appointments={[BASE_APPOINTMENT]} isLoading={false} isError={false} onRefetch={mockOnRefetch} />,
-      )
-      expect(screen.queryByRole('button', { name: /agendar a las/i })).not.toBeInTheDocument()
-    })
-
-    it('dos huecos del mismo profesional/hora se colapsan a "2 libres" sin warning de key', () => {
-      const shiftA: AvailabilityShift = { ...FREE_SHIFT, service_id: 'svc-A', service_name: 'Kinesiología' }
-      const shiftB: AvailabilityShift = { ...FREE_SHIFT, service_id: 'svc-B', service_name: 'Fisioterapia' }
-      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-
-      render(
-        <CalendarView
-          date="2026-05-07"
-          appointments={[]}
-          isLoading={false}
-          isError={false}
-          onRefetch={mockOnRefetch}
-          freeShifts={[shiftA, shiftB]}
-          onFreeSlotClick={vi.fn()}
-        />,
-      )
-
-      // Varios huecos a la misma hora colapsan a un contador ("2 libres"), no se
-      // listan individualmente (evita el ruido y que la celda agrande la fila).
-      const collapsed = screen.getByRole('button', { name: /2 horarios libres a las 08:00/i })
-      expect(collapsed).toBeInTheDocument()
-
-      const duplicateKeyWarning = errorSpy.mock.calls.some((args) =>
-        args.some((a) => typeof a === 'string' && (a.includes('same key') || a.includes('unique key'))),
-      )
-      expect(duplicateKeyWarning).toBe(false)
-      errorSpy.mockRestore()
-    })
-  })
-
-  describe('FIX B — skeleton de disponibilidad', () => {
-    // Dos turnos en la MISMA columna (Sin profesional) a las 08:00 y 12:00 → la
-    // ventana activa 08–12 deja celdas vacías intermedias (09, 10, 11) dentro del
-    // horario, donde debe aparecer el skeleton mientras carga la disponibilidad.
-    const apt8: Appointment = {
-      ...BASE_APPOINTMENT,
-      appointment_id: 'a8',
-      start_at: '2026-05-07T08:00:00',
-      end_at: '2026-05-07T09:00:00',
-    }
-    const apt12: Appointment = {
-      ...BASE_APPOINTMENT,
-      appointment_id: 'a12',
-      start_at: '2026-05-07T12:00:00',
-      end_at: '2026-05-07T13:00:00',
-    }
-
-    it('muestra skeleton en celdas vacías dentro del horario cuando availabilityLoading=true', () => {
+    it('en la columna de un profesional real, pasa su professional_id', async () => {
+      const user = userEvent.setup()
+      const onEmptyCellClick = vi.fn()
+      const aptA: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-a',
+        professional_id: 'prof-77',
+        professionals: { name: 'Dra. Real' },
+        start_at: '2026-05-07T09:00:00',
+        end_at: '2026-05-07T10:00:00',
+      }
+      const aptB: Appointment = {
+        ...aptA,
+        appointment_id: 'apt-b',
+        start_at: '2026-05-07T11:00:00',
+        end_at: '2026-05-07T12:00:00',
+      }
       render(
         <CalendarView
           date="2026-05-07"
-          appointments={[apt8, apt12]}
+          appointments={[aptA, aptB]}
           isLoading={false}
           isError={false}
           onRefetch={mockOnRefetch}
-          availabilityLoading
+          onEmptyCellClick={onEmptyCellClick}
         />,
       )
-      expect(screen.getAllByTestId('turnero-cell-skeleton').length).toBeGreaterThan(0)
+      const emptyCellBtn = screen.getByRole('button', { name: /dar un turno a las 10:00/i })
+      await user.click(emptyCellBtn)
+      expect(onEmptyCellClick).toHaveBeenCalledWith('2026-05-07', '10:00', 'prof-77')
     })
 
-    it('NO muestra skeleton cuando availabilityLoading=false (huecos vacíos discretos)', () => {
+    it('sin onEmptyCellClick, la celda vacía no rompe el render', () => {
+      const aptLater: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-later',
+        start_at: '2026-05-07T11:00:00',
+        end_at: '2026-05-07T12:00:00',
+      }
       render(
         <CalendarView
           date="2026-05-07"
-          appointments={[apt8, apt12]}
+          appointments={[BASE_APPOINTMENT, aptLater]}
           isLoading={false}
           isError={false}
           onRefetch={mockOnRefetch}
-          availabilityLoading={false}
         />,
       )
-      expect(screen.queryByTestId('turnero-cell-skeleton')).not.toBeInTheDocument()
-    })
-
-    it('con día vacío y disponibilidad cargando muestra el skeleton del día (no "Sin turnos")', () => {
-      render(
-        <CalendarView
-          date="2026-05-07"
-          appointments={[]}
-          isLoading={false}
-          isError={false}
-          onRefetch={mockOnRefetch}
-          availabilityLoading
-        />,
-      )
-      expect(screen.getByLabelText('Cargando turnos')).toBeInTheDocument()
-      expect(screen.queryByText(/sin turnos para este día/i)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /dar un turno a las 10:00/i })).toBeInTheDocument()
     })
   })
 

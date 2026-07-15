@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import type { Appointment } from '@/types/appointments'
@@ -163,5 +163,143 @@ describe('TurnoDetailModal', () => {
     )
     await user.click(screen.getByRole('button', { name: /cerrar detalle del turno/i }))
     expect(mockOnClose).toHaveBeenCalled()
+  })
+
+  // ─── Color manual del turno (paleta muda del turnero, pedido ISADI 2026-07-14) ──
+  describe('color manual del turno', () => {
+    it('muestra el selector de color con "Sin color" marcado cuando el turno no tiene color', () => {
+      render(
+        <TurnoDetailModal
+          open={true}
+          appointment={BASE_APPOINTMENT}
+          onClose={mockOnClose}
+          onReschedule={mockOnReschedule}
+        />,
+      )
+      expect(screen.getByRole('button', { name: 'Sin color' })).toHaveAttribute('aria-pressed', 'true')
+    })
+
+    it('marca el swatch correspondiente cuando el turno YA tiene un color manual', () => {
+      render(
+        <TurnoDetailModal
+          open={true}
+          appointment={{ ...BASE_APPOINTMENT, color: '#FF0000' }}
+          onClose={mockOnClose}
+          onReschedule={mockOnReschedule}
+        />,
+      )
+      expect(screen.getByRole('button', { name: 'Color #FF0000' })).toHaveAttribute('aria-pressed', 'true')
+    })
+
+    it('al elegir un color, llama PATCH /api/appointments/:id/color con el hex elegido', async () => {
+      const user = userEvent.setup()
+      render(
+        <TurnoDetailModal
+          open={true}
+          appointment={BASE_APPOINTMENT}
+          onClose={mockOnClose}
+          onReschedule={mockOnReschedule}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Color #00FFFF' }))
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          '/api/appointments/apt-1/color',
+          expect.objectContaining({
+            method: 'PATCH',
+            body: JSON.stringify({ color: '#00FFFF' }),
+          }),
+        )
+      })
+    })
+
+    it('al clickear "Sin color" sobre un turno con color, envía color: null (lo limpia)', async () => {
+      const user = userEvent.setup()
+      render(
+        <TurnoDetailModal
+          open={true}
+          appointment={{ ...BASE_APPOINTMENT, color: '#FF0000' }}
+          onClose={mockOnClose}
+          onReschedule={mockOnReschedule}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Sin color' }))
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          '/api/appointments/apt-1/color',
+          expect.objectContaining({
+            method: 'PATCH',
+            body: JSON.stringify({ color: null }),
+          }),
+        )
+      })
+    })
+
+    it('cierra el modal después de guardar el color (elegir el color ES la acción)', async () => {
+      const user = userEvent.setup()
+      render(
+        <TurnoDetailModal
+          open={true}
+          appointment={BASE_APPOINTMENT}
+          onClose={mockOnClose}
+          onReschedule={mockOnReschedule}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Color #00FFFF' }))
+
+      await waitFor(() => {
+        expect(mockOnClose).toHaveBeenCalled()
+      })
+    })
+
+    it('muestra un error si el PATCH de color falla', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        json: () => Promise.resolve({ error: 'Error al actualizar el color del turno' }),
+      })
+      const user = userEvent.setup()
+      render(
+        <TurnoDetailModal
+          open={true}
+          appointment={BASE_APPOINTMENT}
+          onClose={mockOnClose}
+          onReschedule={mockOnReschedule}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Color #00FFFF' }))
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent('Error al actualizar el color del turno')
+      })
+    })
+
+    it('NO cierra el modal si el guardado del color falla (queda mostrando el error)', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        json: () => Promise.resolve({ error: 'Error al actualizar el color del turno' }),
+      })
+      const user = userEvent.setup()
+      render(
+        <TurnoDetailModal
+          open={true}
+          appointment={BASE_APPOINTMENT}
+          onClose={mockOnClose}
+          onReschedule={mockOnReschedule}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Color #00FFFF' }))
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toBeInTheDocument()
+      })
+      expect(mockOnClose).not.toHaveBeenCalled()
+    })
   })
 })

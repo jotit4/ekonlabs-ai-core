@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { SlidersHorizontal } from 'lucide-react'
 import {
@@ -17,20 +17,20 @@ import { KPIStrip } from '@/components/agenda/KPIStrip'
 import { NewTurnoModal } from '@/components/agenda/NewTurnoModal'
 import { NewPaqueteModal } from '@/components/paquetes/NewPaqueteModal'
 import { RescheduleTurnoModal } from '@/components/agenda/RescheduleTurnoModal'
-import { AgendaFilters, type AvailabilityMode, type AreaFocus } from '@/components/agenda/AgendaFilters'
-import { AgendaLegend } from '@/components/agenda/AgendaLegend'
+import { DayStatusModal } from '@/components/agenda/DayStatusModal'
+import { AgendaFilters, AgendaServiceButtons, type AreaFocus } from '@/components/agenda/AgendaFilters'
 import { isRehabService } from '@/lib/agenda/service-visuals'
 import { SyncStatusBanner } from '@/components/agenda/SyncStatusBanner'
 import { GCalDegradationBanner } from '@/components/agenda/GCalDegradationBanner'
 import { useAgendaRealtime } from '@/hooks/use-agenda-realtime'
 import { useAppointments } from '@/hooks/use-appointments'
 import { useAppointmentsRange } from '@/hooks/use-appointments-range'
-import { useAvailability } from '@/hooks/use-availability'
 import { useGCalChannelStatus } from '@/hooks/use-gcal-channel-status'
 import { useTenantConfig } from '@/hooks/use-tenant-config'
 import { useUserRole } from '@/hooks/use-user-role'
+import { useDayStatusRange } from '@/hooks/use-day-status'
+import { useSetDayStatus } from '@/hooks/use-set-day-status'
 import type { Appointment } from '@/types/appointments'
-import type { AvailabilityShift } from '@/types/availability'
 import type { UserRole } from '@/types'
 
 function parseValidDate(str: string | null): Date {
@@ -81,26 +81,19 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
   // preferencia de vista, no un filtro persistible/compartible. Cuando el usuario
   // elige un servicio puntual (serviceId), ese filtro manda y el foco de área no
   // recorta nada adicional.
-  //   - admin  → default 'rehab' (arranca viendo solo servicios de rehabilitación).
-  //   - recepción → default 'todos' (modo turnero: ve TODOS los servicios, sin
-  //     recortes; odontología, pediatría, etc. deben aparecer).
-  // El estado inicial deriva del rol del server (initialRole) para que el primer
-  // frame ya use el foco correcto — sin parpadeo.
-  const [areaFocus, setAreaFocus] = useState<AreaFocus>(
-    initialRole === 'receptionist' ? 'todos' : 'rehab',
-  )
-
-  // El rol se resuelve async (getSession). Si el server ya lo sabía (initialRole),
-  // el default de arriba ya es el correcto y marcamos "aplicado" para no pisar los
-  // toggles manuales. Si el server no lo determinó, fijamos el foco por defecto la
-  // primera vez que el rol se conoce en cliente.
-  const areaDefaultApplied = useRef(initialRole != null)
-  useEffect(() => {
-    if (role && !areaDefaultApplied.current) {
-      areaDefaultApplied.current = true
-      setAreaFocus(role === 'receptionist' ? 'todos' : 'rehab')
-    }
-  }, [role])
+  //
+  // Default = 'rehab' para TODOS los roles (admin, doctor y — decisión cliente
+  // ISADI 2026-07-14 — también recepción): rehabilitación es el trabajo diario,
+  // el resto de los servicios mete ruido. NO es un candado — un toque en "Ver
+  // todo" (radiogroup de AgendaFilters) lo saca del recorte para todo el resto
+  // de la sesión; el permiso real de recepción para ver/agendar cualquier
+  // servicio no cambia, esto es solo el default de UI.
+  //
+  // Depende de `isRehabService` (heurística PROVISIONAL por nombre — no existe
+  // `services.category` todavía; ver detalle en service-visuals.ts). Cuando
+  // exista el campo real, este default sigue funcionando igual — solo cambia
+  // qué servicios cuentan como "rehab".
+  const [areaFocus, setAreaFocus] = useState<AreaFocus>('rehab')
 
   // Determinar vista activa desde query param.
   // AC6 (Story 10.7): vista default = Semana. Sin ?vista → 'semana'.
@@ -138,60 +131,38 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
     refetch: rangeRefetch,
   } = useAppointmentsRange(rangeFrom, rangeTo, { professionalId, serviceId })
 
-  // ── Disponibilidad (Story 10.7) ─────────────────────────────────────────────
-  // Hook SIEMPRE llamado (regla de hooks). Los params se derivan por vista:
-  //   - Día: rango = el día (from==to), modo shifts
-  //   - Semana: rango de la semana, modo shifts
-  //   - Mes: rango del mes, modo summary (liviano)
-  const isMonth = vistaActiva === 'mes'
-  const availFrom = vistaActiva === 'dia' ? isoDate : rangeFrom
-  const availTo = vistaActiva === 'dia' ? isoDate : rangeTo
+  // Feriados + estado del día (pedido ISADI 2026-07-14) — mismo rango visible
+  // que ya se usa para los turnos de Semana/Mes (rangeFrom/rangeTo). Se pasa
+  // como PROP a CalendarViewRangeReadOnly (componente presentacional, no
+  // fetchea nada) — el fetch/mutation viven acá, junto con el resto del
+  // estado de modales de la agenda.
+  const { days: dayStatusMap } = useDayStatusRange(rangeFrom, rangeTo)
+  const setDayStatus = useSetDayStatus()
+  const [decidingDate, setDecidingDate] = useState<string | null>(null)
 
-  const {
-    daysShifts,
-    daysSummary,
-    shiftsForDate,
-    isLoading: availabilityLoading,
-  } = useAvailability({
-    dateFrom: availFrom,
-    dateTo: availTo,
-    serviceId,
-    professionalId,
-    summary: isMonth,
-  })
+  function handleDayStatusClick(date: string) {
+    setDecidingDate(date)
+  }
 
-  // Modo "Ver disponibilidad de": derivado de los filtros activos.
-  // Cuando el modo es "por servicio" se etiqueta cada hueco con su profesional.
-  const availabilityMode: AvailabilityMode =
-    professionalId ? 'profesional' : serviceId ? 'servicio' : 'ninguno'
-  // Mostrar "· {profesional}" cuando NO se filtra por un profesional concreto
-  // (la RPC puede traer huecos de varios profesionales).
-  const showProfessionalName = availabilityMode !== 'profesional'
+  function handleCloseDayStatus() {
+    setDecidingDate(null)
+  }
 
-  // Huecos libres para la vista Día (la clave es la fecha consultada = isoDate).
-  const dayFreeShifts: AvailabilityShift[] = vistaActiva === 'dia' ? shiftsForDate(isoDate) : []
-  // Huecos libres indexados por fecha local para la vista Semana.
-  const freeShiftsByDate: Record<string, AvailabilityShift[]> = Object.fromEntries(
-    Object.entries(daysShifts).map(([iso, day]) => [iso, day.shifts]),
-  )
-
-  // Índice inverso shift → fecha local (clave del response). Permite recuperar la
-  // fecha local del hueco al agendar desde la semana sin recomputar desde el UTC.
-  const shiftDateIndex = new Map<string, string>()
-  for (const [iso, shifts] of Object.entries(freeShiftsByDate)) {
-    for (const s of shifts) {
-      shiftDateIndex.set(`${s.slot_start_iso}|${s.professional_id}`, iso)
-    }
+  function handleDecideDayStatus(isOpen: boolean, reason?: string) {
+    if (!decidingDate) return
+    setDayStatus.mutate(
+      { date: decidingDate, is_open: isOpen, reason },
+      { onSuccess: () => setDecidingDate(null) },
+    )
   }
 
   // ── Foco de área: recorte a rehabilitación ─────────────────────────────────
   // Cuando areaFocus='rehab' y NO hay un servicio puntual elegido, recortamos los
-  // turnos y huecos a los servicios de rehabilitación (heurística por nombre,
-  // centralizada en service-visuals). Si el usuario eligió un service_id puntual,
-  // ese filtro ya es más específico y el foco no recorta nada extra.
+  // turnos a los servicios de rehabilitación (heurística por nombre, centralizada
+  // en service-visuals). Si el usuario eligió un service_id puntual, ese filtro
+  // ya es más específico y el foco no recorta nada extra.
   const applyRehabFocus = areaFocus === 'rehab' && !serviceId
   const isRehabAppointment = (apt: Appointment): boolean => isRehabService(apt.services?.name)
-  const isRehabShift = (shift: AvailabilityShift): boolean => isRehabService(shift.service_name)
 
   const focusedAppointments = applyRehabFocus
     ? appointments.filter(isRehabAppointment)
@@ -199,14 +170,6 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
   const focusedRangeAppointments = applyRehabFocus
     ? rangeAppointments.filter(isRehabAppointment)
     : rangeAppointments
-  const focusedDayFreeShifts = applyRehabFocus
-    ? dayFreeShifts.filter(isRehabShift)
-    : dayFreeShifts
-  const focusedFreeShiftsByDate = applyRehabFocus
-    ? Object.fromEntries(
-        Object.entries(freeShiftsByDate).map(([iso, shifts]) => [iso, shifts.filter(isRehabShift)]),
-      )
-    : freeShiftsByDate
 
   const { usesNativeCalendar, isPending: tenantConfigPending } = useTenantConfig()
   const { status: gcalStatus } = useGCalChannelStatus(!tenantConfigPending && !usesNativeCalendar)
@@ -268,12 +231,17 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
   const [showNewTurnoModal, setShowNewTurnoModal] = useState(false)
   // CTA secundario "Nuevo paquete" (Story 13.5) — abre el modal SIN initialPatient.
   const [showNewPaqueteModal, setShowNewPaqueteModal] = useState(false)
-  // Prefill del NewTurnoModal al agendar desde un hueco libre (Story 10.7)
+  // Prefill del NewTurnoModal al agendar desde una celda vacía de la grilla
+  // (reemplaza el prefill que antes armaba el click en un hueco libre — pedido
+  // ISADI 2026-07-14 de no mostrar huecos). Ya no se conoce el servicio del
+  // hueco (no se consulta más disponibilidad para pintar el calendario): solo
+  // se prellenan fecha + hora, y el profesional cuando la vista Día ya lo
+  // identifica desde la columna clickeada.
   const [newTurnoPrefill, setNewTurnoPrefill] = useState<{
-    serviceId: string
-    professionalId: string
     date: string
     timeHHmm: string
+    serviceId?: string
+    professionalId?: string
   } | null>(null)
   const [showRescheduleTurnoModal, setShowRescheduleTurnoModal] = useState(false)
   const [selectedAppointmentForReschedule, setSelectedAppointmentForReschedule] =
@@ -341,29 +309,15 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
     setAreaFocus(focus)
   }
 
-  // Agendar desde un hueco libre (Story 10.7, AC5).
-  // CRÍTICO timezone: NewTurnoModal arma el ISO con `${date}T${hhmm}:00-03:00`.
-  // Por eso pasamos shift.open (HH:MM local) y la fecha LOCAL del slot, derivada
-  // de la clave `date` del response — NUNCA el slot_start_iso (UTC) crudo.
-  function handleFreeSlotClick(shift: AvailabilityShift) {
-    const slotDate =
-      shiftDateIndex.get(`${shift.slot_start_iso}|${shift.professional_id}`) ?? isoDate
-    setNewTurnoPrefill({
-      serviceId: shift.service_id,
-      professionalId: shift.professional_id,
-      date: slotDate,
-      timeHHmm: shift.open,
-    })
+  // Atajo "Dar un turno" al hacer click en una celda vacía de la grilla (Día o
+  // Semana) — reemplaza el que antes disparaba el chip de hueco libre, retirado
+  // por pedido ISADI 2026-07-14 (no mostrar huecos en el calendario). Ya no se
+  // consulta disponibilidad para pintar la grilla, así que no se conoce el
+  // servicio del hueco: solo se prellenan fecha + hora (+ profesional cuando la
+  // vista Día ya lo identifica desde la columna clickeada).
+  function handleEmptyCellClick(date: string, timeHHmm: string, professionalId?: string) {
+    setNewTurnoPrefill({ date, timeHHmm, professionalId })
     setShowNewTurnoModal(true)
-  }
-
-  // Click en un día de la vista Mes → navegar a vista Semana de esa fecha
-  // preservando los demás params.
-  function handleDayClick(targetIso: string) {
-    const params = new URLSearchParams(searchParams.toString())
-    params.set('fecha', targetIso)
-    params.delete('vista') // sin vista = semana
-    router.push(`/agenda?${params.toString()}`)
   }
 
   function handleCloseNewTurno() {
@@ -468,18 +422,28 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
         </div>
       </header>
 
-      <div className="mb-3 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-        {/* Contenedor de los filtros. En modo turnero (recepción) se revela con
-            "Filtrar" (secondaryVisible); para admin siempre visible. La leyenda de
-            ESTADOS queda SIEMPRE a la vista (es informativa, no un control). */}
-        {showFilters && (
+      {/* Contenedor de los filtros. La leyenda de ESTADOS se retiró de la agenda
+          (decisión 2026-07-14): el color del calendario pasó a ser el color
+          MANUAL que elige la recepcionista (paleta muda del turnero), no el
+          estado — ya no hay un código de color de estado que explicar acá. El
+          estado se sigue viendo en el detalle del turno (TurnoDetailModal). */}
+      {showFilters && (
+        <div className="mb-3 space-y-2">
+          {/* Botones de Servicio: SIEMPRE visibles (recepción y admin) — pedido
+              ISADI 2026-07-14. Es la forma principal de filtrar la agenda de un
+              toque, no debe quedar escondida detrás de "Filtrar" como el resto
+              de los controles secundarios. */}
+          <AgendaServiceButtons
+            serviceId={serviceId}
+            onServiceChange={handleServiceChange}
+            areaFocus={areaFocus}
+          />
           <div id="agenda-secondary-controls">
             {secondaryVisible && (
               <AgendaFilters
                 professionalId={professionalId}
                 serviceId={serviceId}
                 onProfessionalChange={handleProfessionalChange}
-                onServiceChange={handleServiceChange}
                 onClear={handleClearFilters}
                 showFilters={showFilters}
                 areaFocus={areaFocus}
@@ -487,9 +451,8 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
               />
             )}
           </div>
-        )}
-        <AgendaLegend />
-      </div>
+        </div>
+      )}
 
       <div className="flex-1 min-h-0 overflow-auto">
       {vistaActiva === 'dia' ? (
@@ -508,10 +471,7 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
             isError={isError}
             onRefetch={refetch}
             onReschedule={handleOpenReschedule}
-            freeShifts={focusedDayFreeShifts}
-            availabilityLoading={availabilityLoading}
-            showProfessionalName={showProfessionalName}
-            onFreeSlotClick={handleFreeSlotClick}
+            onEmptyCellClick={handleEmptyCellClick}
             onAppointmentClick={handleAppointmentClick}
           />
           <TurnoDetailModal
@@ -532,12 +492,9 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
             isError={rangeError}
             onRefetch={rangeRefetch}
             onAppointmentClick={handleAppointmentClick}
-            freeShiftsByDate={vistaActiva === 'semana' ? focusedFreeShiftsByDate : undefined}
-            availabilitySummary={isMonth ? daysSummary : undefined}
-            availabilityLoading={availabilityLoading}
-            showProfessionalName={showProfessionalName}
-            onFreeSlotClick={handleFreeSlotClick}
-            onDayClick={handleDayClick}
+            onEmptyCellClick={handleEmptyCellClick}
+            dayStatusMap={dayStatusMap}
+            onDayStatusClick={handleDayStatusClick}
           />
           <TurnoDetailModal
             open={selectedAppointmentDetail !== null}
@@ -572,6 +529,14 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
           onClose={() => setShowNewPaqueteModal(false)}
         />
       )}
+      <DayStatusModal
+        open={decidingDate !== null}
+        date={decidingDate}
+        entry={decidingDate ? dayStatusMap[decidingDate] : undefined}
+        onClose={handleCloseDayStatus}
+        onDecide={handleDecideDayStatus}
+        isSaving={setDayStatus.isPending}
+      />
     </section>
   )
 }

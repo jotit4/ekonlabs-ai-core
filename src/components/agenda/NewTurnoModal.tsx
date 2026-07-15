@@ -18,6 +18,8 @@ import { PatientFormSchema, type PatientFormValues } from '@/lib/schemas/patient
 import { useAvailability } from '@/hooks/use-availability'
 import { MultiSessionScheduler } from '@/components/agenda/MultiSessionScheduler'
 import { type SelectedSlot } from '@/components/agenda/AvailabilitySlotPicker'
+import { ColorSwatchPicker } from '@/components/agenda/ColorSwatchPicker'
+import { ANY_PROFESSIONAL } from '@/lib/agenda/any-professional'
 
 // Opciones del selector de cantidad: turno suelto o serie/bono de sesiones (x5/x10).
 const SESSION_OPTIONS = [1, 5, 10] as const
@@ -46,11 +48,6 @@ interface ProfessionalOption {
 // Formato de DNI argentino aceptado: 7 u 8 dígitos. Se usa tanto para disparar
 // la autobúsqueda como para precargar el alta inline.
 const DNI_REGEX = /^\d{7,8}$/
-
-// P0.1 — valor centinela del selector de profesional para "Cualquier profesional
-// disponible". No es un UUID: al guardar se resuelve al profesional del hueco
-// elegido. Un UUID nunca contiene '_', así que es inconfundible.
-const ANY_PROFESSIONAL = '__any__'
 
 interface NewTurnoModalProps {
   open: boolean
@@ -94,6 +91,13 @@ export function NewTurnoModal({
   // Slot conflict error
   const [slotConflictError, setSlotConflictError] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+
+  // Color manual OPCIONAL del turno (migración 051 — paleta muda del turnero,
+  // pedido ISADI). Se maneja como estado propio (no un campo RHF): siempre es
+  // un valor de la paleta fija o null, nunca texto libre a validar. Solo
+  // aplica al turno SUELTO (sessionCount === 1) — el alta de series/bono no
+  // pide color acá (queda fuera de alcance de este pedido).
+  const [selectedColor, setSelectedColor] = useState<string | null>(null)
 
   // Modo "serie de sesiones" (bono x5/x10). sessionCount = 1 → turno suelto (flujo
   // clásico, sin cambios). 5/10 → crea un bono (treatment) y agenda las N sesiones
@@ -254,21 +258,22 @@ export function NewTurnoModal({
   useEffect(() => {
     // Prefill (Story 10.7): si hay un profesional pendiente del hueco libre y
     // ya está en la lista cargada, fijarlo. Tiene prioridad sobre la
-    // preselección automática del único profesional.
+    // preselección automática de "cualquiera".
     const pending = pendingProfessionalRef.current
     if (pending && professionals.some((p) => p.professional_id === pending)) {
       appointmentForm.setValue('professional_id', pending)
       pendingProfessionalRef.current = null
       return
     }
-    if (professionals.length === 1) {
-      // Un único profesional → se preselecciona (no tiene sentido "cualquiera").
-      appointmentForm.setValue('professional_id', professionals[0].professional_id)
-    } else if (professionals.length >= 2) {
-      // P0.1 — varios profesionales: por defecto "Cualquier profesional
-      // disponible" para que la recepcionista pida el primer hueco libre con
-      // cualquiera. En modo serie (bono) el profesional debe ser concreto → ''.
-      appointmentForm.setValue('professional_id', isPackageMode ? '' : ANY_PROFESSIONAL)
+    // P0.1 + Pedido A (ISADI 2026-07-14) — el profesional es SECUNDARIO: por
+    // defecto "Cualquier profesional disponible", sin importar cuántos
+    // profesionales atiendan el servicio (antes solo aplicaba con 2+; con 1
+    // solo profesional se forzaba a elegirlo explícitamente, un paso
+    // innecesario ya que "cualquiera" resuelve exactamente a ese mismo
+    // profesional). Aplica también en modo serie (bono x5/x10): un bono ya
+    // puede crearse sin profesional fijo (Pedido A #2/#3).
+    if (professionals.length >= 1) {
+      appointmentForm.setValue('professional_id', ANY_PROFESSIONAL)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [professionals])
@@ -331,6 +336,7 @@ export function NewTurnoModal({
     setMultiSlots([])
     setIsSubmittingPackage(false)
     setCreatedTreatmentId(null)
+    setSelectedColor(null)
     searchForm.reset()
     createPatientForm.reset()
     appointmentForm.reset({
@@ -531,6 +537,7 @@ export function NewTurnoModal({
           professional_id: professionalId,
           appointment_time: appointmentTimeISO,
           duration_minutes: durationMinutes,
+          ...(selectedColor ? { color: selectedColor } : {}),
         }),
       })
 
@@ -557,17 +564,15 @@ export function NewTurnoModal({
   }
 
   // Cambio de cantidad de sesiones (1 / 5 / 10). Al entrar/salir del modo serie
-  // se descartan los huecos elegidos y el bono a medio crear; si el profesional
-  // estaba en "cualquiera", se fuerza a elegir uno concreto (un bono = un profesional).
+  // se descartan los huecos elegidos y el bono a medio crear. El profesional
+  // elegido (concreto o "cualquiera") se conserva: el bono TAMBIÉN puede
+  // crearse sin profesional fijo (Pedido A #2/#3 ISADI 2026-07-14).
   const handleSessionCountChange = (n: number) => {
     setSessionCount(n)
     setMultiSlots([])
     setSubmitError(null)
     setSlotConflictError(null)
     setCreatedTreatmentId(null)
-    if (n > 1 && appointmentForm.getValues('professional_id') === ANY_PROFESSIONAL) {
-      appointmentForm.setValue('professional_id', '')
-    }
   }
 
   // Reservar una SERIE (bono x5/x10): crea el treatment y agenda las N sesiones
@@ -586,14 +591,21 @@ export function NewTurnoModal({
       setSubmitError('Elegí un servicio')
       return
     }
-    if (!professionalId || professionalId === ANY_PROFESSIONAL) {
-      setSubmitError('Elegí un profesional para la serie de sesiones')
+    if (!professionalId) {
+      setSubmitError('Elegí servicio y profesional')
       return
     }
     if (multiSlots.length < 1) {
       setSubmitError('Elegí al menos una sesión')
       return
     }
+
+    // Pedido A #2/#3 (ISADI 2026-07-14): el bono TAMBIÉN puede crearse sin
+    // profesional fijo ("cualquier profesional disponible"). Cuando es así,
+    // cada sesión resuelve su PROPIO profesional (del hueco elegido en modo
+    // "cualquiera"), por eso el body de /sessions viaja con professional_id
+    // por slot en ese caso.
+    const isAny = professionalId === ANY_PROFESSIONAL
 
     setIsSubmittingPackage(true)
     try {
@@ -606,7 +618,7 @@ export function NewTurnoModal({
           body: JSON.stringify({
             patient_id: patient.patient_id,
             service_id: serviceId,
-            professional_id: professionalId,
+            ...(isAny ? {} : { professional_id: professionalId }),
             total_sessions: sessionCount,
           }),
         })
@@ -629,7 +641,11 @@ export function NewTurnoModal({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          slots: multiSlots.map((s) => ({ start_at: s.start_at, end_at: s.end_at })),
+          slots: multiSlots.map((s) => ({
+            start_at: s.start_at,
+            end_at: s.end_at,
+            ...(isAny ? { professional_id: s.professional_id } : {}),
+          })),
         }),
       })
 
@@ -1107,9 +1123,12 @@ export function NewTurnoModal({
                                 ? 'Sin profesionales para este servicio'
                                 : 'Seleccioná un profesional'}
                         </option>
-                        {/* P0.1 — con 2+ profesionales, ofrecer "cualquiera". En modo
-                            serie NO: un bono va con un profesional concreto. */}
-                        {professionals.length >= 2 && !isPackageMode && (
+                        {/* P0.1 + Pedido A — el profesional es SECUNDARIO: se ofrece
+                            "cualquiera" en cuanto hay al menos 1 profesional para el
+                            servicio (incluye el caso de un único profesional, y el
+                            modo serie/bono — que ahora también puede crearse sin
+                            profesional fijo). */}
+                        {professionals.length >= 1 && (
                           <option value={ANY_PROFESSIONAL}>Cualquier profesional disponible</option>
                         )}
                         {professionals.map((prof) => (
@@ -1279,6 +1298,9 @@ export function NewTurnoModal({
                         </p>
                       )}
                     </div>
+
+                    {/* Color manual OPCIONAL (paleta muda del turnero — pedido ISADI) */}
+                    <ColorSwatchPicker value={selectedColor} onChange={setSelectedColor} />
                       </>
                     )}
 
@@ -1288,16 +1310,16 @@ export function NewTurnoModal({
                         <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
                           Horarios de las {sessionCount} sesiones
                         </label>
-                        {!selectedServiceId ||
-                        !selectedProfessionalId ||
-                        selectedProfessionalId === ANY_PROFESSIONAL ? (
+                        {!selectedServiceId || !selectedProfessionalId ? (
                           <p className="text-sm text-[var(--color-text-secondary)]">
-                            Elegí servicio y profesional para ver la disponibilidad.
+                            Elegí servicio para ver la disponibilidad.
                           </p>
                         ) : (
                           <MultiSessionScheduler
                             serviceId={selectedServiceId}
-                            professionalId={selectedProfessionalId}
+                            professionalId={
+                              selectedProfessionalId === ANY_PROFESSIONAL ? null : selectedProfessionalId
+                            }
                             total={sessionCount}
                             selected={multiSlots}
                             onChange={(slots) => {

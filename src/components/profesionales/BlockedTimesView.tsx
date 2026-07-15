@@ -1,7 +1,8 @@
 'use client'
 
-import { useForm } from 'react-hook-form'
+import { useForm, Controller } from 'react-hook-form'
 import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
+import { DateField } from '@/components/ui/date-field'
 import { useBlockedTimes } from '@/hooks/use-blocked-times'
 import { useCreateBlockedTime } from '@/hooks/use-create-blocked-time'
 import { useDeleteBlockedTime } from '@/hooks/use-delete-blocked-time'
@@ -38,6 +39,7 @@ function AddBlockedTimeForm({ professionalId }: { professionalId: string }) {
     register,
     handleSubmit,
     reset,
+    control,
     formState: { errors },
   } = useForm<CreateBlockedTimeFormValues>({
     resolver: standardSchemaResolver(CreateBlockedTimeSchema),
@@ -58,16 +60,18 @@ function AddBlockedTimeForm({ professionalId }: { professionalId: string }) {
           <label htmlFor="block-date_from" className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">
             Fecha desde
           </label>
-          <input
-            id="block-date_from"
-            type="date"
-            {...register('date_from')}
-            className={[
-              'w-full px-2 py-1.5 rounded-[8px] border text-sm',
-              'bg-[var(--color-bg)] text-[var(--color-text-primary)]',
-              'focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]',
-              errors.date_from ? 'border-red-400' : 'border-[var(--color-border)]',
-            ].join(' ')}
+          <Controller
+            name="date_from"
+            control={control}
+            render={({ field }) => (
+              <DateField
+                id="block-date_from"
+                value={field.value}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                aria-invalid={!!errors.date_from}
+              />
+            )}
           />
           {errors.date_from && (
             <p role="alert" className="mt-1 text-xs text-red-600">{errors.date_from.message}</p>
@@ -79,16 +83,18 @@ function AddBlockedTimeForm({ professionalId }: { professionalId: string }) {
           <label htmlFor="block-date_to" className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">
             Fecha hasta
           </label>
-          <input
-            id="block-date_to"
-            type="date"
-            {...register('date_to')}
-            className={[
-              'w-full px-2 py-1.5 rounded-[8px] border text-sm',
-              'bg-[var(--color-bg)] text-[var(--color-text-primary)]',
-              'focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]',
-              errors.date_to ? 'border-red-400' : 'border-[var(--color-border)]',
-            ].join(' ')}
+          <Controller
+            name="date_to"
+            control={control}
+            render={({ field }) => (
+              <DateField
+                id="block-date_to"
+                value={field.value}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                aria-invalid={!!errors.date_to}
+              />
+            )}
           />
           {errors.date_to && (
             <p role="alert" className="mt-1 text-xs text-red-600">{errors.date_to.message}</p>

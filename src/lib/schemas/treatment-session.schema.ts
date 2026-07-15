@@ -9,10 +9,17 @@ import { z } from 'zod'
 // → la recepcionista no puede falsearlos y el candado anti-overbooking (RPC 029)
 // se aplica al profesional REAL del paquete.
 
-// Un slot elegido = exactamente el { start_at, end_at } de un hueco libre (029).
+// Un slot elegido = el { start_at, end_at } de un hueco libre (029), más
+// opcionalmente `professional_id` (Pedido A #2/#3 ISADI 2026-07-14): cuando el
+// paquete NO tiene profesional fijo ("cualquier profesional disponible"), cada
+// sesión resuelve su PROPIO profesional (del hueco elegido) — la ruta exige
+// este campo en ese caso (ver /api/treatments/[id]/sessions/route.ts). Cuando
+// el paquete SÍ tiene profesional fijo, este campo se ignora (se usa el del
+// paquete, igual que antes).
 export const sessionSlotSchema = z.object({
   start_at: z.string().min(1, { error: 'start_at requerido' }),
   end_at: z.string().min(1, { error: 'end_at requerido' }),
+  professional_id: z.string().uuid({ error: 'professional_id inválido' }).optional(),
 })
 
 export type SessionSlotInput = z.infer<typeof sessionSlotSchema>

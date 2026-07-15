@@ -113,9 +113,20 @@ export async function POST(
     return Response.json({ error: 'El paquete no está activo' }, { status: 409 })
   }
 
-  const professionalId = treatment.professional_id
-  if (!professionalId) {
-    return Response.json({ error: 'El paquete no tiene profesional asignado' }, { status: 422 })
+  // El paquete puede tener un profesional FIJO, o ninguno ("cualquier profesional
+  // disponible" — Pedido A #2/#3 ISADI 2026-07-14). Con profesional fijo, TODAS
+  // las sesiones usan ese profesional (sin cambios). Sin profesional fijo, CADA
+  // slot debe traer el suyo (resuelto por la recepcionista al elegir el hueco) —
+  // se valida acá, antes de crear nada.
+  const treatmentProfessionalId = treatment.professional_id
+  if (!treatmentProfessionalId) {
+    const missingProfessional = slots.some((s) => !s.professional_id)
+    if (missingProfessional) {
+      return Response.json(
+        { error: 'Este paquete no tiene profesional fijo: elegí un profesional para cada sesión' },
+        { status: 422 },
+      )
+    }
   }
   const patientId = treatment.patient_id
   const serviceId = treatment.service_id
@@ -162,6 +173,14 @@ export async function POST(
       continue
     }
 
+    // Profesional del paquete si es fijo; si no, el que trae ESTE slot (ya
+    // validado arriba que existe cuando el paquete no tiene uno fijo).
+    const slotProfessionalId = treatmentProfessionalId ?? slot.professional_id
+    if (!slotProfessionalId) {
+      skipped.push({ start_at: slot.start_at, reason: 'missing_professional' })
+      continue
+    }
+
     const generatedId = crypto.randomUUID()
     const { data: rpcData, error: rpcError } = await supabase.rpc('create_appointment', {
       p_org_id: tenantId,
@@ -170,7 +189,7 @@ export async function POST(
       p_start: startAt.toISOString(),
       p_end: endAt.toISOString(),
       p_appointment_id: generatedId,
-      p_professional_id: professionalId,
+      p_professional_id: slotProfessionalId,
       p_booked_via: 'manual',
     })
 

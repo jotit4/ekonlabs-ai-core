@@ -10,8 +10,8 @@ import type { AvailabilityShift } from '@/types/availability'
 // para devolver huecos deterministas: dos por fecha (12:00 y 13:00), con
 // slot_start_iso ÚNICO por fecha+hora, de modo que huecos de días distintos no
 // colisionen en la selección (dedup por start_at).
-vi.mock('@/hooks/use-availability', () => ({ useAvailability: vi.fn() }))
-import { useAvailability } from '@/hooks/use-availability'
+vi.mock('@/hooks/use-availability', () => ({ useAvailability: vi.fn(), fetchAvailabilityDays: vi.fn() }))
+import { useAvailability, fetchAvailabilityDays } from '@/hooks/use-availability'
 
 function shiftFor(date: string, hhmm: string, prof = 'prof-1'): AvailabilityShift {
   const hour = hhmm.slice(0, 2)
@@ -41,12 +41,12 @@ beforeEach(() => {
 })
 
 // Wrapper: el motor es controlado por el padre (selected + onChange).
-function Harness({ total }: { total: number }) {
+function Harness({ total, professionalId = 'prof-1' }: { total: number; professionalId?: string | null }) {
   const [selected, setSelected] = useState<SelectedSlot[]>([])
   return (
     <MultiSessionScheduler
       serviceId="svc-1"
-      professionalId="prof-1"
+      professionalId={professionalId}
       total={total}
       selected={selected}
       onChange={setSelected}
@@ -103,5 +103,85 @@ describe('MultiSessionScheduler', () => {
     await user.click(screen.getByRole('button', { name: /Quitar/i }))
     expect(screen.getByLabelText('Vas 0 de 3')).toBeInTheDocument()
     expect(screen.queryByText(/Sesiones elegidas/)).not.toBeInTheDocument()
+  })
+
+  it('ofrece la cadencia "Todos los días"', () => {
+    render(<Harness total={5} />)
+    expect(screen.getByRole('button', { name: 'Todos los días' })).toBeInTheDocument()
+  })
+
+  describe('Proponer automáticamente (Pedido B — bonos x5/x10 en días consecutivos)', () => {
+    it('el botón arranca deshabilitado sin ningún horario elegido', () => {
+      render(<Harness total={5} />)
+      expect(screen.getByRole('button', { name: /Proponer las próximas/i })).toBeDisabled()
+    })
+
+    it('tras elegir el primer horario, propone el resto y los agrega a la selección', async () => {
+      vi.mocked(fetchAvailabilityDays).mockResolvedValue({
+        days: {
+          '2026-07-08': { available: true, shifts: [shiftFor('2026-07-08', '12:00')] },
+          '2026-07-09': { available: true, shifts: [shiftFor('2026-07-09', '12:00')] },
+          '2026-07-10': { available: true, shifts: [shiftFor('2026-07-10', '12:00')] },
+          '2026-07-13': { available: true, shifts: [shiftFor('2026-07-13', '12:00')] },
+        },
+      })
+      const user = userEvent.setup()
+      render(<Harness total={5} />)
+
+      await pickDate('2026-07-07')
+      await user.click(screen.getByRole('button', { name: '12:00' }))
+      expect(screen.getByLabelText('Vas 1 de 5')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: /Proponer las próximas 4 fechas/i }))
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Vas 5 de 5')).toBeInTheDocument()
+      })
+      expect(fetchAvailabilityDays).toHaveBeenCalledWith(
+        expect.objectContaining({
+          dateFrom: '2026-07-08',
+          dateTo: '2026-07-13',
+          serviceId: 'svc-1',
+          professionalId: 'prof-1',
+          allProfessionals: false,
+        }),
+      )
+    })
+
+    it('marca como pendiente el día sin hueco a la hora del ancla (no inventa horario)', async () => {
+      vi.mocked(fetchAvailabilityDays).mockResolvedValue({
+        days: {
+          '2026-07-08': { available: false, shifts: [] },
+        },
+      })
+      const user = userEvent.setup()
+      render(<Harness total={2} />)
+
+      await pickDate('2026-07-07')
+      await user.click(screen.getByRole('button', { name: '12:00' }))
+      await user.click(screen.getByRole('button', { name: /Proponer la próxima fecha/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText(/Sin horario libre ese día/i)).toBeInTheDocument()
+      })
+      // No sumó una 2da sesión (no había hueco a esa hora) — sigue en 1/2.
+      expect(screen.getByLabelText('Vas 1 de 2')).toBeInTheDocument()
+    })
+
+    it('en modo "cualquier profesional" pide allProfessionals=true', async () => {
+      vi.mocked(fetchAvailabilityDays).mockResolvedValue({ days: {} })
+      const user = userEvent.setup()
+      render(<Harness total={2} professionalId={null} />)
+
+      fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: '2026-07-07' } })
+      await user.click(await screen.findByRole('button', { name: '12:00 · Patricia Pérez' }))
+      await user.click(screen.getByRole('button', { name: /Proponer/i }))
+
+      await waitFor(() => {
+        expect(fetchAvailabilityDays).toHaveBeenCalledWith(
+          expect.objectContaining({ professionalId: undefined, allProfessionals: true }),
+        )
+      })
+    })
   })
 })

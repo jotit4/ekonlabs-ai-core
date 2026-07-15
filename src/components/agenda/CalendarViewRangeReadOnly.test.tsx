@@ -4,6 +4,7 @@ import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { format, addDays, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
 import type { Appointment } from '@/types/appointments'
+import type { DayStatusEntry } from '@/types/holidays'
 
 // Mock CSS imports
 vi.mock('react-big-calendar/lib/css/react-big-calendar.css', () => ({}))
@@ -225,157 +226,129 @@ describe('CalendarViewRangeReadOnly', () => {
     expect(mockOnAppointmentClick).toHaveBeenCalledWith(BASE_APPOINTMENT)
   })
 
-  describe('Story 10.7 — Huecos libres y resumen de mes', () => {
-    const FREE_SHIFT = {
-      open: '08:00',
-      close: '08:30',
-      slot_start_iso: '2026-05-14T11:00:00Z',
-      slot_end_iso: '2026-05-14T11:30:00Z',
-      service_id: 'svc-1',
-      service_name: 'Kinesiología',
-      require_referral: false,
-      professional_id: 'prof-1',
-      professional_name: 'Dra. Pérez',
-    }
-
-    it('vista semana pinta huecos libres clickeables en la columna correcta', async () => {
-      const user = userEvent.setup()
-      const onFreeSlotClick = vi.fn()
-      render(
-        <CalendarViewRangeReadOnly
-          view="week"
-          date="2026-05-12"
-          appointments={[]}
-          isLoading={false}
-          isError={false}
-          onRefetch={mockOnRefetch}
-          freeShiftsByDate={{ '2026-05-14': [FREE_SHIFT] }}
-          onFreeSlotClick={onFreeSlotClick}
-        />,
-      )
-      const slotBtn = screen.getByRole('button', { name: /agendar a las 08:00 con dra\. pérez/i })
-      expect(slotBtn).toBeInTheDocument()
-      await user.click(slotBtn)
-      expect(onFreeSlotClick).toHaveBeenCalledWith(FREE_SHIFT)
-    })
-
-    it('vista mes muestra "● N libres" desde availabilitySummary', () => {
+  // ─── Filtro de estado en la agenda (decisión 2026-07-14) ───────────────────
+  // Los CANCELADOS desaparecen de la grilla (Semana/Mes) — igual criterio que
+  // la vista Día (CalendarView.tsx). Los no_show SÍ se siguen mostrando.
+  describe('filtro de cancelados (no se muestran en la agenda)', () => {
+    it('vista Mes: NO renderiza un evento para un turno cancelado', () => {
       render(
         <CalendarViewRangeReadOnly
           view="month"
           date="2026-05-12"
-          appointments={[]}
+          appointments={[{ ...BASE_APPOINTMENT, status: 'cancelled' }]}
           isLoading={false}
           isError={false}
           onRefetch={mockOnRefetch}
-          availabilitySummary={{ '2026-05-14': { free_count: 5 } }}
         />,
       )
-      expect(screen.getByTestId('month-availability-summary')).toBeInTheDocument()
-      expect(screen.getByText(/● 5 libres/)).toBeInTheDocument()
+      expect(screen.queryByTestId('event-apt-1')).not.toBeInTheDocument()
     })
 
-    it('vista mes: click en un día llama onDayClick con la fecha', async () => {
-      const user = userEvent.setup()
-      const onDayClick = vi.fn()
+    it('vista Mes: SÍ renderiza un evento para un turno no_show', () => {
       render(
         <CalendarViewRangeReadOnly
           view="month"
           date="2026-05-12"
-          appointments={[]}
+          appointments={[{ ...BASE_APPOINTMENT, status: 'no_show' }]}
           isLoading={false}
           isError={false}
           onRefetch={mockOnRefetch}
-          availabilitySummary={{ '2026-05-14': { free_count: 5 } }}
-          onDayClick={onDayClick}
         />,
       )
-      await user.click(screen.getByRole('listitem', { name: /5 libres/i }))
-      expect(onDayClick).toHaveBeenCalledWith('2026-05-14')
+      expect(screen.getByTestId('event-apt-1')).toBeInTheDocument()
     })
 
-    // Regresión Story 10.7 (hotfix key duplicada): dos servicios distintos del
-    // MISMO profesional a la MISMA hora generaban la misma React key
-    // ("Encountered two children with the same key") en la vista Semana
-    // (WeekColumnsView). El fix agregó service_id + idx a la key.
-    it('vista semana: dos huecos del mismo profesional/misma hora con service_id distinto NO emiten warning de key duplicada', () => {
-      const shiftA: typeof FREE_SHIFT = {
-        ...FREE_SHIFT,
-        service_id: 'svc-A',
-        service_name: 'Kinesiología',
-      }
-      const shiftB: typeof FREE_SHIFT = {
-        ...FREE_SHIFT,
-        service_id: 'svc-B',
-        service_name: 'Fisioterapia',
-      }
-      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-
+    it('vista Semana: NO muestra un turno cancelado', () => {
       render(
         <CalendarViewRangeReadOnly
           view="week"
           date="2026-05-12"
-          appointments={[]}
+          appointments={[{ ...BASE_APPOINTMENT, status: 'cancelled' }]}
           isLoading={false}
           isError={false}
           onRefetch={mockOnRefetch}
-          freeShiftsByDate={{ '2026-05-14': [shiftA, shiftB] }}
-          onFreeSlotClick={vi.fn()}
         />,
       )
+      expect(screen.queryByText('María López')).not.toBeInTheDocument()
+    })
 
-      // Varios huecos a la misma hora colapsan a un contador ("2 libres").
-      const collapsed = screen.getByRole('button', {
-        name: /2 horarios libres a las 08:00/i,
-      })
-      expect(collapsed).toBeInTheDocument()
-
-      // Y React NO emitió el warning de key duplicada.
-      const duplicateKeyWarning = errorSpy.mock.calls.some((args) =>
-        args.some(
-          (a) =>
-            typeof a === 'string' && (a.includes('same key') || a.includes('unique key')),
-        ),
+    it('vista Semana: SÍ muestra un turno no_show', () => {
+      render(
+        <CalendarViewRangeReadOnly
+          view="week"
+          date="2026-05-12"
+          appointments={[{ ...BASE_APPOINTMENT, status: 'no_show' }]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
       )
-      expect(duplicateKeyWarning).toBe(false)
-
-      errorSpy.mockRestore()
+      expect(screen.getByText('María López')).toBeInTheDocument()
     })
   })
 
-  // ── FIX B — skeleton de disponibilidad en la grilla Semana ──────────────────
-  describe('FIX B — skeleton de disponibilidad (vista Semana)', () => {
-    it('muestra skeleton en las celdas de la grilla cuando availabilityLoading=true', () => {
+  // ─── Celda vacía → atajo "Dar un turno" (pedido ISADI 2026-07-14) ──────────
+  // Los huecos libres ("N libres" / chip individual) y el resumen "● N libres"
+  // del mes se retiraron del calendario. El atajo "click en hueco → Nuevo turno
+  // prellenado" se preserva en la vista Semana, ahora disparado por la CELDA
+  // VACÍA de la grilla (columna = día, ya no hay datos de disponibilidad para
+  // anunciar profesional/servicio). La vista Mes no tiene grilla de celdas
+  // propia (usa react-big-calendar) y el click-en-día que antes ofrecían las
+  // tarjetas de disponibilidad no tiene reemplazo — se retira junto con ellas.
+  describe('celda vacía → atajo "Dar un turno" (vista Semana)', () => {
+    // El accesible name incluye la etiqueta de columna ("— jue 14") porque los
+    // OTROS 6 días de la semana, sin ningún turno, quedan con TODAS sus horas
+    // del rango default clickeables también — sin la etiqueta, 7 botones
+    // compartirían el mismo nombre "Dar un turno a las 10:00" (ambiguo para
+    // getByRole y para lectores de pantalla).
+    it('una celda vacía dentro del horario activo del día es clickeable y llama onEmptyCellClick', async () => {
+      const user = userEvent.setup()
+      const onEmptyCellClick = vi.fn()
+      // Dos turnos el mismo día (09:00 y 11:00) → la ventana activa de esa
+      // columna (14/05, "jue 14") deja la celda 10:00 vacía y dentro del horario.
+      const aptLater: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-later',
+        start_at: '2026-05-14T11:00:00',
+        end_at: '2026-05-14T12:00:00',
+      }
       render(
         <CalendarViewRangeReadOnly
           view="week"
           date="2026-05-12"
-          appointments={[BASE_APPOINTMENT]}
+          appointments={[BASE_APPOINTMENT, aptLater]}
           isLoading={false}
           isError={false}
           onRefetch={mockOnRefetch}
-          availabilityLoading
+          onEmptyCellClick={onEmptyCellClick}
         />,
       )
-      // El turno sigue visible y, además, las celdas vacías dentro del horario
-      // muestran el skeleton "buscando horarios".
-      expect(screen.getByText('María López')).toBeInTheDocument()
-      expect(screen.getAllByTestId('turnero-cell-skeleton').length).toBeGreaterThan(0)
+      const emptyCellBtn = screen.getByRole('button', { name: /dar un turno a las 10:00 — jue 14/i })
+      await user.click(emptyCellBtn)
+      // colId de la vista Semana YA es la fecha ISO del día → se pasa directo.
+      expect(onEmptyCellClick).toHaveBeenCalledWith('2026-05-14', '10:00')
     })
 
-    it('NO muestra skeleton cuando availabilityLoading=false', () => {
+    it('sin onEmptyCellClick, la celda vacía no rompe el render', () => {
+      const aptLater: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-later',
+        start_at: '2026-05-14T11:00:00',
+        end_at: '2026-05-14T12:00:00',
+      }
       render(
         <CalendarViewRangeReadOnly
           view="week"
           date="2026-05-12"
-          appointments={[BASE_APPOINTMENT]}
+          appointments={[BASE_APPOINTMENT, aptLater]}
           isLoading={false}
           isError={false}
           onRefetch={mockOnRefetch}
-          availabilityLoading={false}
         />,
       )
-      expect(screen.queryByTestId('turnero-cell-skeleton')).not.toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: /dar un turno a las 10:00 — jue 14/i }),
+      ).toBeInTheDocument()
     })
   })
 
@@ -428,6 +401,167 @@ describe('CalendarViewRangeReadOnly', () => {
         />,
       )
       expect(screen.queryByText(/^Sesión /)).not.toBeInTheDocument()
+    })
+  })
+
+  // ─── Feriados + estado del día (pedido ISADI 2026-07-14) ───────────────────
+  describe('estado del día (feriados + decisión de la clínica) en vista Semana', () => {
+    it('sin dayStatusMap (prop no pasada) → no renderiza la fila de estado del día', () => {
+      render(
+        <CalendarViewRangeReadOnly
+          view="week"
+          date="2026-05-12"
+          appointments={[]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      expect(screen.queryByRole('row', { name: 'Estado de los días de la semana' })).not.toBeInTheDocument()
+    })
+
+    it('con dayStatusMap, un día feriado sin decisión → muestra el badge con el nombre del feriado', () => {
+      // El ancla 2026-05-12 es un martes → jue 14 es el 3er día de la ventana.
+      const dayStatusMap: Record<string, DayStatusEntry> = {
+        '2026-05-14': {
+          date: '2026-05-14',
+          isHoliday: true,
+          holidayName: 'Día de Prueba',
+          decisionIsOpen: null,
+          decidedByName: null,
+          decidedAt: null,
+          reason: null,
+          effectiveOpen: false,
+        },
+      }
+      render(
+        <CalendarViewRangeReadOnly
+          view="week"
+          date="2026-05-12"
+          appointments={[]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+          dayStatusMap={dayStatusMap}
+        />,
+      )
+      expect(screen.getByRole('row', { name: 'Estado de los días de la semana' })).toBeInTheDocument()
+      expect(screen.getByText(/Día de Prueba/)).toBeInTheDocument()
+    })
+
+    it('click en el badge del día llama onDayStatusClick con la fecha ISO de esa columna', async () => {
+      const user = userEvent.setup()
+      const onDayStatusClick = vi.fn()
+      const dayStatusMap: Record<string, DayStatusEntry> = {
+        '2026-05-14': {
+          date: '2026-05-14',
+          isHoliday: true,
+          holidayName: 'Día de Prueba',
+          decisionIsOpen: null,
+          decidedByName: null,
+          decidedAt: null,
+          reason: null,
+          effectiveOpen: false,
+        },
+      }
+      render(
+        <CalendarViewRangeReadOnly
+          view="week"
+          date="2026-05-12"
+          appointments={[]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+          dayStatusMap={dayStatusMap}
+          onDayStatusClick={onDayStatusClick}
+        />,
+      )
+      await user.click(screen.getByText(/Día de Prueba/))
+      expect(onDayStatusClick).toHaveBeenCalledWith('2026-05-14')
+    })
+
+    it('un día CERRADO ya no ofrece "Dar un turno" en su hueco (celda deja de ser clickeable)', () => {
+      // Dos turnos el mismo día (09:00 y 11:00) → sin el cierre, el hueco de
+      // las 10:00 sería clickeable (mismo fixture que el test de arriba
+      // "celda vacía → atajo Dar un turno"). Con el día CERRADO, ese mismo
+      // hueco debe pasar a no-clickeable (outOfHours), no seguir ofreciendo
+      // "Dar un turno".
+      const aptLater: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-later',
+        start_at: '2026-05-14T11:00:00',
+        end_at: '2026-05-14T12:00:00',
+      }
+      const dayStatusMap: Record<string, DayStatusEntry> = {
+        '2026-05-14': {
+          date: '2026-05-14',
+          isHoliday: true,
+          holidayName: 'Día de Prueba',
+          decisionIsOpen: null,
+          decidedByName: null,
+          decidedAt: null,
+          reason: null,
+          effectiveOpen: false,
+        },
+      }
+      render(
+        <CalendarViewRangeReadOnly
+          view="week"
+          date="2026-05-12"
+          appointments={[BASE_APPOINTMENT, aptLater]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+          onEmptyCellClick={vi.fn()}
+          dayStatusMap={dayStatusMap}
+        />,
+      )
+      // Los turnos YA agendados ese día se siguen mostrando (no se ocultan).
+      expect(screen.getAllByText('María López')).toHaveLength(2)
+      // Pero el hueco de las 10:00 (que sin el cierre sería clickeable) ya NO
+      // ofrece "Dar un turno" en el día cerrado.
+      expect(
+        screen.queryByRole('button', { name: /dar un turno a las 10:00 — jue 14/i }),
+      ).not.toBeInTheDocument()
+    })
+
+    it('un día ABIERTO (decisión explícita "abre") SÍ sigue ofreciendo "Dar un turno" (no rompe el comportamiento existente)', () => {
+      // Dos turnos el mismo día (09:00 y 11:00) para que exista un hueco
+      // (10:00) DENTRO de la ventana activa — mismo fixture que el test
+      // "celda vacía → atajo Dar un turno" de arriba.
+      const aptLater: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-later',
+        start_at: '2026-05-14T11:00:00',
+        end_at: '2026-05-14T12:00:00',
+      }
+      const dayStatusMap: Record<string, DayStatusEntry> = {
+        '2026-05-14': {
+          date: '2026-05-14',
+          isHoliday: false,
+          holidayName: null,
+          decisionIsOpen: true,
+          decidedByName: 'Ana',
+          decidedAt: '2026-05-01T00:00:00.000Z',
+          reason: null,
+          effectiveOpen: true,
+        },
+      }
+      render(
+        <CalendarViewRangeReadOnly
+          view="week"
+          date="2026-05-12"
+          appointments={[BASE_APPOINTMENT, aptLater]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+          onEmptyCellClick={vi.fn()}
+          dayStatusMap={dayStatusMap}
+        />,
+      )
+      expect(
+        screen.getByRole('button', { name: /dar un turno a las 10:00 — jue 14/i }),
+      ).toBeInTheDocument()
     })
   })
 })

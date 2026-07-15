@@ -33,10 +33,78 @@ const IaConfigSchema = z
   })
   .optional()
 
+// ── Franjas horarias del agente de WhatsApp (booking_windows) ─────────────────
+//
+// Pedido ISADI (2026-07-14): la clínica atiende de 8 a 20, pero el agente de
+// WhatsApp sólo puede ofrecer/agendar turnos dentro de estas franjas; fuera de
+// ellas los turnos los da la recepcionista a mano. CONTRATO con el backend
+// (ekonlabs-agent, prompt_builder/booking service):
+//   - Horas LOCALES de la clínica, formato "HH:MM" 24h.
+//   - Ausente, null o [] = SIN restricción (default actual: el agente puede
+//     ofrecer cualquier horario dentro del horario de atención). No rompe
+//     clínicas que no configuren franjas.
+//   - Un turno debe caber ENTERO dentro de una franja (start <= inicio,
+//     fin <= end) — esa comparación la hace el agente, no el dashboard.
+//   - Aplica SOLO al canal del agente (WhatsApp); no limita a la recepción.
+//   - Las franjas aplican a todos los días por igual (sin franjas por día).
+
+const TIME_HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/
+
+/** Máximo de franjas cargables — límite razonable para no saturar la UI. */
+export const MAX_BOOKING_WINDOWS = 4
+
+const TIME_FORMAT_ERROR = 'La hora debe tener el formato HH:MM (24 horas), por ejemplo 08:00'
+
+/**
+ * Una franja horaria en la que el agente de WhatsApp puede ofrecer/agendar
+ * turnos. `start` debe ser estrictamente anterior a `end`.
+ */
+const BookingWindowSchema = z
+  .object({
+    start: z.string().regex(TIME_HHMM_RE, { error: TIME_FORMAT_ERROR }),
+    end: z.string().regex(TIME_HHMM_RE, { error: TIME_FORMAT_ERROR }),
+  })
+  .refine((w) => w.start < w.end, {
+    error: 'El horario de inicio debe ser anterior al horario de fin',
+    path: ['end'],
+  })
+
+export type BookingWindowFormValues = z.infer<typeof BookingWindowSchema>
+
+/**
+ * Lista de franjas horarias. Ausente/null/vacía = sin restricción (ver
+ * contrato arriba). Valida que no haya más de `MAX_BOOKING_WINDOWS` franjas
+ * y que ninguna se solape con otra.
+ */
+const BookingWindowsSchema = z
+  .array(BookingWindowSchema)
+  .max(MAX_BOOKING_WINDOWS, {
+    error: `No se pueden cargar más de ${MAX_BOOKING_WINDOWS} franjas horarias`,
+  })
+  .superRefine((windows, ctx) => {
+    for (let i = 0; i < windows.length; i++) {
+      for (let j = i + 1; j < windows.length; j++) {
+        const a = windows[i]
+        const b = windows[j]
+        const overlap = a.start < b.end && b.start < a.end
+        if (overlap) {
+          ctx.addIssue({
+            code: 'custom',
+            message: 'Las franjas horarias no pueden superponerse entre sí',
+            path: [j, 'start'],
+          })
+        }
+      }
+    }
+  })
+  .nullable()
+  .optional()
+
 const OperationsConfigSchema = z
   .object({
     min_notice_hours: z.number().int().min(0, { error: 'Debe ser 0 o mayor' }).optional(),
     future_window_days: z.number().int().min(0, { error: 'Debe ser 0 o mayor' }).optional(),
+    booking_windows: BookingWindowsSchema,
   })
   .optional()
 

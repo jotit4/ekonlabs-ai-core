@@ -34,8 +34,46 @@ export interface UseAvailabilityResult {
   shiftsForDate: (isoDate: string) => AvailabilityShift[]
 }
 
-interface AvailabilityResponse {
+export interface AvailabilityResponse {
   days: Record<string, DayShifts> | Record<string, DaySummary>
+}
+
+export interface FetchAvailabilityDaysParams {
+  dateFrom: string
+  dateTo: string
+  serviceId?: string | null
+  professionalId?: string | null
+  summary?: boolean
+  allProfessionals?: boolean
+}
+
+/**
+ * Fetch IMPERATIVO (no-hook) a `/api/availability` — misma lógica de armado de
+ * query params que `useAvailability` usa en su `queryFn`, extraída para
+ * reusarla en consultas ONE-SHOT que no necesitan cache de react-query (ej. la
+ * propuesta automática de fechas consecutivas de `MultiSessionScheduler`,
+ * Pedido B ISADI 2026-07-14, que consulta un RANGO completo de una sola vez
+ * en respuesta a un click, no de forma reactiva/declarativa).
+ */
+export async function fetchAvailabilityDays({
+  dateFrom,
+  dateTo,
+  serviceId,
+  professionalId,
+  summary = false,
+  allProfessionals = false,
+}: FetchAvailabilityDaysParams): Promise<AvailabilityResponse> {
+  const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo })
+  if (serviceId) params.set('service_id', serviceId)
+  if (professionalId) params.set('professional_id', professionalId)
+  if (summary) params.set('summary', 'true')
+  if (allProfessionals) params.set('all_professionals', 'true')
+
+  const res = await fetch(`/api/availability?${params.toString()}`)
+  if (!res.ok) {
+    throw new Error(`Error al obtener disponibilidad: ${res.status}`)
+  }
+  return (await res.json()) as AvailabilityResponse
 }
 
 export function useAvailability({
@@ -57,19 +95,8 @@ export function useAvailability({
       summary,
       allProfessionals,
     ],
-    queryFn: async () => {
-      const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo })
-      if (serviceId) params.set('service_id', serviceId)
-      if (professionalId) params.set('professional_id', professionalId)
-      if (summary) params.set('summary', 'true')
-      if (allProfessionals) params.set('all_professionals', 'true')
-
-      const res = await fetch(`/api/availability?${params.toString()}`)
-      if (!res.ok) {
-        throw new Error(`Error al obtener disponibilidad: ${res.status}`)
-      }
-      return (await res.json()) as AvailabilityResponse
-    },
+    queryFn: () =>
+      fetchAvailabilityDays({ dateFrom, dateTo, serviceId, professionalId, summary, allProfessionals }),
     staleTime: 60_000, // se invalida por Realtime de todos modos
     enabled,
   })

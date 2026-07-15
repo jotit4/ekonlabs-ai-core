@@ -480,12 +480,14 @@ describe('NewTurnoModal', () => {
       await search(user, '87654321')
       await waitFor(() => screen.getByText(/María López/))
 
-      // Seleccionar servicio → dispara carga de profesionales
+      // Seleccionar servicio → dispara carga de profesionales. Por defecto queda
+      // "Cualquier profesional disponible" (Pedido A — aplica aun con 1 solo
+      // profesional); acá se elige el concreto para no mezclar con ese flujo.
       await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
-      // Con un único profesional, se preselecciona automáticamente
       await waitFor(() => {
-        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('prof-1')
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
       })
+      await user.selectOptions(screen.getByLabelText('Profesional'), 'prof-1')
 
       await user.selectOptions(screen.getByLabelText('Horario'), '09:00')
       await user.click(screen.getByRole('button', { name: /guardar turno/i }))
@@ -498,6 +500,62 @@ describe('NewTurnoModal', () => {
             body: expect.stringContaining('-03:00'),
           }),
         )
+      })
+    })
+
+    it('color del turno (paleta muda ISADI): sin elegir ninguno, no envía "color" en el body', async () => {
+      setupFetch({ search: [singlePatient], professionals: [{ professional_id: 'prof-1', name: 'Patricia Pérez' }] })
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
+
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
+
+      await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+      await waitFor(() => {
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
+      })
+      await user.selectOptions(screen.getByLabelText('Profesional'), 'prof-1')
+      await user.selectOptions(screen.getByLabelText('Horario'), '09:00')
+      await user.click(screen.getByRole('button', { name: /guardar turno/i }))
+
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find(
+          (c) => c[0] === '/api/appointments' && (c[1] as { method?: string })?.method === 'POST',
+        )
+        expect(call).toBeTruthy()
+        const body = JSON.parse((call![1] as { body: string }).body)
+        expect(body).not.toHaveProperty('color')
+      })
+    })
+
+    it('color del turno: al elegir un swatch de la paleta, lo envía en el body', async () => {
+      setupFetch({ search: [singlePatient], professionals: [{ professional_id: 'prof-1', name: 'Patricia Pérez' }] })
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
+
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
+
+      await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+      await waitFor(() => {
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
+      })
+      await user.selectOptions(screen.getByLabelText('Profesional'), 'prof-1')
+      await user.selectOptions(screen.getByLabelText('Horario'), '09:00')
+
+      await user.click(screen.getByRole('button', { name: 'Color #00FFFF' }))
+      await user.click(screen.getByRole('button', { name: /guardar turno/i }))
+
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find(
+          (c) => c[0] === '/api/appointments' && (c[1] as { method?: string })?.method === 'POST',
+        )
+        expect(call).toBeTruthy()
+        const body = JSON.parse((call![1] as { body: string }).body)
+        expect(body.color).toBe('#00FFFF')
       })
     })
 
@@ -530,6 +588,29 @@ describe('NewTurnoModal', () => {
       await waitFor(() => {
         expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
       })
+    })
+
+    it('Pedido A #1 (ISADI 2026-07-14) — funciona también con UN solo profesional: ofrece "cualquiera" como default', async () => {
+      setupFetch({
+        search: [singlePatient],
+        professionals: [{ professional_id: 'prof-1', name: 'Patricia Pérez' }],
+      })
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-05-15" />)
+
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
+
+      await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+
+      // Con un solo profesional, la opción "cualquiera" YA aparece (antes solo con 2+)
+      // y es el default — elegir un profesional concreto sigue siendo posible.
+      await waitFor(() => {
+        expect(screen.getByRole('option', { name: 'Cualquier profesional disponible' })).toBeInTheDocument()
+        expect(screen.getByRole('option', { name: 'Patricia Pérez' })).toBeInTheDocument()
+      })
+      expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
     })
 
     it('P0.2 — oculta los servicios no agendables (booking_mode ≠ appointment)', async () => {
@@ -653,8 +734,9 @@ describe('NewTurnoModal', () => {
 
       await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
       await waitFor(() => {
-        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('prof-1')
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
       })
+      await user.selectOptions(screen.getByLabelText('Profesional'), 'prof-1')
 
       await waitFor(() => {
         expect(screen.getByRole('option', { name: '09:00' })).toBeInTheDocument()
@@ -677,8 +759,9 @@ describe('NewTurnoModal', () => {
 
       await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
       await waitFor(() => {
-        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('prof-1')
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
       })
+      await user.selectOptions(screen.getByLabelText('Profesional'), 'prof-1')
 
       await waitFor(() => {
         expect(screen.getByRole('option', { name: /Sin horarios libres para esta fecha/i })).toBeInTheDocument()
@@ -818,7 +901,7 @@ describe('NewTurnoModal', () => {
       expect(screen.queryByLabelText('Fecha')).not.toBeInTheDocument()
     })
 
-    it('en modo serie NO ofrece "Cualquier profesional disponible"', async () => {
+    it('en modo serie TAMBIÉN ofrece "Cualquier profesional disponible" (Pedido A #2/#3 — el bono puede crearse sin profesional fijo)', async () => {
       setupFetch({
         search: [singlePatient],
         professionals: [
@@ -837,10 +920,10 @@ describe('NewTurnoModal', () => {
 
       await waitFor(() => {
         expect(screen.getByRole('option', { name: 'Patricia Pérez' })).toBeInTheDocument()
+        expect(screen.getByRole('option', { name: 'Cualquier profesional disponible' })).toBeInTheDocument()
       })
-      expect(
-        screen.queryByRole('option', { name: 'Cualquier profesional disponible' }),
-      ).not.toBeInTheDocument()
+      // Es el DEFAULT también en modo serie.
+      expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
     })
 
     it('reservar 5 sesiones: crea el bono y agenda las 5 en un solo flujo', async () => {
@@ -860,14 +943,16 @@ describe('NewTurnoModal', () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-07" />)
 
-      // Paciente + modo 5 sesiones + servicio (preselecciona el único profesional)
+      // Paciente + modo 5 sesiones + servicio + profesional CONCRETO (el default
+      // ahora es "cualquiera" — Pedido A; ese flujo se testea aparte).
       await search(user, '87654321')
       await waitFor(() => screen.getByText(/María López/))
       await user.click(screen.getByRole('button', { name: /5 sesiones/i }))
       await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
       await waitFor(() => {
-        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('prof-1')
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
       })
+      await user.selectOptions(screen.getByLabelText('Profesional'), 'prof-1')
 
       // Elegir la fecha inicial y acumular 5 huecos (el calendario se auto-adelanta).
       fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: '2026-07-07' } })
@@ -930,14 +1015,16 @@ describe('NewTurnoModal', () => {
       const user = userEvent.setup()
       render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-07" />)
 
-      // Paciente + modo 5 sesiones + servicio (preselecciona el único profesional)
+      // Paciente + modo 5 sesiones + servicio + profesional CONCRETO (el default
+      // ahora es "cualquiera" — Pedido A; ese flujo se testea aparte).
       await search(user, '87654321')
       await waitFor(() => screen.getByText(/María López/))
       await user.click(screen.getByRole('button', { name: /5 sesiones/i }))
       await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
       await waitFor(() => {
-        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('prof-1')
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
       })
+      await user.selectOptions(screen.getByLabelText('Profesional'), 'prof-1')
 
       // Elegir la fecha inicial y acumular solo 3 de las 5 sesiones del bono.
       fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: '2026-07-07' } })
@@ -983,6 +1070,70 @@ describe('NewTurnoModal', () => {
       })
       const [msg] = vi.mocked(toast.success).mock.calls[0]
       expect(msg).toContain('Faltan 2')
+    })
+
+    it('Pedido A #2/#3 — reservar en modo "cualquier profesional": el bono se crea SIN profesional fijo y cada sesión lleva su propio professional_id', async () => {
+      mockUniqueDailyAvailability()
+      mockFetch.mockImplementation((url: string, init?: { method?: string }) => {
+        if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
+        if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse([{ professional_id: 'prof-1', name: 'Patricia Pérez' }]))
+        if (url === '/api/treatments' && init?.method === 'POST') {
+          return Promise.resolve({ ok: true, status: 201, json: async () => ({ success: true, treatment_id: 'trt-new' }) })
+        }
+        if (url.includes('/api/treatments/trt-new/sessions') && init?.method === 'POST') {
+          return Promise.resolve({ ok: true, status: 201, json: async () => ({ success: true, creadas: 5, skipped: [] }) })
+        }
+        return Promise.resolve(makeSearchResponse([]))
+      })
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-07" />)
+
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
+      await user.click(screen.getByRole('button', { name: /5 sesiones/i }))
+      await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+      // Se deja el default "cualquiera" (no se elige un profesional concreto).
+      await waitFor(() => {
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
+      })
+
+      fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: '2026-07-07' } })
+      for (let i = 0; i < 5; i++) {
+        const chip = await screen.findByRole('button', { name: '12:00 · Patricia Pérez' })
+        await user.click(chip)
+      }
+
+      const reservar = screen.getByRole('button', { name: /reservar 5 sesiones/i })
+      await waitFor(() => expect(reservar).toBeEnabled())
+      await user.click(reservar)
+
+      // El bono se crea SIN professional_id (server-side no hay uno fijo).
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find(
+          (c) => c[0] === '/api/treatments' && (c[1] as { method?: string })?.method === 'POST',
+        )
+        expect(call).toBeTruthy()
+        const body = JSON.parse((call![1] as { body: string }).body)
+        expect(body).not.toHaveProperty('professional_id')
+        expect(body.total_sessions).toBe(5)
+      })
+
+      // Cada sesión agendada lleva su PROPIO professional_id (resuelto del hueco).
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find(
+          (c) =>
+            typeof c[0] === 'string' &&
+            c[0].includes('/api/treatments/trt-new/sessions') &&
+            (c[1] as { method?: string })?.method === 'POST',
+        )
+        expect(call).toBeTruthy()
+        const body = JSON.parse((call![1] as { body: string }).body)
+        expect(body.slots).toHaveLength(5)
+        for (const slot of body.slots) {
+          expect(slot.professional_id).toBe('prof-1')
+        }
+      })
     })
 
     it('el botón está deshabilitado con 0 sesiones elegidas', async () => {

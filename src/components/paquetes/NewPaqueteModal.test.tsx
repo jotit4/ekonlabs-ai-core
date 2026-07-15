@@ -10,6 +10,42 @@ global.fetch = mockFetch
 const PROF_1 = 'f380ebe7-a4d6-4457-ae1b-9545876addb8'
 const PROF_2 = '0bff67bd-87b2-41b9-bd93-1a37f3d335a2'
 
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn() }),
+}))
+
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}))
+import { toast } from 'sonner'
+
+// MultiSessionScheduler (Pedido B — propuesta automática de 5/10 sesiones) se
+// testea en su propio archivo; acá se mockea con un control simple que emite
+// slots deterministas, para aislar el flujo de creación del bono + confirmación.
+vi.mock('@/components/agenda/MultiSessionScheduler', () => ({
+  MultiSessionScheduler: ({
+    total,
+    onChange,
+  }: {
+    total: number
+    onChange: (slots: { start_at: string; end_at: string; date: string; label: string; professional_id?: string }[]) => void
+  }) => (
+    <div data-testid="multi-session-scheduler">
+      <span>Elegí {total} horarios</span>
+      <button
+        type="button"
+        onClick={() =>
+          onChange([
+            { start_at: '2026-07-08T13:00:00.000Z', end_at: '2026-07-08T14:00:00.000Z', date: '2026-07-08', label: '10:00', professional_id: PROF_1 },
+          ])
+        }
+      >
+        elegir-propuesta
+      </button>
+    </div>
+  ),
+}))
+
 // Mock @base-ui/react/dialog
 vi.mock('@base-ui/react/dialog', () => ({
   Dialog: {
@@ -99,14 +135,18 @@ function makeTreatmentResponse(ok = true, status = 201, error?: string) {
 
 // Rellena el form del bono (con initialPatient) hasta dejarlo listo para enviar.
 // Ya NO pide patrón semanal ni fecha de inicio: solo servicio, profesional, total.
+// El default del profesional ahora es "cualquiera" (Pedido A #2) — acá se elige
+// el concreto PROF_1 para no mezclar ese flujo con el de esta suite (que se
+// prueba aparte).
 async function fillTreatmentForm(
   user: ReturnType<typeof userEvent.setup>,
   totalSessions = '10',
 ) {
   await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
   await waitFor(() => {
-    expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe(PROF_1)
+    expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
   })
+  await user.selectOptions(screen.getByLabelText('Profesional'), PROF_1)
   const totalInput = screen.getByLabelText('Total de sesiones')
   await user.clear(totalInput)
   await user.type(totalInput, totalSessions)
@@ -294,6 +334,150 @@ describe('NewPaqueteModal', () => {
       render(<NewPaqueteModal open={true} onClose={mockOnClose} />)
       await user.click(screen.getByRole('button', { name: /cancelar/i }))
       expect(mockOnClose).toHaveBeenCalledOnce()
+    })
+  })
+
+  describe('Pedido B (ISADI 2026-07-14) — botones rápidos 5/10 sesiones', () => {
+    beforeEach(() => {
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse())
+        return Promise.resolve(makeSearchResponse([]))
+      })
+    })
+
+    it('ofrece botones rápidos 5 y 10 además de la cantidad libre', () => {
+      render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
+      expect(screen.getByRole('button', { name: '5 sesiones' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '10 sesiones' })).toBeInTheDocument()
+      expect(screen.getByLabelText('Total de sesiones')).toBeInTheDocument()
+    })
+
+    it('clickear "5 sesiones" fija el total en el input y lo marca activo', async () => {
+      const user = userEvent.setup()
+      render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
+
+      await user.click(screen.getByRole('button', { name: '5 sesiones' }))
+
+      expect((screen.getByLabelText('Total de sesiones') as HTMLInputElement).value).toBe('5')
+      expect(screen.getByRole('button', { name: '5 sesiones' })).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByRole('button', { name: '10 sesiones' })).toHaveAttribute('aria-pressed', 'false')
+    })
+
+    it('la cantidad libre sigue editable (no reemplazada por los botones)', async () => {
+      const user = userEvent.setup()
+      render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
+
+      const input = screen.getByLabelText('Total de sesiones')
+      await user.clear(input)
+      await user.type(input, '3')
+      expect((input as HTMLInputElement).value).toBe('3')
+    })
+  })
+
+  describe('Pedido A #2 (ISADI 2026-07-14) — bono sin profesional fijo ("cualquier profesional")', () => {
+    it('ofrece "Cualquier profesional disponible" como default y NO manda professional_id al crear', async () => {
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse())
+        if (url === '/api/treatments') return Promise.resolve(makeTreatmentResponse())
+        return Promise.resolve(makeSearchResponse([]))
+      })
+      const user = userEvent.setup()
+      render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
+
+      await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+      await waitFor(() => {
+        expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
+      })
+      expect(screen.getByRole('option', { name: 'Cualquier profesional disponible' })).toBeInTheDocument()
+
+      const totalInput = screen.getByLabelText('Total de sesiones')
+      await user.clear(totalInput)
+      await user.type(totalInput, '3')
+      await user.click(screen.getByRole('button', { name: /crear paquete/i }))
+
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find((c) => c[0] === '/api/treatments')
+        expect(call).toBeTruthy()
+        const body = JSON.parse((call![1] as { body: string }).body)
+        expect(body).not.toHaveProperty('professional_id')
+        expect(body.total_sessions).toBe(3)
+      })
+    })
+  })
+
+  describe('Pedido B — propuesta y confirmación de fechas para bonos de 5/10', () => {
+    beforeEach(() => {
+      mockFetch.mockImplementation((url: string, init?: { method?: string }) => {
+        if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse())
+        if (url === '/api/treatments' && init?.method === 'POST') return Promise.resolve(makeTreatmentResponse())
+        if (url === '/api/treatments/trt-new/sessions' && init?.method === 'POST') {
+          return Promise.resolve({ ok: true, status: 201, json: async () => ({ success: true, creadas: 1, skipped: [] }) })
+        }
+        return Promise.resolve(makeSearchResponse([]))
+      })
+    })
+
+    it('tras crear un bono de 5, muestra la propuesta de horarios (MultiSessionScheduler) ANTES de agendar nada', async () => {
+      const user = userEvent.setup()
+      render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
+
+      await user.click(screen.getByRole('button', { name: '5 sesiones' }))
+      await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+      await user.click(screen.getByRole('button', { name: /crear paquete/i }))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('multi-session-scheduler')).toBeInTheDocument()
+      })
+      // Nada se agendó todavía (solo se creó el bono).
+      const sessionsCalls = mockFetch.mock.calls.filter((c) => String(c[0]).includes('/sessions'))
+      expect(sessionsCalls).toHaveLength(0)
+      expect(screen.getByRole('button', { name: /confirmar y agendar/i })).toBeDisabled()
+    })
+
+    it('NO ofrece la propuesta para cantidades distintas de 5/10 (ej. 3)', async () => {
+      const user = userEvent.setup()
+      render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
+
+      await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+      const totalInput = screen.getByLabelText('Total de sesiones')
+      await user.clear(totalInput)
+      await user.type(totalInput, '3')
+      await user.click(screen.getByRole('button', { name: /crear paquete/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText(/Paquete creado/i)).toBeInTheDocument()
+      })
+      expect(screen.queryByTestId('multi-session-scheduler')).not.toBeInTheDocument()
+    })
+
+    it('confirmar la propuesta hace POST a /sessions con los slots elegidos', async () => {
+      const user = userEvent.setup()
+      render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
+
+      await user.click(screen.getByRole('button', { name: '10 sesiones' }))
+      await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+      await user.click(screen.getByRole('button', { name: /crear paquete/i }))
+
+      await waitFor(() => screen.getByTestId('multi-session-scheduler'))
+      await user.click(screen.getByRole('button', { name: 'elegir-propuesta' }))
+
+      const confirmar = screen.getByRole('button', { name: /confirmar y agendar 1/i })
+      await waitFor(() => expect(confirmar).toBeEnabled())
+      await user.click(confirmar)
+
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find((c) => c[0] === '/api/treatments/trt-new/sessions')
+        expect(call).toBeTruthy()
+        const body = JSON.parse((call![1] as { body: string }).body)
+        expect(body.slots).toHaveLength(1)
+        expect(body.slots[0].start_at).toBe('2026-07-08T13:00:00.000Z')
+        // Default "cualquier profesional" (no se eligió uno concreto) → cada
+        // slot viaja con su propio professional_id (Pedido A #2/#3).
+        expect(body.slots[0].professional_id).toBe(PROF_1)
+      })
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalled()
+      })
     })
   })
 })

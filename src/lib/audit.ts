@@ -11,6 +11,8 @@ export type AuditAction =
   | 'appointment_cancelled'
   | 'appointment_completed'
   | 'appointment_no_show'
+  // Color manual del turno (migración 051 — paleta muda del turnero, pedido ISADI).
+  | 'appointment_color_changed'
   | 'config_system_prompt_updated'
   | 'config_shadow_mode_updated'
   | 'config_service_updated'
@@ -38,6 +40,9 @@ export type AuditAction =
   | 'patient_clinical_data_updated'
   // Story 14.6 — alta / informe final del tratamiento (HCE).
   | 'treatment_discharged'
+  // Feriados + estado del día (migración 052 — pedido ISADI 2026-07-14): la
+  // clínica decide "abre"/"no abre" para una fecha (feriado nacional u otra).
+  | 'clinic_day_status_updated'
 
 export type AuditEntityType =
   | 'patient'
@@ -47,6 +52,7 @@ export type AuditEntityType =
   | 'user'
   | 'knowledge'
   | 'treatment'
+  | 'clinic_day_status'
 
 interface LogAuditParams {
   action: AuditAction

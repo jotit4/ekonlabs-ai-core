@@ -15,18 +15,39 @@ import type { AvailabilityShift } from '@/types/availability'
 //
 // Es un componente CONTROLADO: el padre es dueño de la lista elegida (`selected`)
 // y recibe los toggles. Identifica cada slot por su `slot_start_iso` (único por
-// fecha+hora+profesional).
+// fecha+hora+profesional) — salvo en modo "cualquier profesional" (ver abajo),
+// donde la identidad es compuesta (fecha+hora+profesional) porque dos
+// profesionales distintos pueden compartir el mismo horario libre ese día.
 
 export interface SelectedSlot {
   start_at: string // slot_start_iso (ISO UTC con Z)
   end_at: string // slot_end_iso
   date: string // 'YYYY-MM-DD' de la fecha elegida (para agrupar/mostrar)
   label: string // 'HH:MM' local BA (display)
+  // Presentes cuando el slot viene de un hueco real (siempre, en la práctica) —
+  // opcionales para no romper fixtures/tests viejos que no los incluían.
+  // Usados en modo "cualquier profesional" (Pedido A #3 ISADI 2026-07-14) para
+  // saber a quién quedó ligada cada sesión y para desambiguar identidad.
+  professional_id?: string
+  professional_name?: string
+}
+
+// Identidad de un slot: en modo "cualquier profesional" (professionalId=null)
+// es compuesta (start_at + professional_id) porque dos profesionales pueden
+// compartir horario; en modo profesional CONCRETO alcanza con start_at (todos
+// los huecos devueltos son de ESE profesional) — así no se toca el
+// comportamiento ya testeado de ese modo.
+function slotIdentity(
+  s: { start_at: string; professional_id?: string },
+  anyMode: boolean,
+): string {
+  return anyMode ? `${s.start_at}__${s.professional_id ?? ''}` : s.start_at
 }
 
 interface AvailabilitySlotPickerProps {
   serviceId: string
-  professionalId: string
+  /** Profesional CONCRETO, o null = "cualquier profesional disponible" del servicio. */
+  professionalId: string | null
   /** Slots ya elegidos (controlado por el padre), por `start_at`. */
   selected: SelectedSlot[]
   /** Alterna un slot en la selección del padre. */
@@ -66,18 +87,24 @@ export function AvailabilitySlotPicker({
   const date = isControlled ? dateProp : internalDate
   const setDate = isControlled ? onDateChange! : setInternalDate
 
-  const enabled = !!serviceId && !!professionalId && !!date
+  // professionalId === null es un estado VÁLIDO ("cualquier profesional
+  // disponible" — Pedido A #3 ISADI 2026-07-14): no debe desactivar la consulta,
+  // a diferencia de "todavía no elegido" (que en este componente nunca ocurre,
+  // porque el padre siempre pasa un string concreto o null explícito).
+  const anyMode = professionalId === null
+  const enabled = !!serviceId && !!date
 
   const { shiftsForDate, isLoading, isError } = useAvailability({
     dateFrom: date || floor,
     dateTo: date || floor,
     serviceId,
     professionalId,
+    allProfessionals: anyMode,
     enabled,
   })
 
   const shifts: AvailabilityShift[] = enabled ? shiftsForDate(date) : []
-  const selectedKeys = new Set(selected.map((s) => s.start_at))
+  const selectedKeys = new Set(selected.map((s) => slotIdentity(s, anyMode)))
 
   return (
     <div className="space-y-3">
@@ -125,7 +152,9 @@ export function AvailabilitySlotPicker({
               </p>
               <div className="flex flex-wrap gap-2" role="group" aria-label="Horarios disponibles">
                 {shifts.map((shift) => {
-                  const isSelected = selectedKeys.has(shift.slot_start_iso)
+                  const isSelected = selectedKeys.has(
+                    slotIdentity({ start_at: shift.slot_start_iso, professional_id: shift.professional_id }, anyMode),
+                  )
                   return (
                     <button
                       key={`${shift.slot_start_iso}-${shift.professional_id}`}
@@ -137,6 +166,8 @@ export function AvailabilitySlotPicker({
                           end_at: shift.slot_end_iso,
                           date,
                           label: shift.open,
+                          professional_id: shift.professional_id,
+                          professional_name: shift.professional_name,
                         })
                       }
                       className={[
@@ -146,7 +177,10 @@ export function AvailabilitySlotPicker({
                           : 'bg-[var(--color-bg)] text-[var(--color-text-primary)] border-[var(--color-border)] hover:bg-[var(--color-surface)]',
                       ].join(' ')}
                     >
+                      {/* Modo "cualquier profesional": mostrar a quién le tocaría ese
+                          hueco (varios profesionales pueden compartir la misma hora). */}
                       {shift.open}
+                      {anyMode ? ` · ${shift.professional_name}` : ''}
                     </button>
                   )
                 })}

@@ -59,11 +59,29 @@ export interface IaConfig {
 }
 
 /**
+ * Franja horaria en la que el agente de WhatsApp puede ofrecer/agendar turnos
+ * (pedido ISADI 2026-07-14). Horas LOCALES de la clínica, formato "HH:MM" 24h.
+ */
+export interface BookingWindow {
+  start: string
+  end: string
+}
+
+/**
  * `operations_config` jsonb de `v2_clinic_configs`.
  */
 export interface OperationsConfig {
   min_notice_hours?: number
   future_window_days?: number
+  /**
+   * Franjas horarias en las que el agente de WhatsApp puede ofrecer/agendar
+   * turnos. Ausente, null o [] = sin restricción (el agente puede ofrecer
+   * cualquier horario dentro del horario de atención de la clínica — default
+   * actual, no rompe clínicas que no configuren franjas). Aplica SOLO al
+   * canal del agente (WhatsApp) — no limita lo que la recepcionista agenda
+   * desde el dashboard.
+   */
+  booking_windows?: BookingWindow[] | null
 }
 
 /**

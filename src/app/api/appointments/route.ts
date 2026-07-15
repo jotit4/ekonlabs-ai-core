@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Datos inválidos', details: parsed.error.issues }, { status: 400 })
   }
 
-  const { patient_id, service_id, professional_id, appointment_time, duration_minutes } = parsed.data
+  const { patient_id, service_id, professional_id, appointment_time, duration_minutes, color } = parsed.data
 
   // Calcular start_at y end_at — DB usa start_at/end_at (NOT NULL)
   const startAt = new Date(appointment_time)
@@ -77,6 +77,10 @@ export async function POST(request: Request) {
       calendar_event_id: null,
       status: 'confirmed',
       booked_via: 'manual',
+      // Color manual OPCIONAL (migración 051). `undefined` cuando la
+      // recepcionista no eligió ninguno → columna queda NULL (comportamiento
+      // por defecto, turno neutro en la agenda).
+      color: color ?? null,
     })
     .select('appointment_id')
     .single()

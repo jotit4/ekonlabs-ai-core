@@ -320,4 +320,143 @@ describe('PATCH /api/agente/config', () => {
     const body = await res.json() as { error: string }
     expect(body.error).toBe('Error al guardar la configuración')
   })
+
+  // ── booking_windows (pedido ISADI 2026-07-14) ───────────────────────────────
+
+  it('persiste booking_windows dentro de operations_config', async () => {
+    setupAuth('admin')
+    mockLogAudit.mockResolvedValue(undefined)
+    const configWithWindows = {
+      ...CLINIC_CONFIG,
+      operations_config: {
+        min_notice_hours: 2,
+        future_window_days: 30,
+        booking_windows: [
+          { start: '08:00', end: '12:00' },
+          { start: '15:00', end: '18:00' },
+        ],
+      },
+    }
+    const updateChain = makeUpdateChain({ data: configWithWindows, error: null })
+    mockFrom.mockReturnValue(updateChain)
+
+    const res = await PATCH(
+      makePatchRequest({
+        operations_config: {
+          min_notice_hours: 2,
+          future_window_days: 30,
+          booking_windows: [
+            { start: '08:00', end: '12:00' },
+            { start: '15:00', end: '18:00' },
+          ],
+        },
+      }),
+    )
+
+    expect(res.status).toBe(200)
+    expect(updateChain.update).toHaveBeenCalledWith({
+      operations_config: {
+        min_notice_hours: 2,
+        future_window_days: 30,
+        booking_windows: [
+          { start: '08:00', end: '12:00' },
+          { start: '15:00', end: '18:00' },
+        ],
+      },
+    })
+    const body = await res.json() as { data: typeof configWithWindows }
+    expect(body.data.operations_config.booking_windows).toEqual([
+      { start: '08:00', end: '12:00' },
+      { start: '15:00', end: '18:00' },
+    ])
+  })
+
+  it('acepta booking_windows = null (sin restricción, comportamiento default)', async () => {
+    setupAuth('admin')
+    mockLogAudit.mockResolvedValue(undefined)
+    const updateChain = makeUpdateChain({ data: CLINIC_CONFIG, error: null })
+    mockFrom.mockReturnValue(updateChain)
+
+    const res = await PATCH(
+      makePatchRequest({ operations_config: { booking_windows: null } }),
+    )
+
+    expect(res.status).toBe(200)
+    expect(updateChain.update).toHaveBeenCalledWith({
+      operations_config: { booking_windows: null },
+    })
+  })
+
+  it('acepta booking_windows = [] (sin restricción)', async () => {
+    setupAuth('admin')
+    mockLogAudit.mockResolvedValue(undefined)
+    const updateChain = makeUpdateChain({ data: CLINIC_CONFIG, error: null })
+    mockFrom.mockReturnValue(updateChain)
+
+    const res = await PATCH(
+      makePatchRequest({ operations_config: { booking_windows: [] } }),
+    )
+
+    expect(res.status).toBe(200)
+    expect(updateChain.update).toHaveBeenCalledWith({
+      operations_config: { booking_windows: [] },
+    })
+  })
+
+  it('retorna 400 si una franja tiene formato de hora inválido', async () => {
+    setupAuth('admin')
+
+    const res = await PATCH(
+      makePatchRequest({
+        operations_config: { booking_windows: [{ start: '8:00', end: '12:00' }] },
+      }),
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('retorna 400 si start >= end en una franja', async () => {
+    setupAuth('admin')
+
+    const res = await PATCH(
+      makePatchRequest({
+        operations_config: { booking_windows: [{ start: '12:00', end: '08:00' }] },
+      }),
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('retorna 400 si dos franjas se solapan', async () => {
+    setupAuth('admin')
+
+    const res = await PATCH(
+      makePatchRequest({
+        operations_config: {
+          booking_windows: [
+            { start: '08:00', end: '12:00' },
+            { start: '11:00', end: '18:00' },
+          ],
+        },
+      }),
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('retorna 400 si hay más de 4 franjas', async () => {
+    setupAuth('admin')
+
+    const res = await PATCH(
+      makePatchRequest({
+        operations_config: {
+          booking_windows: [
+            { start: '00:00', end: '00:30' },
+            { start: '01:00', end: '01:30' },
+            { start: '02:00', end: '02:30' },
+            { start: '03:00', end: '03:30' },
+            { start: '04:00', end: '04:30' },
+          ],
+        },
+      }),
+    )
+    expect(res.status).toBe(400)
+  })
 })

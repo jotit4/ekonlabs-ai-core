@@ -11,7 +11,8 @@ interface AgendarSesionModalProps {
   onClose: () => void
   treatmentId: string
   serviceId: string
-  professionalId: string
+  /** Profesional FIJO del paquete, o null = "cualquier profesional disponible" (Pedido A #2/#3). */
+  professionalId: string | null
   serviceName?: string | null
   professionalName?: string | null
   /** Cupo libre del bono (`por_agendar`). Tope de sesiones a elegir. */
@@ -25,6 +26,11 @@ interface AgendarSesionModalProps {
 // horarios (de a 1 o varios) y confirmarlos juntos. Al confirmar, POST al
 // endpoint que crea los appointments con el camino estándar (RPC create_appointment
 // + UPDATE package_id/session_index) y refresca el contador (deriva de appointments).
+//
+// Pedido A #2/#3 (ISADI 2026-07-14): si el bono NO tiene profesional fijo
+// (`professionalId === null`), cada sesión se agenda con CUALQUIER profesional
+// disponible del servicio — el `MultiSessionScheduler` pasa a modo "cualquiera"
+// y cada slot elegido viaja con su propio `professional_id` al confirmar.
 
 export function AgendarSesionModal({
   open,
@@ -79,7 +85,12 @@ export function AgendarSesionModal({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            slots: selected.map((s) => ({ start_at: s.start_at, end_at: s.end_at })),
+            slots: selected.map((s) => ({
+              start_at: s.start_at,
+              end_at: s.end_at,
+              // Sin profesional fijo, cada sesión resuelve el suyo (del hueco elegido).
+              ...(professionalId === null ? { professional_id: s.professional_id } : {}),
+            })),
           }),
         },
       )
@@ -129,7 +140,10 @@ export function AgendarSesionModal({
               </Dialog.Title>
               <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
                 {serviceName ?? 'Servicio'}
-                {professionalName ? ` · ${professionalName}` : ''} — faltan agendar {porAgendar}
+                {' · '}
+                {professionalId === null ? 'Cualquier profesional disponible' : professionalName}
+                {' — faltan agendar '}
+                {porAgendar}
               </p>
             </div>
 

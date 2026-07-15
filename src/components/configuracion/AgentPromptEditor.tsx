@@ -1,15 +1,17 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useFieldArray, Controller } from 'react-hook-form'
 import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
 import { useAgentConfig } from '@/hooks/use-agent-config'
 import { useUpdateAgentConfig } from '@/hooks/use-update-agent-config'
 import { KnowledgeBaseManager } from '@/components/configuracion/KnowledgeBaseManager'
 import { ShadowModeToggle } from '@/components/configuracion/ShadowModeToggle'
 import { Tabs, TabList, TabPanel } from '@/components/ui/tabs'
+import { TimeField } from '@/components/ui/time-field'
 import {
   ClinicConfigPatchSchema,
+  MAX_BOOKING_WINDOWS,
   type ClinicConfigPatchFormValues,
 } from '@/lib/schemas/agente.schema'
 import type { UpdateClinicConfigPayload } from '@/types/agente'
@@ -34,6 +36,7 @@ const EMPTY_DEFAULTS: ClinicConfigPatchFormValues = {
   operations_config: {
     min_notice_hours: 0,
     future_window_days: 0,
+    booking_windows: [],
   },
 }
 
@@ -84,11 +87,18 @@ export function AgentPromptEditor({
     register,
     handleSubmit,
     reset,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<ClinicConfigPatchFormValues>({
     resolver: standardSchemaResolver(ClinicConfigPatchSchema),
     defaultValues: EMPTY_DEFAULTS,
   })
+
+  const {
+    fields: bookingWindowFields,
+    append: appendBookingWindow,
+    remove: removeBookingWindow,
+  } = useFieldArray({ control, name: 'operations_config.booking_windows' })
 
   // Sincronizar form con datos cargados
   useEffect(() => {
@@ -110,6 +120,14 @@ export function AgentPromptEditor({
         operations_config: {
           min_notice_hours: config.operations_config?.min_notice_hours ?? 0,
           future_window_days: config.operations_config?.future_window_days ?? 0,
+          // Defensivo: nunca cargar más de MAX_BOOKING_WINDOWS en el form,
+          // aunque la DB tuviera más (evita bloquear el submit con un error
+          // de "demasiadas franjas" que el resolver no puede mostrar en la UI
+          // por no tener un campo asociado — la ruta igual lo valida).
+          booking_windows: (config.operations_config?.booking_windows ?? []).slice(
+            0,
+            MAX_BOOKING_WINDOWS,
+          ),
         },
       })
     }
@@ -395,6 +413,102 @@ export function AgentPromptEditor({
                   )}
                 </div>
               </div>
+            </fieldset>
+
+            {/* Horarios de turnos por WhatsApp (booking_windows) */}
+            <fieldset className="space-y-3">
+              <legend className={sectionTitleClass}>Horarios de turnos por WhatsApp</legend>
+              <p className={helpClass}>
+                ¿En qué horarios puede el asistente de WhatsApp dar turnos? Fuera de estos
+                horarios, los turnos los da la recepción a mano. Si no cargás ninguna franja, el
+                asistente puede dar turnos en todo el horario de atención de la clínica.
+              </p>
+
+              <div className="space-y-3">
+                {bookingWindowFields.map((field, index) => (
+                  <div key={field.id} className="flex flex-wrap items-end gap-2 sm:flex-nowrap">
+                    <div className="min-w-[120px] flex-1">
+                      <label
+                        htmlFor={`booking-window-start-${index}`}
+                        className={labelClass}
+                      >
+                        Desde (franja {index + 1})
+                      </label>
+                      <Controller
+                        name={`operations_config.booking_windows.${index}.start`}
+                        control={control}
+                        render={({ field: timeField }) => (
+                          <TimeField
+                            id={`booking-window-start-${index}`}
+                            value={timeField.value ?? ''}
+                            onChange={timeField.onChange}
+                            onBlur={timeField.onBlur}
+                            aria-invalid={
+                              !!errors.operations_config?.booking_windows?.[index]?.start
+                            }
+                          />
+                        )}
+                      />
+                      {errors.operations_config?.booking_windows?.[index]?.start && (
+                        <p role="alert" className="mt-1 text-xs text-red-600">
+                          {errors.operations_config.booking_windows[index]?.start?.message}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="min-w-[120px] flex-1">
+                      <label htmlFor={`booking-window-end-${index}`} className={labelClass}>
+                        Hasta (franja {index + 1})
+                      </label>
+                      <Controller
+                        name={`operations_config.booking_windows.${index}.end`}
+                        control={control}
+                        render={({ field: timeField }) => (
+                          <TimeField
+                            id={`booking-window-end-${index}`}
+                            value={timeField.value ?? ''}
+                            onChange={timeField.onChange}
+                            onBlur={timeField.onBlur}
+                            aria-invalid={
+                              !!errors.operations_config?.booking_windows?.[index]?.end
+                            }
+                          />
+                        )}
+                      />
+                      {errors.operations_config?.booking_windows?.[index]?.end && (
+                        <p role="alert" className="mt-1 text-xs text-red-600">
+                          {errors.operations_config.booking_windows[index]?.end?.message}
+                        </p>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => removeBookingWindow(index)}
+                      aria-label={`Quitar franja horaria ${index + 1}`}
+                      className="min-h-11 shrink-0 rounded-[8px] border border-[var(--color-border)] px-3 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)]"
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {bookingWindowFields.length === 0 && (
+                <p className={helpClass}>
+                  No hay franjas cargadas: el asistente da turnos en todo el horario de atención.
+                </p>
+              )}
+
+              {bookingWindowFields.length < MAX_BOOKING_WINDOWS && (
+                <button
+                  type="button"
+                  onClick={() => appendBookingWindow({ start: '', end: '' })}
+                  className="text-sm font-medium text-[var(--color-interactive)] hover:underline"
+                >
+                  + Agregar franja horaria
+                </button>
+              )}
             </fieldset>
 
             {/* Confirmación de turnos — admin only */}

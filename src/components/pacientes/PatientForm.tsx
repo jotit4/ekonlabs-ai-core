@@ -1,11 +1,12 @@
 'use client'
 
 import { useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, Controller } from 'react-hook-form'
 import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
 import { useQueryClient } from '@tanstack/react-query'
 import { PatientFormSchema, type PatientFormValues } from '@/lib/schemas/patient.schema'
 import { useProfessionals } from '@/hooks/use-professionals'
+import { DateField } from '@/components/ui/date-field'
 import type { Patient } from '@/types/patients'
 import { ObraSocialSelector, type ObraSocialSelection } from './ObraSocialSelector'
 
@@ -64,6 +65,7 @@ export function PatientForm({ mode, patient, onSuccess }: PatientFormProps) {
     register,
     handleSubmit,
     setError,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<PatientFormValues>({
     resolver: standardSchemaResolver(PatientFormSchema),
@@ -257,12 +259,18 @@ export function PatientForm({ mode, patient, onSuccess }: PatientFormProps) {
           <label htmlFor="date_of_birth" className={labelClass()}>
             Fecha de nacimiento
           </label>
-          <input
-            id="date_of_birth"
-            type="date"
-            {...register('date_of_birth')}
-            className={inputClass(!!errors.date_of_birth)}
-            aria-invalid={!!errors.date_of_birth}
+          <Controller
+            name="date_of_birth"
+            control={control}
+            render={({ field }) => (
+              <DateField
+                id="date_of_birth"
+                value={field.value ?? ''}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                aria-invalid={!!errors.date_of_birth}
+              />
+            )}
           />
         </div>
 

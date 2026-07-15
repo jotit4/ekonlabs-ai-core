@@ -1,4 +1,11 @@
 import { z } from 'zod'
+import { HEX_COLOR_REGEX } from '@/lib/agenda/turnero-palette'
+
+// Color MANUAL opcional del turno (migración 051 — paleta muda del turnero
+// Excel, ver turnero-palette.ts). Mismo formato que el CHECK de la DB.
+const appointmentColorSchema = z
+  .string()
+  .regex(HEX_COLOR_REGEX, { error: 'Color inválido (formato #RRGGBB)' })
 
 // Schema para la búsqueda de paciente (DNI, nombre o teléfono)
 export const patientSearchSchema = z.object({
@@ -33,6 +40,19 @@ export const newAppointmentApiSchema = z.object({
   appointment_time: z.string().min(1, { error: 'appointment_time requerido' }),
   // appointment_time = ISO 8601 string construido en cliente: `${date}T${time}:00`
   duration_minutes: z.number().int().min(1, { error: 'duration_minutes requerido' }),
+  // Color manual OPCIONAL (paleta muda — la recepcionista elige o deja sin color).
+  color: appointmentColorSchema.optional(),
 })
 
 export type NewAppointmentApiBody = z.infer<typeof newAppointmentApiSchema>
+
+// ─── Schema para la API Route de cambio de color (PATCH /api/appointments/[id]/color) ──
+// `color: null` limpia el color manual (el turno vuelve a verse neutro). Un
+// string debe cumplir el formato hex — no se restringe a los 16 de la paleta
+// a nivel de schema (mismo criterio que la migración 051: el backend valida
+// FORMATO, la paleta es solo lo que ofrece el selector de la UI).
+export const appointmentColorApiSchema = z.object({
+  color: appointmentColorSchema.nullable(),
+})
+
+export type AppointmentColorApiBody = z.infer<typeof appointmentColorApiSchema>

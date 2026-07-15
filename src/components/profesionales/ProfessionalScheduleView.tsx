@@ -1,8 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, Controller } from 'react-hook-form'
 import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
+import { TimeField } from '@/components/ui/time-field'
 import { useProfessionalSchedules } from '@/hooks/use-professional-schedules'
 import { useCreateProfessionalSchedule } from '@/hooks/use-create-professional-schedule'
 import { useDeleteProfessionalSchedule } from '@/hooks/use-delete-professional-schedule'
@@ -57,6 +58,7 @@ function AddProfessionalScheduleForm({ professionalId }: { professionalId: strin
     register,
     handleSubmit,
     reset,
+    control,
     formState: { errors },
   } = useForm<CreateProfessionalScheduleFormValues>({
     resolver: standardSchemaResolver(CreateProfessionalScheduleSchema),
@@ -104,16 +106,18 @@ function AddProfessionalScheduleForm({ professionalId }: { professionalId: strin
           <label htmlFor="prof-start_time" className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">
             Hora inicio
           </label>
-          <input
-            id="prof-start_time"
-            type="time"
-            {...register('start_time')}
-            className={[
-              'w-full px-2 py-1.5 rounded-[8px] border text-sm',
-              'bg-[var(--color-bg)] text-[var(--color-text-primary)]',
-              'focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]',
-              errors.start_time ? 'border-red-400' : 'border-[var(--color-border)]',
-            ].join(' ')}
+          <Controller
+            name="start_time"
+            control={control}
+            render={({ field }) => (
+              <TimeField
+                id="prof-start_time"
+                value={field.value}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                aria-invalid={!!errors.start_time}
+              />
+            )}
           />
           {errors.start_time && (
             <p role="alert" className="mt-1 text-xs text-red-600">{errors.start_time.message}</p>
@@ -125,16 +129,18 @@ function AddProfessionalScheduleForm({ professionalId }: { professionalId: strin
           <label htmlFor="prof-end_time" className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">
             Hora fin
           </label>
-          <input
-            id="prof-end_time"
-            type="time"
-            {...register('end_time')}
-            className={[
-              'w-full px-2 py-1.5 rounded-[8px] border text-sm',
-              'bg-[var(--color-bg)] text-[var(--color-text-primary)]',
-              'focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]',
-              errors.end_time ? 'border-red-400' : 'border-[var(--color-border)]',
-            ].join(' ')}
+          <Controller
+            name="end_time"
+            control={control}
+            render={({ field }) => (
+              <TimeField
+                id="prof-end_time"
+                value={field.value}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                aria-invalid={!!errors.end_time}
+              />
+            )}
           />
           {errors.end_time && (
             <p role="alert" className="mt-1 text-xs text-red-600">{errors.end_time.message}</p>
