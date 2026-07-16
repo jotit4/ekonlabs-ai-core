@@ -6,7 +6,9 @@ import 'react-big-calendar/lib/css/react-big-calendar.css'
 import {
   cloneElement,
   useCallback,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
@@ -280,6 +282,11 @@ function MonthEventWrapper({ event, children }: MonthEventWrapperProps) {
 }
 
 // ─── Modal "+N más" (vista Mes) ───────────────────────────────────────────────
+// Elementos focuseables dentro del modal — para el foco inicial y el trap de Tab
+// (accesibilidad C3). `button` cubre el cerrar y cada turno de la lista.
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])'
+
 interface DayEventsModalProps {
   date: Date
   events: CalendarEvent[]
@@ -291,11 +298,49 @@ function DayEventsModal({ date, events, onClose, onAppointmentClick }: DayEvents
   const sorted = [...events].sort((a, b) => a.start.getTime() - b.start.getTime())
   const dayLabel = format(date, "EEEE d 'de' MMMM", { locale: es })
 
+  // Accesibilidad del diálogo (deuda C3): al abrir, mover el foco DENTRO del
+  // modal (el botón de cerrar) y, al cerrar, restaurarlo al elemento que lo
+  // disparó (el botón del día). El trap de Tab y el cierre con Escape se
+  // manejan en `handleKeyDown` del contenedor. Sin esto, Tab escapaba hacia la
+  // agenda detrás del overlay.
+  const contentRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null
+    const first = contentRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
+    ;(first ?? contentRef.current)?.focus()
+    return () => previouslyFocused?.focus?.()
+  }, [])
+
+  const handleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation()
+      onClose()
+      return
+    }
+    if (e.key !== 'Tab') return
+    const content = contentRef.current
+    if (!content) return
+    const focusables = Array.from(
+      content.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+    ).filter((el) => !el.hasAttribute('disabled'))
+    if (focusables.length === 0) return
+    const firstEl = focusables[0]
+    const lastEl = focusables[focusables.length - 1]
+    if (e.shiftKey && document.activeElement === firstEl) {
+      e.preventDefault()
+      lastEl.focus()
+    } else if (!e.shiftKey && document.activeElement === lastEl) {
+      e.preventDefault()
+      firstEl.focus()
+    }
+  }
+
   return (
     <div
       role="dialog"
       aria-modal="true"
       aria-label={`Turnos del ${dayLabel}`}
+      onKeyDown={handleKeyDown}
       style={{
         position: 'fixed',
         inset: 0,
@@ -313,6 +358,7 @@ function DayEventsModal({ date, events, onClose, onAppointmentClick }: DayEvents
       />
 
       <div
+        ref={contentRef}
         style={{
           position: 'relative',
           backgroundColor: 'var(--color-surface, #fff)',
@@ -488,7 +534,12 @@ export function CalendarViewRangeReadOnly({
   dayStatusMap,
   onDayStatusClick,
 }: CalendarViewRangeReadOnlyProps) {
-  const [dayPopup, setDayPopup] = useState<{ date: Date; events: CalendarEvent[] } | null>(null)
+  // Deuda C1+C2 — guardamos SOLO la fecha del día abierto (ISO 'YYYY-MM-DD'), no
+  // una copia de los eventos. Los turnos del día se DERIVAN de `events` en el
+  // render (más abajo): así el modal refleja los cambios de Realtime/refetch
+  // mientras está abierto (C2) y usa intersección de intervalo para incluir los
+  // turnos que cruzan la medianoche (C1).
+  const [dayPopupIso, setDayPopupIso] = useState<string | null>(null)
 
   // Los CANCELADOS no se muestran en la agenda (Semana/Mes) — decisión 2026-07-14,
   // igual criterio que la vista Día (ver CalendarView.tsx). Los no_show SÍ se
@@ -496,15 +547,12 @@ export function CalendarViewRangeReadOnly({
   // otros consumidores hoy, pero mantenemos el mismo patrón que Día por
   // consistencia y para no acoplar la regla de "qué muestra la agenda" al fetch.
   //
-  // Memoizado (dep `[appointments]`, no en cada render) porque
-  // `handleDayNumberClick` lo necesita con identidad ESTABLE: si `events`
-  // fuera un array nuevo en cada render, `handleDayNumberClick` cambiaría de
-  // identidad también, y con él `monthDateHeader` — exactamente lo que ese
-  // memo evita (RBC trata `dateHeader` como definición de componente:
-  // cambiarla de identidad fuerza un remount visible del encabezado). Se
-  // computa ACÁ ARRIBA (antes de los early return de loading/error) porque
-  // las Reglas de Hooks exigen que todos los hooks se llamen siempre en el
-  // mismo orden, sin returns tempranos entre medio.
+  // Memoizado (dep `[appointments]`, no en cada render): es la lista que consume
+  // el <Calendar> (identidad estable → evita renders de más) y de la que el
+  // modal de día DERIVA sus turnos (C1+C2, ver el render abajo). Se computa ACÁ
+  // ARRIBA (antes de los early return de loading/error) porque las Reglas de
+  // Hooks exigen llamar todos los hooks siempre en el mismo orden, sin returns
+  // tempranos entre medio.
   const events = useMemo<CalendarEvent[]>(
     () =>
       appointments
@@ -516,15 +564,12 @@ export function CalendarViewRangeReadOnly({
   // Click en el ENCABEZADO de un día (Semana o Mes) o en "+N más" de una
   // celda apretada (Semana) → abre el modal con TODOS los turnos de ese día
   // (pedido ISADI 2026-07-14). Único handler compartido por ambas vistas.
-  const handleDayNumberClick = useCallback(
-    (dateIso: string) => {
-      const dayEvents = events.filter(
-        (ev) => formatISO(ev.start, { representation: 'date' }) === dateIso,
-      )
-      setDayPopup({ date: parseISO(dateIso), events: dayEvents })
-    },
-    [events],
-  )
+  // Solo guarda QUÉ día se abrió; los turnos se derivan en el render (C1+C2).
+  // Al no depender de `events`, su identidad es 100% estable → `monthDateHeader`
+  // no se recrea (RBC no remonta el encabezado).
+  const handleDayNumberClick = useCallback((dateIso: string) => {
+    setDayPopupIso(dateIso)
+  }, [])
 
   // Vista Mes — factories memoizadas para no recrear la identidad del
   // componente `dateHeader` en cada render (react-big-calendar las trata como
@@ -684,14 +729,25 @@ export function CalendarViewRangeReadOnly({
     <>
       {mainContent}
 
-      {dayPopup && (
-        <DayEventsModal
-          date={dayPopup.date}
-          events={dayPopup.events}
-          onClose={() => setDayPopup(null)}
-          onAppointmentClick={onAppointmentClick}
-        />
-      )}
+      {dayPopupIso &&
+        (() => {
+          // Deuda C1+C2 — deriva los turnos del día ABIERTO del `events` ACTUAL
+          // (refleja Realtime/refetch mientras el modal está abierto, C2) por
+          // INTERSECCIÓN con el intervalo local del día (incluye los turnos que
+          // cruzan la medianoche, C1: uno que arranca 23:30 y termina 00:30
+          // aparece en el modal de AMBOS días).
+          const dayStart = parseISO(dayPopupIso)
+          const dayEnd = addDays(dayStart, 1)
+          const dayEvents = events.filter((ev) => ev.start < dayEnd && ev.end > dayStart)
+          return (
+            <DayEventsModal
+              date={dayStart}
+              events={dayEvents}
+              onClose={() => setDayPopupIso(null)}
+              onAppointmentClick={onAppointmentClick}
+            />
+          )
+        })()}
     </>
   )
 }

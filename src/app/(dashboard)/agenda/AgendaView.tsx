@@ -499,6 +499,7 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
                 showFilters={showFilters}
                 areaFocus={areaFocus}
                 onAreaFocusChange={handleAreaFocusChange}
+                hasReceptionGroup={receptionGroup !== null}
               />
             )}
           </div>

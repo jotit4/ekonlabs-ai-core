@@ -21,6 +21,7 @@ import { type SelectedSlot } from '@/components/agenda/AvailabilitySlotPicker'
 import { ColorSwatchPicker } from '@/components/agenda/ColorSwatchPicker'
 import { ANY_PROFESSIONAL } from '@/lib/agenda/any-professional'
 import { listAlternateProfessionalShifts } from '@/lib/agenda/reception-retry'
+import { summarizeSkipped } from '@/lib/paquetes/skip-reasons'
 import type { AvailabilityShift, DayShifts } from '@/types/availability'
 
 // Opciones del selector de cantidad: turno suelto o serie/bono de sesiones (x5/x10).
@@ -127,6 +128,10 @@ export function NewTurnoModal({
   const [sessionCount, setSessionCount] = useState<number>(1)
   const [multiSlots, setMultiSlots] = useState<SelectedSlot[]>([])
   const [isSubmittingPackage, setIsSubmittingPackage] = useState(false)
+  // Deuda técnica (mismo tratamiento que AgendarSesionModal/NewPaqueteModal):
+  // 201 PARCIAL en la serie x5/x10 — aviso informativo (no rojo, algo sí se
+  // agendó), separado de `submitError` para distinto tono.
+  const [packagePartialNotice, setPackagePartialNotice] = useState<string | null>(null)
   // Si el bono se creó pero el agendado falló por conflicto, reusar ese bono en el
   // reintento en vez de crear uno nuevo (evita bonos huérfanos duplicados). Se
   // resetea al cambiar cualquier dato del bono (paciente/servicio/profesional/cantidad).
@@ -395,6 +400,7 @@ export function NewTurnoModal({
     setSessionCount(1)
     setMultiSlots([])
     setIsSubmittingPackage(false)
+    setPackagePartialNotice(null)
     setCreatedTreatmentId(null)
     setSelectedColor(null)
     setReceptionSlotKey('')
@@ -766,6 +772,7 @@ export function NewTurnoModal({
     setMultiSlots([])
     setSubmitError(null)
     setSlotConflictError(null)
+    setPackagePartialNotice(null)
     setCreatedTreatmentId(null)
     setReceptionSlotKey('')
   }
@@ -776,6 +783,7 @@ export function NewTurnoModal({
   const handleSubmitPackage = async () => {
     setSubmitError(null)
     setSlotConflictError(null)
+    setPackagePartialNotice(null)
 
     if (!patient) return
     const values = appointmentForm.getValues()
@@ -803,6 +811,7 @@ export function NewTurnoModal({
     const isAny = professionalId === ANY_PROFESSIONAL
 
     setIsSubmittingPackage(true)
+    const intentadas = multiSlots.length
     try {
       // 1. Crear el bono (una sola vez; si ya existe de un intento previo, reusar).
       let treatmentId = createdTreatmentId
@@ -863,12 +872,18 @@ export function NewTurnoModal({
         return
       }
 
-      // Éxito: puede haber sido reserva PARCIAL (menos slots que el cupo del
-      // bono) — el backend crea igual el bono de N y agenda solo lo enviado.
-      // `creadas` viene del response; si el backend no lo informa (mocks
-      // viejos/legacy), asumimos que se agendó todo lo enviado.
-      const okBody = await sRes.json().catch(() => ({}))
-      const creadas = (okBody as { creadas?: number }).creadas ?? multiSlots.length
+      // Éxito: puede haber sido reserva PARCIAL VOLUNTARIA (menos slots que el
+      // cupo del bono, elegido a propósito) O parcial INVOLUNTARIA (deuda
+      // técnica corregida acá: `skipped` trae elementos por slot_conflict/
+      // no_capacity/etc. — algunas de las elegidas NO se crearon). `creadas`
+      // viene del response; si el backend no lo informa (mocks viejos/legacy),
+      // asumimos que se agendó todo lo enviado.
+      const okBody = (await sRes.json().catch(() => ({}))) as {
+        creadas?: number
+        skipped?: { start_at?: string; reason: string }[]
+      }
+      const skipped = okBody.skipped ?? []
+      const creadas = okBody.creadas ?? intentadas
       const faltan = sessionCount - creadas
       const patientId = patient.patient_id
 
@@ -878,21 +893,40 @@ export function NewTurnoModal({
       queryClient.invalidateQueries({ queryKey: ['availability'], exact: false })
       queryClient.invalidateQueries({ queryKey: ['treatments'], exact: false })
       queryClient.invalidateQueries({ queryKey: ['patients', 'one', patient.patient_id] })
-      handleClose()
 
-      if (faltan > 0) {
-        toast.success(
-          `Reservaste ${creadas} de ${sessionCount} sesiones. Faltan ${faltan} por agendar.`,
-          {
-            action: {
-              label: 'Ir a completar',
-              onClick: () => router.push(`/pacientes/${patientId}`),
+      if (skipped.length === 0) {
+        // Éxito total, o reserva PARCIAL VOLUNTARIA — en ambos casos se
+        // cierra, como antes: nada quedó pendiente de reintentar acá.
+        handleClose()
+        if (faltan > 0) {
+          toast.success(
+            `Reservaste ${creadas} de ${sessionCount} sesiones. Faltan ${faltan} por agendar.`,
+            {
+              action: {
+                label: 'Ir a completar',
+                onClick: () => router.push(`/pacientes/${patientId}`),
+              },
             },
-          },
-        )
-      } else {
-        toast.success(`Reservaste las ${sessionCount} sesiones.`)
+          )
+        } else {
+          toast.success(`Reservaste las ${sessionCount} sesiones.`)
+        }
+        return
       }
+
+      // Parcial INVOLUNTARIO: NO cerramos — el bono ya está creado
+      // (`createdTreatmentId` se reusa, no se crea uno nuevo) y mantenemos
+      // seleccionados SOLO los slots que quedaron en `skipped` (matcheados por
+      // `start_at`) para que la recepcionista pueda reintentar sin perder el
+      // resto de la elección.
+      const skippedStarts = new Set(
+        skipped.map((s) => s.start_at).filter((v): v is string => Boolean(v)),
+      )
+      const stillPending = multiSlots.filter((s) => skippedStarts.has(s.start_at))
+      setMultiSlots(stillPending.length > 0 ? stillPending : multiSlots)
+      setPackagePartialNotice(
+        `Se agendaron ${creadas} de ${intentadas} sesiones. Faltan ${skipped.length}: ${summarizeSkipped(skipped)}. Revisá y confirmá de nuevo.`,
+      )
     } catch {
       setSubmitError('Error de red. Verificá tu conexión e intentá de nuevo.')
     } finally {
@@ -1586,6 +1620,7 @@ export function NewTurnoModal({
                             onChange={(slots) => {
                               setSubmitError(null)
                               setSlotConflictError(null)
+                              setPackagePartialNotice(null)
                               setMultiSlots(slots)
                             }}
                             minDate={today}
@@ -1605,6 +1640,15 @@ export function NewTurnoModal({
                           onChange={setSelectedColor}
                           label="Color para todas las sesiones de la serie"
                         />
+                        {/* 201 parcial (deuda técnica): aviso informativo — no es
+                            un error, algunas sesiones sí se crearon; el bono
+                            queda creado y lo pendiente sigue seleccionado para
+                            reintentar. */}
+                        {packagePartialNotice && (
+                          <p role="status" className="mt-2 text-sm text-amber-700">
+                            {packagePartialNotice}
+                          </p>
+                        )}
                       </div>
                     )}
 

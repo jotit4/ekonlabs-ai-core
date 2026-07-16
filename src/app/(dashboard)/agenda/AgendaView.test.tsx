@@ -176,15 +176,21 @@ vi.mock('@/components/agenda/AgendaFilters', () => ({
     onClear,
     areaFocus,
     onAreaFocusChange,
+    hasReceptionGroup,
   }: {
     showFilters: boolean
     onProfessionalChange: (id: string | null) => void
     onClear: () => void
     areaFocus?: string
     onAreaFocusChange?: (focus: string) => void
+    hasReceptionGroup?: boolean
   }) =>
     showFilters ? (
-      <div data-testid="agenda-filters" data-area-focus={areaFocus}>
+      <div
+        data-testid="agenda-filters"
+        data-area-focus={areaFocus}
+        data-has-reception-group={String(!!hasReceptionGroup)}
+      >
         {/* Botón stub para ejercitar la exclusión mutua desde AgendaView */}
         <button onClick={() => onProfessionalChange('prof-1')}>mock-pick-prof</button>
         {/* Botón stub del radiogroup real "Rehabilitación | Ver todo" */}
@@ -709,6 +715,42 @@ describe('AgendaPage', () => {
       const url = mockRouterPush.mock.calls.at(-1)![0] as string
       expect(url).not.toContain('professional_id')
       expect(url).not.toContain('service_id')
+    })
+
+    // Deuda detectada Frente B — AgendaFilters no recibía el estado del grupo
+    // de recepción, así que su "Limpiar" quedaba deshabilitado cuando el
+    // ÚNICO filtro activo era el grupo. AgendaView debe pasarle
+    // `hasReceptionGroup` derivado de `receptionGroup` para que "Limpiar" se
+    // habilite en ese caso.
+    it('receptionist: AgendaFilters recibe hasReceptionGroup=false por defecto (sin grupo activo)', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: /^filtrar$/i }))
+      expect(screen.getByTestId('agenda-filters')).toHaveAttribute('data-has-reception-group', 'false')
+    })
+
+    it('receptionist: al elegir un grupo, AgendaFilters recibe hasReceptionGroup=true', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: /^filtrar$/i }))
+      fireEvent.click(screen.getByRole('button', { name: 'mock-pick-grupo-fisio' }))
+      expect(screen.getByTestId('agenda-filters')).toHaveAttribute('data-has-reception-group', 'true')
+    })
+
+    it('receptionist: "Limpiar" con SOLO el grupo activo también deja hasReceptionGroup=false después del click', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: /^filtrar$/i }))
+      fireEvent.click(screen.getByRole('button', { name: 'mock-pick-grupo-fisio' }))
+      expect(screen.getByTestId('agenda-filters')).toHaveAttribute('data-has-reception-group', 'true')
+      fireEvent.click(screen.getByRole('button', { name: 'mock-limpiar' }))
+      expect(screen.getByTestId('agenda-filters')).toHaveAttribute('data-has-reception-group', 'false')
+    })
+
+    it('admin: AgendaFilters recibe hasReceptionGroup=false siempre (receptionGroup no le aplica)', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      render(<AgendaPage />)
+      expect(screen.getByTestId('agenda-filters')).toHaveAttribute('data-has-reception-group', 'false')
     })
   })
 

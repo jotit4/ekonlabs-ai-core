@@ -162,6 +162,14 @@ interface AgendaFiltersProps {
   // Default = 'rehab'. Solo afecta los servicios listados en AgendaServiceButtons.
   areaFocus?: AreaFocus
   onAreaFocusChange?: (focus: AreaFocus) => void
+  // Deuda detectada Frente B — el grupo de recepción (Fisioterapia/Pileta/
+  // Pilates, ver AgendaServiceButtons) vive como estado de AgendaView y no se
+  // le pasaba a este componente, así que "Limpiar" quedaba deshabilitado
+  // cuando el ÚNICO filtro activo era el grupo (sin service_id/
+  // professional_id). Solo se usa para el estado de `hasFilters` — el reset
+  // del grupo en sí lo sigue haciendo el `onClear` de AgendaView. Default =
+  // false: fuera de recepción no hay grupo, no cambia nada para admin/doctor.
+  hasReceptionGroup?: boolean
 }
 
 export function AgendaFilters({
@@ -172,10 +180,11 @@ export function AgendaFilters({
   showFilters,
   areaFocus = 'rehab',
   onAreaFocusChange,
+  hasReceptionGroup = false,
 }: AgendaFiltersProps) {
   const { profesionales } = useProfesionales()
 
-  const hasFilters = professionalId !== null || serviceId !== null
+  const hasFilters = professionalId !== null || serviceId !== null || hasReceptionGroup
 
   if (!showFilters) return null
 

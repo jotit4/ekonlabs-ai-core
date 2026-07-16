@@ -1085,6 +1085,106 @@ describe('NewTurnoModal', () => {
       expect(msg).toContain('Faltan 2')
     })
 
+    describe('Deuda técnica — 201 PARCIAL involuntario (skipped no vacío) en handleSubmitPackage', () => {
+      it('NO cierra el modal, avisa cuántas se agendaron y por qué faltaron, y mantiene seleccionado solo lo pendiente para reintentar', async () => {
+        mockUniqueDailyAvailability()
+        // La 1ra vez que se confirma (2 slots elegidos), el backend crea solo
+        // el primero y saltea el segundo por conflicto — el reintento (con el
+        // slot pendiente, 1 solo) sí se crea entero (bono REUSADO, sin volver
+        // a POSTear /api/treatments).
+        let sessionsCallCount = 0
+        mockFetch.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
+          if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
+          if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse([{ professional_id: 'prof-1', name: 'Patricia Pérez' }]))
+          if (url === '/api/treatments' && init?.method === 'POST') {
+            return Promise.resolve({ ok: true, status: 201, json: async () => ({ success: true, treatment_id: 'trt-new' }) })
+          }
+          if (url.includes('/api/treatments/trt-new/sessions') && init?.method === 'POST') {
+            sessionsCallCount += 1
+            const body = JSON.parse(String(init.body)) as { slots: { start_at: string }[] }
+            if (sessionsCallCount === 1) {
+              const [, second] = body.slots
+              return Promise.resolve({
+                ok: true,
+                status: 201,
+                json: async () => ({
+                  success: true,
+                  creadas: 1,
+                  skipped: [{ start_at: second.start_at, reason: 'slot_conflict' }],
+                }),
+              })
+            }
+            return Promise.resolve({
+              ok: true,
+              status: 201,
+              json: async () => ({ success: true, creadas: body.slots.length, skipped: [] }),
+            })
+          }
+          return Promise.resolve(makeSearchResponse([]))
+        })
+
+        const user = userEvent.setup()
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-07" />)
+
+        await search(user, '87654321')
+        await waitFor(() => screen.getByText(/María López/))
+        await user.click(screen.getByRole('button', { name: /5 sesiones/i }))
+        await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+        await waitFor(() => {
+          expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
+        })
+        await user.selectOptions(screen.getByLabelText('Profesional'), 'prof-1')
+
+        fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: '2026-07-07' } })
+        for (let i = 0; i < 2; i++) {
+          const chip = await screen.findByRole('button', { name: '12:00' })
+          await user.click(chip)
+        }
+
+        const reservar = screen.getByRole('button', { name: 'Reservar 2 (quedan 3)' })
+        await waitFor(() => expect(reservar).toBeEnabled())
+        await user.click(reservar)
+
+        // El aviso informa cuántas se agendaron y el motivo legible. Nota:
+        // se busca por texto (no por rol) porque el modal en general no tiene
+        // otro role="status" en este flujo, pero mantenemos el patrón usado
+        // en los otros modales por consistencia.
+        await waitFor(() => {
+          expect(
+            screen.getByText(/se agendaron 1 de 2 sesiones\. faltan 1: 1 ese horario ya estaba ocupado/i),
+          ).toBeInTheDocument()
+        })
+
+        // El modal NO se cerró — sigue el paciente identificado y el bono creado.
+        expect(mockOnClose).not.toHaveBeenCalled()
+        expect(screen.getByText(/María López/)).toBeInTheDocument()
+        // No dispara el toast de reserva completada/parcial voluntaria.
+        expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+
+        // Solo queda seleccionado el slot que quedó pendiente (1 de las 5).
+        expect(screen.getByRole('button', { name: 'Reservar 1 (quedan 4)' })).toBeEnabled()
+
+        // Reintentar reusa el MISMO bono — NO vuelve a hacer POST a /api/treatments.
+        const treatmentCallsBefore = mockFetch.mock.calls.filter(
+          (c) => c[0] === '/api/treatments' && (c[1] as { method?: string })?.method === 'POST',
+        ).length
+        await user.click(screen.getByRole('button', { name: 'Reservar 1 (quedan 4)' }))
+        await waitFor(() => {
+          const sessionsCalls = mockFetch.mock.calls.filter(
+            (c) =>
+              typeof c[0] === 'string' &&
+              c[0].includes('/api/treatments/trt-new/sessions') &&
+              (c[1] as { method?: string })?.method === 'POST',
+          )
+          expect(sessionsCalls.length).toBeGreaterThanOrEqual(2)
+        })
+        const treatmentCallsAfter = mockFetch.mock.calls.filter(
+          (c) => c[0] === '/api/treatments' && (c[1] as { method?: string })?.method === 'POST',
+        ).length
+        expect(treatmentCallsAfter).toBe(treatmentCallsBefore)
+      })
+    })
+
     it('Pedido A #2/#3 — reservar en modo "cualquier profesional": el bono se crea SIN profesional fijo y cada sesión lleva su propio professional_id', async () => {
       mockUniqueDailyAvailability()
       mockFetch.mockImplementation((url: string, init?: { method?: string }) => {

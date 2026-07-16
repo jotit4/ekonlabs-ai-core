@@ -6,6 +6,7 @@ import { Dialog } from '@base-ui/react/dialog'
 import { MultiSessionScheduler } from '@/components/agenda/MultiSessionScheduler'
 import { type SelectedSlot } from '@/components/agenda/AvailabilitySlotPicker'
 import { ColorSwatchPicker } from '@/components/agenda/ColorSwatchPicker'
+import { summarizeSkipped } from '@/lib/paquetes/skip-reasons'
 
 interface AgendarSesionModalProps {
   open: boolean
@@ -27,36 +28,6 @@ interface AgendarSesionModalProps {
    * modal, para que el cupo mostrado descuente lo ya creado).
    */
   onScheduled?: (creadas: number) => void
-}
-
-// Motivo por el que el backend (RPC create_package_sessions, 054) saltea un
-// slot — traducido a lenguaje llano para la recepción. `reason` puede además
-// venir como mensaje libre de create_appointment (029, p. ej.
-// "professional_service_mismatch: ..."); en ese caso mostramos el texto tal cual.
-const SKIP_REASON_LABELS: Record<string, string> = {
-  slot_conflict: 'ese horario ya estaba ocupado',
-  no_capacity: 'se llenó el cupo del paquete',
-  missing_professional: 'faltó asignar profesional',
-  create_failed: 'no se pudo crear la sesión',
-  link_error: 'error al vincular la sesión al paquete',
-  treatment_not_found: 'el paquete ya no existe',
-  treatment_not_active: 'el paquete ya no está activo',
-}
-
-function describeSkipReason(reason: string): string {
-  return SKIP_REASON_LABELS[reason] ?? reason
-}
-
-// Agrupa los `skipped` por motivo y arma un resumen legible, p. ej.
-// "1 ese horario ya estaba ocupado, 1 se llenó el cupo del paquete".
-function summarizeSkipped(skipped: { reason: string }[]): string {
-  const counts = new Map<string, number>()
-  for (const item of skipped) {
-    counts.set(item.reason, (counts.get(item.reason) ?? 0) + 1)
-  }
-  return Array.from(counts.entries())
-    .map(([reason, count]) => `${count} ${describeSkipReason(reason)}`)
-    .join(', ')
 }
 
 // Modal "Agendar sesión" de un paquete — MANUAL Y FLEXIBLE (reclamo ISADI).

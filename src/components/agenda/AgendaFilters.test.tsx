@@ -83,6 +83,35 @@ describe('AgendaFilters (Profesional + Área + Limpiar)', () => {
     expect(screen.getByRole('button', { name: /limpiar/i })).not.toBeDisabled()
   })
 
+  // Deuda detectada Frente B — el grupo de recepción (Fisioterapia/Pileta/
+  // Pilates) es un estado de AgendaView que antes NO se le pasaba a este
+  // componente: "Limpiar" quedaba deshabilitado cuando el ÚNICO filtro activo
+  // era el grupo, obligando a deseleccionarlo tocando de nuevo el botón de
+  // grupo en vez de poder usar "Limpiar".
+  it('botón "Limpiar" está habilitado cuando SOLO hay un grupo de recepción activo (sin service_id ni professional_id)', () => {
+    render(
+      <AgendaFilters
+        {...defaultProps}
+        professionalId={null}
+        serviceId={null}
+        hasReceptionGroup
+      />,
+    )
+    expect(screen.getByRole('button', { name: /limpiar/i })).not.toBeDisabled()
+  })
+
+  it('botón "Limpiar" sigue deshabilitado cuando no hay ningún filtro (ni grupo de recepción)', () => {
+    render(
+      <AgendaFilters
+        {...defaultProps}
+        professionalId={null}
+        serviceId={null}
+        hasReceptionGroup={false}
+      />,
+    )
+    expect(screen.getByRole('button', { name: /limpiar/i })).toBeDisabled()
+  })
+
   it('llama onClear al hacer click en "Limpiar" con filtros activos', () => {
     const onClear = vi.fn()
     render(<AgendaFilters {...defaultProps} professionalId="prof-1" onClear={onClear} />)

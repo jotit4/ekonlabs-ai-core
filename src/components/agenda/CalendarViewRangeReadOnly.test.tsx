@@ -1038,4 +1038,114 @@ describe('CalendarViewRangeReadOnly', () => {
       expect(screen.queryByText(/más$/)).not.toBeInTheDocument()
     })
   })
+
+  // ─── Hardening del modal diario (deuda Frente C, 2026-07-16) ──────────────
+  describe('hardening del modal diario (Frente C)', () => {
+    // C3 — accesibilidad del diálogo
+    it('C3: el modal del día se cierra con Escape', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarViewRangeReadOnly
+          view="month"
+          date="2026-05-14"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      await user.click(screen.getByRole('button', { name: /ver turnos del jueves 14/i }))
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      await user.keyboard('{Escape}')
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('C3: al abrir, el foco entra al diálogo; al cerrar, vuelve al botón que lo abrió', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarViewRangeReadOnly
+          view="month"
+          date="2026-05-14"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      const trigger = screen.getByRole('button', { name: /ver turnos del jueves 14/i })
+      await user.click(trigger)
+      const dialog = screen.getByRole('dialog')
+      // Foco inicial DENTRO del diálogo (no escapa a la agenda de atrás).
+      expect(dialog.contains(document.activeElement)).toBe(true)
+      await user.keyboard('{Escape}')
+      // Restaurado al trigger.
+      expect(trigger).toHaveFocus()
+    })
+
+    // C2 — la lista se deriva del array de eventos ACTUAL (no de una copia)
+    it('C2: refleja los turnos actualizados por Realtime sin cerrar/reabrir', async () => {
+      const user = userEvent.setup()
+      const { rerender } = render(
+        <CalendarViewRangeReadOnly
+          view="month"
+          date="2026-05-14"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      await user.click(screen.getByRole('button', { name: /ver turnos del jueves 14/i }))
+      expect(within(screen.getByRole('dialog')).getByText('1 turno')).toBeInTheDocument()
+
+      // Llega un turno nuevo (refetch/Realtime) MIENTRAS el modal está abierto.
+      const nuevo: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-rt',
+        start_at: '2026-05-14T10:00:00',
+        end_at: '2026-05-14T11:00:00',
+        patients: { full_name: 'Carlos Ruiz' },
+      }
+      rerender(
+        <CalendarViewRangeReadOnly
+          view="month"
+          date="2026-05-14"
+          appointments={[BASE_APPOINTMENT, nuevo]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      // El modal sigue abierto y ahora lista el turno nuevo sin reabrir.
+      const dialog = screen.getByRole('dialog')
+      expect(within(dialog).getByText('2 turnos')).toBeInTheDocument()
+      expect(within(dialog).getByText('Carlos Ruiz')).toBeInTheDocument()
+    })
+
+    // C1 — intersección con el intervalo del día (no solo la fecha de inicio)
+    it('C1: un turno que cruza la medianoche aparece en el modal del día SIGUIENTE', async () => {
+      const user = userEvent.setup()
+      const nocturno: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-noct',
+        start_at: '2026-05-14T23:30:00',
+        end_at: '2026-05-15T00:30:00',
+        patients: { full_name: 'Noche Cruz' },
+      }
+      // Ancla en el día SIGUIENTE (15). Antes del fix, el modal del 15 no
+      // listaba el turno (su start es del 14); con intersección, sí aparece.
+      render(
+        <CalendarViewRangeReadOnly
+          view="month"
+          date="2026-05-15"
+          appointments={[nocturno]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      await user.click(screen.getByRole('button', { name: /ver turnos del viernes 15/i }))
+      expect(within(screen.getByRole('dialog')).getByText('Noche Cruz')).toBeInTheDocument()
+    })
+  })
 })

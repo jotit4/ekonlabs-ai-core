@@ -494,6 +494,57 @@ describe('NewPaqueteModal', () => {
       })
     })
 
+    describe('Deuda técnica — 201 PARCIAL en el scheduler embebido (5/10, handleConfirmSchedule)', () => {
+      it('NO cierra el modal, avisa cuántas se agendaron y por qué faltaron, y mantiene seleccionado solo lo pendiente para reintentar', async () => {
+        mockFetch.mockImplementation((url: string, init?: { method?: string }) => {
+          if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse())
+          if (url === '/api/treatments' && init?.method === 'POST') return Promise.resolve(makeTreatmentResponse())
+          if (url === '/api/treatments/trt-new/sessions' && init?.method === 'POST') {
+            return Promise.resolve({
+              ok: true,
+              status: 201,
+              json: async () => ({
+                success: true,
+                creadas: 1,
+                skipped: [{ start_at: '2026-07-09T13:00:00.000Z', reason: 'slot_conflict' }],
+              }),
+            })
+          }
+          return Promise.resolve(makeSearchResponse([]))
+        })
+
+        const user = userEvent.setup()
+        render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
+
+        await user.click(screen.getByRole('button', { name: '10 sesiones' }))
+        await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+        await user.click(screen.getByRole('button', { name: /crear paquete/i }))
+
+        await waitFor(() => screen.getByTestId('multi-session-scheduler'))
+        await user.click(screen.getByRole('button', { name: 'elegir-2-slots' }))
+
+        const confirmar = screen.getByRole('button', { name: /confirmar y agendar 2/i })
+        await waitFor(() => expect(confirmar).toBeEnabled())
+        await user.click(confirmar)
+
+        // El aviso informa cuántas se agendaron y el motivo legible. Nota: hay
+        // OTRO elemento con role="status" (el aviso verde "Paquete creado..."
+        // del modal) — por eso se busca por texto, no por rol.
+        await waitFor(() => {
+          expect(
+            screen.getByText(/se agendaron 1 de 2 sesiones\. faltan 1: 1 ese horario ya estaba ocupado/i),
+          ).toBeInTheDocument()
+        })
+        // El modal NO se cerró — sigue el scheduler para reintentar.
+        expect(mockOnClose).not.toHaveBeenCalled()
+        expect(screen.getByTestId('multi-session-scheduler')).toBeInTheDocument()
+        // No es un "éxito" — no dispara el toast de reserva completada/parcial voluntaria.
+        expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+        // Solo queda seleccionado el slot que quedó pendiente.
+        expect(screen.getByRole('button', { name: /confirmar y agendar 1/i })).toBeEnabled()
+      })
+    })
+
     it('Pedido 6 (ISADI 2026-07-14/16) — el scheduler embebido (5/10) ofrece color y lo manda al confirmar', async () => {
       const user = userEvent.setup()
       render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)

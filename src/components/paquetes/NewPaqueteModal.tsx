@@ -20,6 +20,7 @@ import { ANY_PROFESSIONAL } from '@/lib/agenda/any-professional'
 import { MultiSessionScheduler } from '@/components/agenda/MultiSessionScheduler'
 import { type SelectedSlot } from '@/components/agenda/AvailabilitySlotPicker'
 import { ColorSwatchPicker } from '@/components/agenda/ColorSwatchPicker'
+import { summarizeSkipped } from '@/lib/paquetes/skip-reasons'
 import { AgendarSesionModal } from './AgendarSesionModal'
 
 // Botones de acceso rápido para el total de sesiones — Pedido B (ISADI
@@ -89,6 +90,10 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
   const [scheduleSlots, setScheduleSlots] = useState<SelectedSlot[]>([])
   const [isConfirmingSchedule, setIsConfirmingSchedule] = useState(false)
   const [scheduleError, setScheduleError] = useState<string | null>(null)
+  // Deuda técnica (mismo tratamiento que AgendarSesionModal): 201 PARCIAL en el
+  // scheduler embebido (5/10) — aviso informativo (no rojo, algo sí se agendó),
+  // separado de `scheduleError` para distinto tono.
+  const [schedulePartialNotice, setSchedulePartialNotice] = useState<string | null>(null)
   // Pedido 6 (ISADI 2026-07-14/16): color manual OPCIONAL, UN solo color para
   // TODAS las sesiones que se agenden en esta operación (scheduler embebido
   // 5/10). Reusa ColorSwatchPicker — misma paleta muda del turno único.
@@ -220,6 +225,7 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
     setScheduleSlots([])
     setIsConfirmingSchedule(false)
     setScheduleError(null)
+    setSchedulePartialNotice(null)
     setScheduleColor(null)
     setShowAgendarSesionModal(false)
     setScheduledFromSubmodal(0)
@@ -343,7 +349,9 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
   const handleConfirmSchedule = async () => {
     if (!createdTreatmentId || scheduleSlots.length === 0) return
     setScheduleError(null)
+    setSchedulePartialNotice(null)
     setIsConfirmingSchedule(true)
+    const intentadas = scheduleSlots.length
     try {
       const res = await fetch(`/api/treatments/${encodeURIComponent(createdTreatmentId)}/sessions`, {
         method: 'POST',
@@ -373,8 +381,16 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
         return
       }
 
-      const okBody = await res.json().catch(() => ({}))
-      const creadas = (okBody as { creadas?: number }).creadas ?? scheduleSlots.length
+      // 2xx — puede ser PARCIAL: `creadas` < slots enviados cuando `skipped`
+      // trae elementos (deuda técnica corregida acá, mismo tratamiento que
+      // AgendarSesionModal). Antes se ignoraba `skipped` y se cerraba el modal
+      // como éxito total siempre.
+      const okBody = (await res.json().catch(() => ({}))) as {
+        creadas?: number
+        skipped?: { start_at?: string; reason: string }[]
+      }
+      const skipped = okBody.skipped ?? []
+      const creadas = okBody.creadas ?? intentadas
       const faltan = createdTotalSessions - creadas
       const patientId = patient?.patient_id
 
@@ -383,17 +399,37 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
       queryClient.invalidateQueries({ queryKey: ['availability'], exact: false })
       if (patientId) queryClient.invalidateQueries({ queryKey: ['patients', 'one', patientId] })
 
-      if (faltan > 0) {
-        toast.success(
-          `Agendaste ${creadas} de ${createdTotalSessions} sesiones. Faltan ${faltan} por agendar.`,
-          patientId
-            ? { action: { label: 'Ir a completar', onClick: () => router.push(`/pacientes/${patientId}`) } }
-            : undefined,
-        )
-      } else {
-        toast.success(`Agendaste las ${createdTotalSessions} sesiones.`)
+      if (skipped.length === 0) {
+        // Éxito total, o reserva PARCIAL VOLUNTARIA (se eligieron menos slots
+        // que el total del bono a propósito) — en ambos casos se cierra, como
+        // antes: nada quedó pendiente de reintentar acá.
+        if (faltan > 0) {
+          toast.success(
+            `Agendaste ${creadas} de ${createdTotalSessions} sesiones. Faltan ${faltan} por agendar.`,
+            patientId
+              ? { action: { label: 'Ir a completar', onClick: () => router.push(`/pacientes/${patientId}`) } }
+              : undefined,
+          )
+        } else {
+          toast.success(`Agendaste las ${createdTotalSessions} sesiones.`)
+        }
+        handleClose()
+        return
       }
-      handleClose()
+
+      // Parcial INVOLUNTARIO (slot_conflict/no_capacity/etc.): NO cerramos —
+      // mantenemos seleccionados SOLO los slots que quedaron en `skipped`
+      // (matcheados por `start_at`) para que la persona pueda reintentar sin
+      // perder el resto de la elección.
+      const skippedStarts = new Set(
+        skipped.map((s) => s.start_at).filter((v): v is string => Boolean(v)),
+      )
+      const stillPending = scheduleSlots.filter((s) => skippedStarts.has(s.start_at))
+      setScheduleSlots(stillPending.length > 0 ? stillPending : scheduleSlots)
+      setScheduleError(null)
+      setSchedulePartialNotice(
+        `Se agendaron ${creadas} de ${intentadas} sesiones. Faltan ${skipped.length}: ${summarizeSkipped(skipped)}. Revisá y confirmá de nuevo.`,
+      )
     } catch {
       setScheduleError('Error de red. Verificá tu conexión e intentá de nuevo.')
     } finally {
@@ -757,6 +793,7 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
                     selected={scheduleSlots}
                     onChange={(slots) => {
                       setScheduleError(null)
+                      setSchedulePartialNotice(null)
                       setScheduleSlots(slots)
                     }}
                     minDate={today}
@@ -771,6 +808,14 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
                   {scheduleError && (
                     <p role="alert" className="text-xs text-red-600">
                       {scheduleError}
+                    </p>
+                  )}
+                  {/* 201 parcial (deuda técnica): aviso informativo — no es un
+                      error, algunas sesiones sí se crearon; queda seleccionado
+                      lo pendiente para reintentar. */}
+                  {schedulePartialNotice && (
+                    <p role="status" className="text-sm text-amber-700">
+                      {schedulePartialNotice}
                     </p>
                   )}
                 </div>
