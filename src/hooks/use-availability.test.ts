@@ -98,4 +98,55 @@ describe('useAvailability', () => {
     await new Promise((r) => setTimeout(r, 20))
     expect(mockFetch).not.toHaveBeenCalled()
   })
+
+  // ─── serviceIds (grupo — Pedido 1 ISADI 2026-07-16) ─────────────────────────
+  describe('serviceIds (grupo de servicios)', () => {
+    it('con serviceIds, envía service_ids=svc-1,svc-2 (grupo) en vez de service_id', async () => {
+      const mockFetch = vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify({ days: {} }), { status: 200 }),
+      )
+
+      const { result } = renderHook(
+        () =>
+          useAvailability({
+            dateFrom: '2026-06-04',
+            dateTo: '2026-06-04',
+            serviceIds: ['svc-1', 'svc-2'],
+            allProfessionals: true,
+          }),
+        { wrapper },
+      )
+
+      await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+      const url = mockFetch.mock.calls[0][0] as string
+      const parsed = new URL(url, 'http://localhost')
+      expect(parsed.searchParams.get('service_ids')).toBe('svc-1,svc-2')
+      expect(parsed.searchParams.has('service_id')).toBe(false)
+    })
+
+    it('serviceIds vacío ([]) cae de vuelta a serviceId (comportamiento sin grupo)', async () => {
+      const mockFetch = vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify({ days: {} }), { status: 200 }),
+      )
+
+      const { result } = renderHook(
+        () =>
+          useAvailability({
+            dateFrom: '2026-06-04',
+            dateTo: '2026-06-04',
+            serviceId: 'svc-1',
+            serviceIds: [],
+          }),
+        { wrapper },
+      )
+
+      await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+      const url = mockFetch.mock.calls[0][0] as string
+      const parsed = new URL(url, 'http://localhost')
+      expect(parsed.searchParams.get('service_id')).toBe('svc-1')
+      expect(parsed.searchParams.has('service_ids')).toBe(false)
+    })
+  })
 })

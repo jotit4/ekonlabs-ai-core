@@ -21,8 +21,9 @@ vi.mock('next/navigation', () => ({
 // huecos controlados según servicio+profesional+fecha elegidos.
 vi.mock('@/hooks/use-availability', () => ({
   useAvailability: vi.fn(),
+  fetchAvailabilityDays: vi.fn(),
 }))
-import { useAvailability } from '@/hooks/use-availability'
+import { useAvailability, fetchAvailabilityDays } from '@/hooks/use-availability'
 
 function makeShift(open: string): AvailabilityShift {
   return {
@@ -116,6 +117,7 @@ vi.mock('@refinedev/core', () => ({
           professional_name: 'Patricia Pérez',
           duration_minutes: 60,
           booking_mode: 'appointment',
+          reception_group: 'fisioterapia',
         },
         {
           service_id: 'svc-2',
@@ -123,6 +125,15 @@ vi.mock('@refinedev/core', () => ({
           professional_name: null,
           duration_minutes: 30,
           booking_mode: 'appointment',
+          reception_group: 'fisioterapia',
+        },
+        {
+          service_id: 'svc-odonto',
+          name: 'Odontología',
+          professional_name: null,
+          duration_minutes: 30,
+          booking_mode: 'appointment',
+          reception_group: null,
         },
         {
           service_id: 'svc-cycle',
@@ -130,6 +141,7 @@ vi.mock('@refinedev/core', () => ({
           professional_name: null,
           duration_minutes: 60,
           booking_mode: 'cycle',
+          reception_group: 'pileta',
         },
       ],
     },
@@ -225,6 +237,7 @@ describe('NewTurnoModal', () => {
     setupFetch({ search: [] })
     // Default: disponibilidad con 09:00–11:00 libres cuando se eligió servicio+profesional+fecha
     mockAvailability()
+    vi.mocked(fetchAvailabilityDays).mockResolvedValue({ days: {} })
   })
 
   describe('renderizado', () => {
@@ -1100,7 +1113,7 @@ describe('NewTurnoModal', () => {
 
       fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: '2026-07-07' } })
       for (let i = 0; i < 5; i++) {
-        const chip = await screen.findByRole('button', { name: '12:00 · Patricia Pérez' })
+        const chip = await screen.findByRole('button', { name: '12:00' })
         await user.click(chip)
       }
 
@@ -1143,6 +1156,263 @@ describe('NewTurnoModal', () => {
       await user.click(screen.getByRole('button', { name: /10 sesiones/i }))
 
       expect(screen.getByRole('button', { name: /reservar/i })).toBeDisabled()
+    })
+
+    describe('Pedido 6 (ISADI 2026-07-14/16) — color de la serie (paleta muda ISADI)', () => {
+      it('el modo serie también ofrece el ColorSwatchPicker (el turno único ya lo tenía)', async () => {
+        const user = userEvent.setup()
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-07" />)
+
+        await user.click(screen.getByRole('button', { name: /5 sesiones/i }))
+        expect(screen.getByText('Color para todas las sesiones de la serie')).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Color #00FFFF' })).toBeInTheDocument()
+      })
+
+      it('sin elegir color, el POST a /sessions no lleva "color" en el body', async () => {
+        mockUniqueDailyAvailability()
+        mockFetch.mockImplementation((url: string, init?: { method?: string }) => {
+          if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
+          if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse([{ professional_id: 'prof-1', name: 'Patricia Pérez' }]))
+          if (url === '/api/treatments' && init?.method === 'POST') {
+            return Promise.resolve({ ok: true, status: 201, json: async () => ({ success: true, treatment_id: 'trt-new' }) })
+          }
+          if (url.includes('/api/treatments/trt-new/sessions') && init?.method === 'POST') {
+            return Promise.resolve({ ok: true, status: 201, json: async () => ({ success: true, creadas: 5, skipped: [] }) })
+          }
+          return Promise.resolve(makeSearchResponse([]))
+        })
+
+        const user = userEvent.setup()
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-07" />)
+
+        await search(user, '87654321')
+        await waitFor(() => screen.getByText(/María López/))
+        await user.click(screen.getByRole('button', { name: /5 sesiones/i }))
+        await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+        await waitFor(() => {
+          expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
+        })
+        await user.selectOptions(screen.getByLabelText('Profesional'), 'prof-1')
+
+        fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: '2026-07-07' } })
+        for (let i = 0; i < 5; i++) {
+          const chip = await screen.findByRole('button', { name: '12:00' })
+          await user.click(chip)
+        }
+
+        const reservar = screen.getByRole('button', { name: /reservar 5 sesiones/i })
+        await waitFor(() => expect(reservar).toBeEnabled())
+        await user.click(reservar)
+
+        await waitFor(() => {
+          const call = mockFetch.mock.calls.find(
+            (c) =>
+              typeof c[0] === 'string' &&
+              c[0].includes('/api/treatments/trt-new/sessions') &&
+              (c[1] as { method?: string })?.method === 'POST',
+          )
+          expect(call).toBeTruthy()
+          const body = JSON.parse((call![1] as { body: string }).body)
+          expect(body).not.toHaveProperty('color')
+        })
+      })
+
+      it('al elegir un color, TODAS las sesiones reservadas de la serie viajan con ese color', async () => {
+        mockUniqueDailyAvailability()
+        mockFetch.mockImplementation((url: string, init?: { method?: string }) => {
+          if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
+          if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse([{ professional_id: 'prof-1', name: 'Patricia Pérez' }]))
+          if (url === '/api/treatments' && init?.method === 'POST') {
+            return Promise.resolve({ ok: true, status: 201, json: async () => ({ success: true, treatment_id: 'trt-new' }) })
+          }
+          if (url.includes('/api/treatments/trt-new/sessions') && init?.method === 'POST') {
+            return Promise.resolve({ ok: true, status: 201, json: async () => ({ success: true, creadas: 5, skipped: [] }) })
+          }
+          return Promise.resolve(makeSearchResponse([]))
+        })
+
+        const user = userEvent.setup()
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-07" />)
+
+        await search(user, '87654321')
+        await waitFor(() => screen.getByText(/María López/))
+        await user.click(screen.getByRole('button', { name: /5 sesiones/i }))
+        await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+        await waitFor(() => {
+          expect((screen.getByLabelText('Profesional') as HTMLSelectElement).value).toBe('__any__')
+        })
+        await user.selectOptions(screen.getByLabelText('Profesional'), 'prof-1')
+
+        await user.click(screen.getByRole('button', { name: 'Color #00FFFF' }))
+
+        fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: '2026-07-07' } })
+        for (let i = 0; i < 5; i++) {
+          const chip = await screen.findByRole('button', { name: '12:00' })
+          await user.click(chip)
+        }
+
+        const reservar = screen.getByRole('button', { name: /reservar 5 sesiones/i })
+        await waitFor(() => expect(reservar).toBeEnabled())
+        await user.click(reservar)
+
+        await waitFor(() => {
+          const call = mockFetch.mock.calls.find(
+            (c) =>
+              typeof c[0] === 'string' &&
+              c[0].includes('/api/treatments/trt-new/sessions') &&
+              (c[1] as { method?: string })?.method === 'POST',
+          )
+          expect(call).toBeTruthy()
+          const body = JSON.parse((call![1] as { body: string }).body)
+          expect(body.color).toBe('#00FFFF')
+          expect(body.slots).toHaveLength(5)
+        })
+      })
+    })
+  })
+
+  // ─── Pedido 1 (ISADI 2026-07-16) — modo recepción: grupo Fisioterapia ───────
+  // isReceptionist=true (turno único, sessionCount=1 default): sin selector de
+  // Servicio ni Profesional — se resuelven del hueco elegido, buscando
+  // disponibilidad en TODOS los service_id del grupo `reception_group=
+  // 'fisioterapia'` (svc-1 Kinesiología + svc-2 Fisioterapia, ver mock de
+  // @refinedev/core arriba) con cualquier profesional.
+  describe('modo recepción (Pedido 1 ISADI 2026-07-16 — grupo Fisioterapia)', () => {
+    const singlePatient = {
+      patient_id: 'pat-uuid-1',
+      full_name: 'María López',
+      phone_number: '+5491111111111',
+      obra_social: null,
+      deletion_requested_at: null,
+    }
+
+    it('no muestra selectores de Servicio ni Profesional; muestra el rótulo fijo "Fisioterapia"', () => {
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" isReceptionist />)
+      expect(screen.queryByLabelText('Servicio')).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('Profesional')).not.toBeInTheDocument()
+      expect(screen.getByText('Fisioterapia')).toBeInTheDocument()
+      // Fecha y Horario se mantienen — recepción sí elige cuándo, no qué/quién.
+      expect(screen.getByLabelText('Fecha')).toBeInTheDocument()
+      expect(screen.getByLabelText('Horario')).toBeInTheDocument()
+    })
+
+    it('pide disponibilidad para TODOS los service_id del grupo fisioterapia, con cualquier profesional', async () => {
+      const receivedCalls: {
+        serviceIds?: string[] | null
+        serviceId?: string | null
+        professionalId?: string | null
+        allProfessionals?: boolean
+      }[] = []
+      vi.mocked(useAvailability).mockImplementation((args) => {
+        receivedCalls.push(args)
+        return {
+          daysShifts: {},
+          daysSummary: {},
+          isLoading: false,
+          isError: false,
+          refetch: vi.fn(),
+          shiftsForDate: () => [],
+        }
+      })
+
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" isReceptionist />)
+
+      await waitFor(() => {
+        const last = receivedCalls.at(-1)
+        expect(last?.serviceIds).toEqual(['svc-1', 'svc-2'])
+        expect(last?.serviceId).toBeNull()
+        expect(last?.professionalId).toBeNull()
+        expect(last?.allProfessionals).toBe(true)
+      })
+    })
+
+    it('no consulta /api/services/:id/profesionales (recepción no elige profesional)', async () => {
+      setupFetch({ search: [singlePatient] })
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" isReceptionist />)
+
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
+
+      expect(mockFetch).not.toHaveBeenCalledWith(expect.stringContaining('/profesionales'))
+    })
+
+    it('selecciona un horario del grupo y guarda: usa el service_id/professional_id del hueco elegido', async () => {
+      vi.mocked(useAvailability).mockImplementation(({ enabled }) => ({
+        daysShifts: {},
+        daysSummary: {},
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+        shiftsForDate: () =>
+          enabled
+            ? [
+                {
+                  ...makeShift('09:00'),
+                  service_id: 'svc-2',
+                  service_name: 'Fisioterapia',
+                  professional_id: 'prof-2',
+                  professional_name: 'Aldo Luque',
+                },
+                {
+                  ...makeShift('10:00'),
+                  service_id: 'svc-1',
+                  service_name: 'Kinesiología',
+                  professional_id: 'prof-1',
+                  professional_name: 'Patricia Pérez',
+                },
+              ]
+            : [],
+      }))
+      setupFetch({ search: [singlePatient] })
+
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" isReceptionist />)
+
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
+
+      // Recepción ve SOLO la hora, sin nombre de profesional (no lo elige).
+      await waitFor(() => {
+        expect(screen.getByRole('option', { name: '09:00' })).toBeInTheDocument()
+        expect(screen.getByRole('option', { name: '10:00' })).toBeInTheDocument()
+      })
+      expect(screen.queryByRole('option', { name: /Patricia|Aldo/ })).not.toBeInTheDocument()
+
+      await user.selectOptions(screen.getByLabelText('Horario'), 'svc-1__prof-1__10:00')
+      await user.click(screen.getByRole('button', { name: /guardar turno/i }))
+
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find(
+          (c) => c[0] === '/api/appointments' && (c[1] as { method?: string })?.method === 'POST',
+        )
+        expect(call).toBeTruthy()
+        const body = JSON.parse((call![1] as { body: string }).body)
+        expect(body.service_id).toBe('svc-1')
+        expect(body.professional_id).toBe('prof-1')
+        expect(body.appointment_time).toContain('T10:00:00')
+        expect(body.duration_minutes).toBe(60) // duration_minutes de svc-1 (Kinesiología) en el mock
+      })
+    })
+
+    it('"Guardar turno" está deshabilitado sin horario elegido, aunque haya paciente', async () => {
+      setupFetch({ search: [singlePatient] })
+      const user = userEvent.setup()
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" isReceptionist />)
+
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
+
+      expect(screen.getByRole('button', { name: /guardar turno/i })).toBeDisabled()
+    })
+
+    it('admin/doctor (isReceptionist=false, default): el modal sigue mostrando el selector de Servicio', () => {
+      render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" />)
+      expect(screen.getByLabelText('Servicio')).toBeInTheDocument()
+      // "Fisioterapia" existe como <option> del select (es un servicio real del
+      // catálogo) — lo que NO debe existir es el rótulo fijo (un <p>, no una
+      // opción del select) del modo recepción.
+      expect(screen.queryByText('Fisioterapia', { selector: 'p' })).not.toBeInTheDocument()
     })
   })
 

@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Dialog } from '@base-ui/react/dialog'
 import { MultiSessionScheduler } from '@/components/agenda/MultiSessionScheduler'
 import { type SelectedSlot } from '@/components/agenda/AvailabilitySlotPicker'
+import { ColorSwatchPicker } from '@/components/agenda/ColorSwatchPicker'
 
 interface AgendarSesionModalProps {
   open: boolean
@@ -31,6 +32,12 @@ interface AgendarSesionModalProps {
 // (`professionalId === null`), cada sesión se agenda con CUALQUIER profesional
 // disponible del servicio — el `MultiSessionScheduler` pasa a modo "cualquiera"
 // y cada slot elegido viaja con su propio `professional_id` al confirmar.
+//
+// Pedido 6 (ISADI 2026-07-14/16): color manual OPCIONAL de la TANDA completa —
+// UN solo color por operación de agendado, aplicado a TODAS las sesiones que
+// se crean acá (reusa `ColorSwatchPicker`, la misma paleta muda del turno
+// único). Viaja como `color` a nivel de request (no por slot) al mismo
+// endpoint; sin elegir ninguno, las sesiones se crean sin color (como hoy).
 
 export function AgendarSesionModal({
   open,
@@ -39,12 +46,12 @@ export function AgendarSesionModal({
   serviceId,
   professionalId,
   serviceName,
-  professionalName,
   porAgendar,
   patientId,
 }: AgendarSesionModalProps) {
   const queryClient = useQueryClient()
   const [selected, setSelected] = useState<SelectedSlot[]>([])
+  const [selectedColor, setSelectedColor] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -55,6 +62,7 @@ export function AgendarSesionModal({
 
   const reset = () => {
     setSelected([])
+    setSelectedColor(null)
     setSubmitError(null)
     setIsSubmitting(false)
   }
@@ -91,6 +99,9 @@ export function AgendarSesionModal({
               // Sin profesional fijo, cada sesión resuelve el suyo (del hueco elegido).
               ...(professionalId === null ? { professional_id: s.professional_id } : {}),
             })),
+            // Color ÚNICO para TODA la tanda (Pedido 6) — sin elegir ninguno, no
+            // se manda (las sesiones quedan sin color, como hoy).
+            ...(selectedColor ? { color: selectedColor } : {}),
           }),
         },
       )
@@ -140,8 +151,6 @@ export function AgendarSesionModal({
               </Dialog.Title>
               <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
                 {serviceName ?? 'Servicio'}
-                {' · '}
-                {professionalId === null ? 'Cualquier profesional disponible' : professionalName}
                 {' — faltan agendar '}
                 {porAgendar}
               </p>
@@ -155,6 +164,14 @@ export function AgendarSesionModal({
                 total={porAgendar}
                 selected={selected}
                 onChange={handleSelectionChange}
+              />
+
+              {/* Color manual OPCIONAL de la tanda (Pedido 6 ISADI 2026-07-14/16):
+                  UN solo color para TODAS las sesiones que se agenden acá. */}
+              <ColorSwatchPicker
+                value={selectedColor}
+                onChange={setSelectedColor}
+                label="Color para todas las sesiones de este paquete"
               />
 
               {submitError && (

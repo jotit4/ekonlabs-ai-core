@@ -59,4 +59,26 @@ describe('createSessionsApiSchema', () => {
     }))
     expect(createSessionsApiSchema.safeParse({ slots }).success).toBe(false)
   })
+
+  describe('color (Pedido 6 ISADI 2026-07-14/16 — color único para toda la tanda)', () => {
+    const slots = [{ start_at: '2026-06-10T13:00:00.000Z', end_at: '2026-06-10T14:00:00.000Z' }]
+
+    it('acepta sin color (comportamiento actual, sin cambios)', () => {
+      const parsed = createSessionsApiSchema.safeParse({ slots })
+      expect(parsed.success).toBe(true)
+      expect(parsed.success && parsed.data.color).toBeUndefined()
+    })
+
+    it('acepta un color hex válido (#RRGGBB) a nivel request', () => {
+      const parsed = createSessionsApiSchema.safeParse({ slots, color: '#00FFFF' })
+      expect(parsed.success).toBe(true)
+      expect(parsed.success && parsed.data.color).toBe('#00FFFF')
+    })
+
+    it('rechaza un color con formato inválido', () => {
+      expect(createSessionsApiSchema.safeParse({ slots, color: 'cyan' }).success).toBe(false)
+      expect(createSessionsApiSchema.safeParse({ slots, color: '#FFF' }).success).toBe(false)
+      expect(createSessionsApiSchema.safeParse({ slots, color: '00FFFF' }).success).toBe(false)
+    })
+  })
 })

@@ -95,6 +95,15 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
   // qué servicios cuentan como "rehab".
   const [areaFocus, setAreaFocus] = useState<AreaFocus>('rehab')
 
+  // Pedido 2 (ISADI 2026-07-16) — grupo de recepción seleccionado
+  // (Fisioterapia/Pileta/Pilates, ver AgendaServiceButtons). Estado local (no
+  // URL), mismo criterio que `areaFocus`: es una preferencia de vista de
+  // recepción, no un service_id real (los grupos no existen en la tabla
+  // `services`, no se pueden pasar a los hooks server-side como
+  // `service_id=eq.<grupo>`) — se filtra CLIENTE, ver focusedAppointments/
+  // focusedRangeAppointments más abajo. Solo tiene efecto para receptionist.
+  const [receptionGroup, setReceptionGroup] = useState<string | null>(null)
+
   // Determinar vista activa desde query param.
   // AC6 (Story 10.7): vista default = Semana. Sin ?vista → 'semana'.
   // ?vista=dia y ?vista=mes son explícitos.
@@ -161,15 +170,24 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
   // turnos a los servicios de rehabilitación (heurística por nombre, centralizada
   // en service-visuals). Si el usuario eligió un service_id puntual, ese filtro
   // ya es más específico y el foco no recorta nada extra.
-  const applyRehabFocus = areaFocus === 'rehab' && !serviceId
+  // `receptionGroup` puntual (Pedido 2) manda igual que un `serviceId`
+  // puntual: ambos son más específicos que el recorte por nombre y lo apagan.
+  const applyRehabFocus = areaFocus === 'rehab' && !serviceId && !receptionGroup
   const isRehabAppointment = (apt: Appointment): boolean => isRehabService(apt.services?.name)
 
-  const focusedAppointments = applyRehabFocus
-    ? appointments.filter(isRehabAppointment)
-    : appointments
-  const focusedRangeAppointments = applyRehabFocus
-    ? rangeAppointments.filter(isRehabAppointment)
-    : rangeAppointments
+  // Pedido 2 (ISADI 2026-07-16) — filtro CLIENTE por grupo de recepción
+  // (Fisioterapia/Pileta/Pilates). Solo activo cuando hay un grupo elegido;
+  // se aplica DESPUÉS del recorte por foco de área (ver applyRehabFocus).
+  const applyReceptionGroupFilter = isReceptionist && !!receptionGroup
+  const isInReceptionGroup = (apt: Appointment): boolean =>
+    apt.services?.reception_group === receptionGroup
+
+  const focusedAppointments = (
+    applyRehabFocus ? appointments.filter(isRehabAppointment) : appointments
+  ).filter((apt) => !applyReceptionGroupFilter || isInReceptionGroup(apt))
+  const focusedRangeAppointments = (
+    applyRehabFocus ? rangeAppointments.filter(isRehabAppointment) : rangeAppointments
+  ).filter((apt) => !applyReceptionGroupFilter || isInReceptionGroup(apt))
 
   const { usesNativeCalendar, isPending: tenantConfigPending } = useTenantConfig()
   const { status: gcalStatus } = useGCalChannelStatus(!tenantConfigPending && !usesNativeCalendar)
@@ -343,11 +361,13 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
           </h1>
         </div>
         <div className="flex items-center gap-3 mt-2 flex-wrap justify-end">
-          {/* Selector de vista: en modo turnero (recepción) vive detrás de
-              "Filtrar"; para admin siempre visible. */}
-          {secondaryVisible && (
-            <CalendarViewSelector activeView={vistaActiva} onChange={handleVistaChange} />
-          )}
+          {/* Selector de vista: SIEMPRE visible (Pedido 3 ISADI 2026-07-16).
+              Antes vivía detrás de "Filtrar" en modo turnero (recepción), lo
+              que lo dejaba escondido tras un toque extra — mismo criterio que
+              AgendaServiceButtons (pedido 2026-07-14): un control de
+              navegación básico no se esconde detrás de un toggle
+              secundario. */}
+          <CalendarViewSelector activeView={vistaActiva} onChange={handleVistaChange} />
           {/* Botón "Filtrar" — solo recepción. Despliega el selector de vista, los
               dropdowns Profesional/Servicio (+ Limpiar) y "Nuevo paquete". */}
           {isReceptionist && (
@@ -437,6 +457,9 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
             serviceId={serviceId}
             onServiceChange={handleServiceChange}
             areaFocus={areaFocus}
+            isReceptionist={isReceptionist}
+            receptionGroup={receptionGroup}
+            onReceptionGroupChange={setReceptionGroup}
           />
           <div id="agenda-secondary-controls">
             {secondaryVisible && (
@@ -516,6 +539,7 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
         initialProfessionalId={newTurnoPrefill?.professionalId}
         initialDate={newTurnoPrefill?.date}
         initialTimeHHmm={newTurnoPrefill?.timeHHmm}
+        isReceptionist={isReceptionist}
       />
       <RescheduleTurnoModal
         open={showRescheduleTurnoModal}

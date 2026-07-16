@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { format, addDays, parseISO } from 'date-fns'
@@ -15,25 +15,126 @@ vi.mock('react-big-calendar', async () => {
   return {
     Calendar: (props: {
       events: unknown[]
+      date?: Date
       onSelectEvent?: (e: unknown) => void
+      onKeyPressEvent?: (e: unknown, keyboardEvent: React.KeyboardEvent<HTMLElement>) => void
+      onShowMore?: (events: unknown[], date: Date) => void
+      showAllEvents?: boolean
+      popup?: boolean
+      doShowMoreDrillDown?: boolean
+      messages?: { showMore?: (total: number) => string }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       components?: any
     }) => {
+      // Renderiza también `components.month.dateHeader` para el día ancla
+      // (`props.date`) — el mock real de RBC pintaría uno por cada celda del
+      // mes, pero para testear el click en el número del día alcanza con
+      // exponer uno solo (drilldownView=null, como en producción — ver
+      // MonthDayStatusHeader.tsx: `views={[Views.MONTH]}` nunca habilita
+      // drilldown).
+      const DateHeaderComponent = props.components?.month?.dateHeader
+      const dateHeader =
+        DateHeaderComponent && props.date
+          ? React.createElement(DateHeaderComponent, {
+              key: 'date-header',
+              label: String(props.date.getDate()),
+              date: props.date,
+              drilldownView: null,
+              isOffRange: false,
+              onDrillDown: () => {},
+            })
+          : null
+      const DateCellWrapper = props.components?.dateCellWrapper
+      const dateBackground =
+        DateCellWrapper && props.date
+          ? React.createElement(
+              DateCellWrapper,
+              { key: 'date-background', value: props.date, range: [props.date] },
+              React.createElement('div', { 'data-testid': 'month-day-background' }),
+            )
+          : null
+      const offRangeDate = props.date
+        ? new Date(props.date.getFullYear(), props.date.getMonth() - 1, 15)
+        : null
+      const offRangeBackground =
+        DateCellWrapper && offRangeDate
+          ? React.createElement(
+              DateCellWrapper,
+              { key: 'off-range-background', value: offRangeDate, range: [offRangeDate] },
+              React.createElement('div', { 'data-testid': 'month-off-range-background' }),
+            )
+          : null
+
+      // Simula el overflow por FECHA de RBC: solo oculta a partir del tercer
+      // turno de un mismo día y entrega `onShowMore` únicamente el subconjunto
+      // oculto. Así la prueba demuestra que producción recalcula el día entero.
+      const eventsByDate = new Map<string, unknown[]>()
+      for (const event of props.events) {
+        const start = (event as { start?: Date }).start
+        if (!(start instanceof Date)) continue
+        const dateKey = `${start.getFullYear()}-${start.getMonth()}-${start.getDate()}`
+        const group = eventsByDate.get(dateKey) ?? []
+        group.push(event)
+        eventsByDate.set(dateKey, group)
+      }
+      const overflowGroup =
+        props.showAllEvents === false
+          ? [...eventsByDate.values()].find((group) => group.length > 2)
+          : undefined
+      const hiddenEvents = overflowGroup?.slice(2) ?? []
+      const visibleEvents = hiddenEvents.length
+        ? props.events.filter((event) => !hiddenEvents.includes(event))
+        : props.events
+      const hiddenCount = hiddenEvents.length
+      const showMoreDate = (overflowGroup?.[0] as { start?: Date } | undefined)?.start
+      const showMore =
+        hiddenCount > 0 && showMoreDate
+          ? React.createElement(
+              'button',
+              {
+                type: 'button',
+                className: 'rbc-show-more',
+                onClick: () => props.onShowMore?.(hiddenEvents, showMoreDate),
+              },
+              props.messages?.showMore?.(hiddenCount) ?? `+${hiddenCount}`,
+            )
+          : null
       return React.createElement(
         'div',
-        { 'data-testid': 'rbc-calendar' },
-        props.events.map((e: unknown) => {
-          const ev = e as { id: string; title: string; resource: Appointment }
-          return React.createElement(
+        {
+          'data-testid': 'rbc-calendar',
+          'data-show-all-events': String(props.showAllEvents),
+          'data-popup': String(props.popup),
+          'data-show-more-drilldown': String(props.doShowMoreDrillDown),
+        },
+        dateBackground,
+        offRangeBackground,
+        dateHeader,
+        visibleEvents.map((e: unknown) => {
+          const ev = e as {
+            id: string
+            title: string
+            start: Date
+            resource: Appointment
+          }
+          const eventNode = React.createElement(
             'div',
             {
               key: ev.id,
+              className: 'rbc-event',
               'data-testid': `event-${ev.id}`,
               onClick: () => props.onSelectEvent?.(ev),
+              onKeyDown: (keyboardEvent: React.KeyboardEvent<HTMLElement>) =>
+                props.onKeyPressEvent?.(ev, keyboardEvent),
             },
             props.components?.event ? props.components.event({ event: ev }) : ev.title,
           )
+          const EventWrapper = props.components?.eventWrapper
+          return EventWrapper
+            ? React.createElement(EventWrapper, { key: ev.id, event: ev }, eventNode)
+            : eventNode
         }),
+        showMore,
       )
     },
     dateFnsLocalizer: () => ({}),
@@ -562,6 +663,379 @@ describe('CalendarViewRangeReadOnly', () => {
       expect(
         screen.getByRole('button', { name: /dar un turno a las 10:00 — jue 14/i }),
       ).toBeInTheDocument()
+    })
+  })
+
+  // ─── Clic en el encabezado del día → modal con todos los turnos (pedido
+  // ISADI 2026-07-14: la agenda se ve apretada con varios turnos el mismo
+  // día, permitir abrir el día completo desde el encabezado) ─────────────────
+  describe('clic en el encabezado del día abre el modal con los turnos de ese día', () => {
+    it('vista Semana: click en el encabezado de un día abre el modal con TODOS los turnos de ese día', async () => {
+      const user = userEvent.setup()
+      const aptLater: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-later',
+        start_at: '2026-05-14T11:00:00',
+        end_at: '2026-05-14T12:00:00',
+        patients: { full_name: 'Carlos Ruiz' },
+      }
+      render(
+        <CalendarViewRangeReadOnly
+          view="week"
+          date="2026-05-12"
+          appointments={[BASE_APPOINTMENT, aptLater]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      // 2026-05-14 es jueves → fullLabel = "jueves 14".
+      await user.click(screen.getByRole('button', { name: /ver turnos del jueves 14/i }))
+      const dialog = screen.getByRole('dialog')
+      expect(within(dialog).getByText('2 turnos')).toBeInTheDocument()
+      expect(within(dialog).getByText('María López')).toBeInTheDocument()
+      expect(within(dialog).getByText('Carlos Ruiz')).toBeInTheDocument()
+    })
+
+    it('vista Semana: el modal se cierra con el botón "Cerrar"', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarViewRangeReadOnly
+          view="week"
+          date="2026-05-12"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      await user.click(screen.getByRole('button', { name: /ver turnos del jueves 14/i }))
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: /cerrar/i }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('vista Semana: click en un turno DENTRO del modal llama onAppointmentClick', async () => {
+      const user = userEvent.setup()
+      const onAppointmentClick = vi.fn()
+      render(
+        <CalendarViewRangeReadOnly
+          view="week"
+          date="2026-05-12"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+          onAppointmentClick={onAppointmentClick}
+        />,
+      )
+      await user.click(screen.getByRole('button', { name: /ver turnos del jueves 14/i }))
+      const dialog = screen.getByRole('dialog')
+      await user.click(within(dialog).getByText('María López'))
+      expect(onAppointmentClick).toHaveBeenCalledWith(BASE_APPOINTMENT)
+    })
+
+    it('vista Mes: click en el número del día abre el modal con los turnos de ese día', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarViewRangeReadOnly
+          view="month"
+          date="2026-05-14"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      await user.click(screen.getByRole('button', { name: /ver turnos del jueves 14/i }))
+      const dialog = screen.getByRole('dialog')
+      expect(within(dialog).getByText('María López')).toBeInTheDocument()
+    })
+  })
+
+  describe('vista Mes: celdas consultables y resumen de densidad', () => {
+    it('click en el fondo completo abre el modal del día con todos sus turnos', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarViewRangeReadOnly
+          view="month"
+          date="2026-05-14"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+
+      await user.click(screen.getByTestId('month-day-background'))
+
+      const dialog = screen.getByRole('dialog')
+      expect(within(dialog).getByText('1 turno')).toBeInTheDocument()
+      expect(within(dialog).getByText('María López')).toBeInTheDocument()
+    })
+
+    it('click en el fondo de un día vacío abre un modal con 0 turnos', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarViewRangeReadOnly
+          view="month"
+          date="2026-05-14"
+          appointments={[]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+
+      await user.click(screen.getByTestId('month-day-background'))
+
+      expect(within(screen.getByRole('dialog')).getByText('0 turnos')).toBeInTheDocument()
+    })
+
+    it('el fondo no agrega un control ni un tab stop; el número conserva el acceso por teclado', () => {
+      render(
+        <CalendarViewRangeReadOnly
+          view="month"
+          date="2026-05-14"
+          appointments={[]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      const dayBackground = screen.getByTestId('month-day-background').parentElement
+
+      expect(dayBackground).not.toHaveAttribute('role')
+      expect(dayBackground).not.toHaveAttribute('tabindex')
+      expect(
+        screen.getByRole('button', { name: /ver turnos del jueves 14/i }),
+      ).toBeInTheDocument()
+    })
+
+    it('el fondo de una fecha fuera del mes conserva la celda pero no abre el modal', async () => {
+      const user = userEvent.setup()
+      render(
+        <CalendarViewRangeReadOnly
+          view="month"
+          date="2026-05-14"
+          appointments={[]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      const offRangeCell = screen.getByTestId('month-off-range-background').parentElement
+
+      expect(offRangeCell).toHaveClass('rbc-month-day-wrapper--off-range')
+      expect(offRangeCell).not.toHaveClass('rbc-month-day-hitarea')
+      await user.click(screen.getByTestId('month-off-range-background'))
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('click en un turno abre su detalle sin abrir también el modal del día', async () => {
+      const user = userEvent.setup()
+      const onAppointmentClick = vi.fn()
+      render(
+        <CalendarViewRangeReadOnly
+          view="month"
+          date="2026-05-14"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+          onAppointmentClick={onAppointmentClick}
+        />,
+      )
+
+      await user.click(screen.getByTestId('event-apt-1'))
+
+      expect(onAppointmentClick).toHaveBeenCalledOnce()
+      expect(onAppointmentClick).toHaveBeenCalledWith(BASE_APPOINTMENT)
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it.each([
+      ['Enter', '{Enter}'],
+      ['Espacio', ' '],
+    ])('%s enfoca y abre el turno exactamente una vez', async (_label, key) => {
+      const user = userEvent.setup()
+      const onAppointmentClick = vi.fn()
+      render(
+        <CalendarViewRangeReadOnly
+          view="month"
+          date="2026-05-14"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+          onAppointmentClick={onAppointmentClick}
+        />,
+      )
+      const eventControl = screen.getByRole('button', {
+        name: /abrir turno de María López a las 09:00/i,
+      })
+
+      // Número y badge del día son los dos controles previos del header.
+      await user.tab()
+      await user.tab()
+      await user.tab()
+      expect(eventControl).toHaveFocus()
+      await user.keyboard(key)
+
+      expect(onAppointmentClick).toHaveBeenCalledOnce()
+      expect(onAppointmentClick).toHaveBeenCalledWith(BASE_APPOINTMENT)
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('usa chips de una línea y configura el excedente sin popup ni drilldown', () => {
+      render(
+        <CalendarViewRangeReadOnly
+          view="month"
+          date="2026-05-14"
+          appointments={[BASE_APPOINTMENT]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+
+      const compactSummary = screen
+        .getByTestId('event-apt-1')
+        .querySelector('.rbc-month-event-text')
+      expect(compactSummary).toHaveTextContent('09:00 · María López')
+      expect(screen.queryByText('Dr. Pérez')).not.toBeInTheDocument()
+      expect(screen.getByTestId('rbc-calendar')).toHaveAttribute('data-show-all-events', 'false')
+      expect(screen.getByTestId('rbc-calendar')).toHaveAttribute('data-popup', 'false')
+      expect(screen.getByTestId('rbc-calendar')).toHaveAttribute(
+        'data-show-more-drilldown',
+        'false',
+      )
+    })
+
+    it('muestra "+N turnos" y abre el modal con visibles y ocultos', async () => {
+      const user = userEvent.setup()
+      const apt2: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-2',
+        start_at: '2026-05-14T10:00:00',
+        end_at: '2026-05-14T11:00:00',
+        patients: { full_name: 'Carlos Ruiz' },
+      }
+      const apt3: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-3',
+        start_at: '2026-05-14T11:00:00',
+        end_at: '2026-05-14T12:00:00',
+        patients: { full_name: 'Elena Sosa' },
+      }
+      render(
+        <CalendarViewRangeReadOnly
+          view="month"
+          date="2026-05-14"
+          appointments={[BASE_APPOINTMENT, apt2, apt3]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+
+      expect(screen.queryByText('Elena Sosa')).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: '+1 turno' }))
+
+      const dialog = screen.getByRole('dialog')
+      expect(within(dialog).getByText('3 turnos')).toBeInTheDocument()
+      expect(within(dialog).getByText('María López')).toBeInTheDocument()
+      expect(within(dialog).getByText('Carlos Ruiz')).toBeInTheDocument()
+      expect(within(dialog).getByText('Elena Sosa')).toBeInTheDocument()
+    })
+  })
+
+  // ─── Superposición: celda con muchos turnos cap-ea a "+N más" (Semana) ────
+  describe('celda con muchos turnos en la misma franja (Semana) cap-ea a "+N más"', () => {
+    it('con 3 turnos en la misma franja, solo se ven 2 chips + botón "+1 más"', () => {
+      const apt2: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-2',
+        start_at: '2026-05-14T09:15:00',
+        end_at: '2026-05-14T09:45:00',
+        patients: { full_name: 'Carlos Ruiz' },
+      }
+      const apt3: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-3',
+        start_at: '2026-05-14T09:30:00',
+        end_at: '2026-05-14T10:00:00',
+        patients: { full_name: 'Elena Sosa' },
+      }
+      render(
+        <CalendarViewRangeReadOnly
+          view="week"
+          date="2026-05-12"
+          appointments={[BASE_APPOINTMENT, apt2, apt3]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      expect(screen.getByText('María López')).toBeInTheDocument()
+      expect(screen.getByText('Carlos Ruiz')).toBeInTheDocument()
+      expect(screen.queryByText('Elena Sosa')).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /ver 1 turno más de jue 14/i })).toBeInTheDocument()
+    })
+
+    it('click en "+N más" abre el modal con TODOS los turnos del día (incluido el que estaba oculto)', async () => {
+      const user = userEvent.setup()
+      const apt2: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-2',
+        start_at: '2026-05-14T09:15:00',
+        end_at: '2026-05-14T09:45:00',
+        patients: { full_name: 'Carlos Ruiz' },
+      }
+      const apt3: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-3',
+        start_at: '2026-05-14T09:30:00',
+        end_at: '2026-05-14T10:00:00',
+        patients: { full_name: 'Elena Sosa' },
+      }
+      render(
+        <CalendarViewRangeReadOnly
+          view="week"
+          date="2026-05-12"
+          appointments={[BASE_APPOINTMENT, apt2, apt3]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      await user.click(screen.getByRole('button', { name: /ver 1 turno más de jue 14/i }))
+      const dialog = screen.getByRole('dialog')
+      expect(within(dialog).getByText('3 turnos')).toBeInTheDocument()
+      expect(within(dialog).getByText('María López')).toBeInTheDocument()
+      expect(within(dialog).getByText('Carlos Ruiz')).toBeInTheDocument()
+      expect(within(dialog).getByText('Elena Sosa')).toBeInTheDocument()
+    })
+
+    it('con 2 turnos o menos en la franja, NO aparece el botón "+N más"', () => {
+      const aptLater: Appointment = {
+        ...BASE_APPOINTMENT,
+        appointment_id: 'apt-later',
+        start_at: '2026-05-14T11:00:00',
+        end_at: '2026-05-14T12:00:00',
+      }
+      render(
+        <CalendarViewRangeReadOnly
+          view="week"
+          date="2026-05-12"
+          appointments={[BASE_APPOINTMENT, aptLater]}
+          isLoading={false}
+          isError={false}
+          onRefetch={mockOnRefetch}
+        />,
+      )
+      expect(screen.queryByText(/más$/)).not.toBeInTheDocument()
     })
   })
 })

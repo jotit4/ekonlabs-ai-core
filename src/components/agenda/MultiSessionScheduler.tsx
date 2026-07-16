@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { format, parseISO, isValid } from 'date-fns'
+import { useEffect, useRef, useState } from 'react'
+import { differenceInCalendarDays, format, parseISO, isValid } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { AvailabilitySlotPicker, type SelectedSlot } from './AvailabilitySlotPicker'
 import { advanceDate } from '@/lib/agenda/advance-date'
@@ -9,20 +9,14 @@ import { fetchAvailabilityDays } from '@/hooks/use-availability'
 import { proposeConsecutiveSessions } from '@/lib/treatments/propose-consecutive-sessions'
 import type { AvailabilityShift, DayShifts } from '@/types/availability'
 
-// Motor REUTILIZABLE de selección MANUAL y ágil de N sesiones (bonos x5/x10).
-// La recepcionista elige CADA horario a mano — nada es automático por defecto
-// (reclamo ISADI: los pacientes faltan mucho, hay que decidir turno por turno).
-// Lo único que hace la "cadencia" es ADELANTAR el calendario al próximo día
-// probable tras cada elección, para no tener que navegar la fecha a mano.
+// Motor REUTILIZABLE de selección de N sesiones (bonos x5/x10/N).
+// La recepcionista elige la primera fecha+hora y el motor propone el resto con
+// disponibilidad REAL. La propuesta sigue siendo editable y no reserva nada
+// hasta que el componente padre confirma la selección.
 //
-// Pedido B (ISADI 2026-07-14 — "agregar 5 y 10 sesiones... que se agende
-// automático, un día atrás del otro"): se agregó "Proponer automáticamente",
-// que SÍ pre-llena el resto de las fechas a partir de la primera elegida a
-// mano (el ancla), reusando la disponibilidad real. DECISIÓN DEL CLIENTE:
-// auto-propone, la secretaria ajusta — la propuesta queda 100% editable
-// (mover/quitar cualquier sesión) y nada se agenda hasta confirmar (eso lo
-// hace el componente padre, con el `selected` final). Un día sin hueco a la
-// hora del ancla queda PENDIENTE (no se inventa un horario).
+// Ajuste ISADI 2026-07-16: ya no existe un segundo paso/botón "Proponer". Al
+// elegir el primer horario se pre-llena automáticamente el resto. Un día sin
+// hueco a la hora del ancla queda PENDIENTE (no se inventa un horario).
 //
 // Se apoya en AvailabilitySlotPicker (disponibilidad REAL, RPC 029).
 
@@ -40,6 +34,7 @@ const CADENCE_OPTIONS: { value: Cadence; label: string }[] = [
   { value: 3, label: '3 veces/sem' },
   { value: 4, label: 'Todos los días' },
 ]
+const MAX_AVAILABILITY_RANGE_DAYS = 60
 
 interface MultiSessionSchedulerProps {
   serviceId: string
@@ -64,14 +59,33 @@ function slotIdentity(s: { start_at: string; professional_id?: string }, anyMode
 
 function fmtChosen(slot: SelectedSlot): string {
   const parsed = parseISO(slot.start_at)
-  const base = !isValid(parsed) ? `${slot.date} · ${slot.label}` : format(parsed, "EEEE d/MM · HH:mm", { locale: es })
-  return slot.professional_name ? `${base} · ${slot.professional_name}` : base
+  return !isValid(parsed) ? `${slot.date} · ${slot.label}` : format(parsed, "EEEE d/MM · HH:mm", { locale: es })
 }
 
 function fmtPendingDate(iso: string): string {
   const parsed = parseISO(iso)
   if (!isValid(parsed)) return iso
   return format(parsed, "EEEE d/MM", { locale: es })
+}
+
+// /api/availability acepta como máximo 60 días inclusivos por request. Las
+// fechas ya vienen ordenadas, así que partimos el rango sin perder ninguna.
+function chunkDatesByRange(dates: string[]): { dateFrom: string; dateTo: string }[] {
+  if (dates.length === 0) return []
+
+  const ranges: { dateFrom: string; dateTo: string }[] = []
+  let dateFrom = dates[0]
+  let dateTo = dates[0]
+
+  for (const candidate of dates.slice(1)) {
+    if (differenceInCalendarDays(parseISO(candidate), parseISO(dateFrom)) >= MAX_AVAILABILITY_RANGE_DAYS) {
+      ranges.push({ dateFrom, dateTo })
+      dateFrom = candidate
+    }
+    dateTo = candidate
+  }
+  ranges.push({ dateFrom, dateTo })
+  return ranges
 }
 
 export function MultiSessionScheduler({
@@ -85,30 +99,59 @@ export function MultiSessionScheduler({
   const today = new Date().toLocaleDateString('en-CA')
   const floor = minDate ?? today
   const [date, setDate] = useState<string>('')
-  // Default: si el bono es de 5 o 10 (el pedido explícito de días consecutivos
-  // del cliente), arrancar en "Todos los días" — sigue siendo editable.
-  const [cadence, setCadence] = useState<Cadence>(total === 5 || total === 10 ? 4 : 2)
+  // ISADI pidió días consecutivos para cualquier cantidad de sesiones. La
+  // cadencia sigue editable antes de elegir el ancla, pero el default es diario.
+  const [cadence, setCadence] = useState<Cadence>(4)
 
   // Propuesta automática (Pedido B): fechas propuestas sin hueco a la hora del
   // ancla — quedan acá hasta que la recepcionista las resuelva a mano o las quite.
   const [pendingProposals, setPendingProposals] = useState<{ date: string }[]>([])
-  const [isProposing, setIsProposing] = useState(false)
   const [proposeError, setProposeError] = useState<string | null>(null)
+  const proposalRunRef = useRef(0)
+  const selectedRef = useRef(selected)
+
+  useEffect(() => {
+    selectedRef.current = selected
+    // El padre también puede limpiar la selección (p. ej. tras un 409). En ese
+    // caso invalidamos cualquier respuesta en vuelo y retiramos pendientes viejos.
+    if (selected.length === 0) {
+      proposalRunRef.current += 1
+    }
+  }, [selected])
+
+  useEffect(
+    () => () => {
+      // Cerrar/cambiar de flujo no debe permitir que una respuesta tardía
+      // repueble el estado controlado del padre al reabrir.
+      proposalRunRef.current += 1
+    },
+    [],
+  )
 
   const anyMode = professionalId === null
   const count = selected.length
   const atCapacity = count >= total
-  const canPropose = total > 1 && count >= 1 && count < total
-
   const handleToggle = (slot: SelectedSlot) => {
     const exists = selected.some((s) => slotIdentity(s, anyMode) === slotIdentity(slot, anyMode))
     if (exists) {
-      onChange(selected.filter((s) => slotIdentity(s, anyMode) !== slotIdentity(slot, anyMode)))
+      const next = selected.filter((s) => slotIdentity(s, anyMode) !== slotIdentity(slot, anyMode))
+      selectedRef.current = next
+      onChange(next)
+      if (next.length === 0) {
+        proposalRunRef.current += 1
+        setPendingProposals([])
+        setProposeError(null)
+      }
       return
     }
     // Tope: no elegir más que las N del bono.
     if (count >= total) return
     const next = [...selected, slot].sort((a, b) => a.start_at.localeCompare(b.start_at))
+    if (selected.length === 0) {
+      setPendingProposals([])
+      setProposeError(null)
+    }
+    selectedRef.current = next
     onChange(next)
     // Un horario elegido a mano para una fecha que estaba pendiente la resuelve.
     setPendingProposals((prev) => prev.filter((p) => p.date !== slot.date))
@@ -117,22 +160,33 @@ export function MultiSessionScheduler({
     if (next.length < total && date) {
       setDate(advanceDate(date, CADENCE_SKIP[cadence]))
     }
+    // La primera fecha+hora es el ancla: desde acá la propuesta ocurre sola,
+    // sin botón ni estado "Proponiendo..." visible.
+    if (selected.length === 0 && total > 1) {
+      void handleAutoPropose(slot, next)
+    }
   }
 
   const handleRemove = (slot: SelectedSlot) => {
-    onChange(selected.filter((s) => slotIdentity(s, anyMode) !== slotIdentity(slot, anyMode)))
+    const next = selected.filter((s) => slotIdentity(s, anyMode) !== slotIdentity(slot, anyMode))
+    selectedRef.current = next
+    onChange(next)
+    if (next.length === 0) {
+      proposalRunRef.current += 1
+      setPendingProposals([])
+      setProposeError(null)
+    }
   }
 
-  // "Proponer automáticamente" (Pedido B): toma la ÚLTIMA sesión elegida (el
-  // ancla — normalmente la primera, si es la única) y propone el resto de las
-  // fechas consecutivas (según la cadencia elegida arriba), consultando la
-  // disponibilidad REAL de todo el rango en una sola llamada. Los días sin
-  // hueco a la hora del ancla quedan PENDIENTES — nunca se inventa un horario.
-  const handleAutoPropose = async () => {
-    if (!canPropose) return
-    const anchor = selected[selected.length - 1]
-    const remaining = total - count
+  // A partir del primer slot (ancla), propone automáticamente las fechas
+  // siguientes en una única consulta. Un run-id evita que una respuesta tardía
+  // reponga sesiones si la persona quitó/cambió el ancla mientras se consultaba.
+  const handleAutoPropose = async (anchor: SelectedSlot, baseSelected: SelectedSlot[]) => {
+    const remaining = total - baseSelected.length
+    if (remaining <= 0) return
     const skip = CADENCE_SKIP[cadence]
+    const runId = proposalRunRef.current + 1
+    proposalRunRef.current = runId
 
     const dates: string[] = []
     let cursor = anchor.date
@@ -141,17 +195,23 @@ export function MultiSessionScheduler({
       dates.push(cursor)
     }
 
-    setIsProposing(true)
     setProposeError(null)
     try {
-      const response = await fetchAvailabilityDays({
-        dateFrom: dates[0],
-        dateTo: dates[dates.length - 1],
-        serviceId,
-        professionalId: professionalId ?? undefined,
-        allProfessionals: anyMode,
-      })
-      const daysMap = response.days as Record<string, DayShifts>
+      const responses = await Promise.all(
+        chunkDatesByRange(dates).map(({ dateFrom, dateTo }) =>
+          fetchAvailabilityDays({
+            dateFrom,
+            dateTo,
+            serviceId,
+            professionalId: professionalId ?? undefined,
+            allProfessionals: anyMode,
+          }),
+        ),
+      )
+      const daysMap: Record<string, DayShifts> = {}
+      for (const response of responses) {
+        Object.assign(daysMap, response.days as Record<string, DayShifts>)
+      }
       const shiftsByDate: Record<string, AvailabilityShift[]> = {}
       for (const d of dates) {
         shiftsByDate[d] = daysMap[d]?.shifts ?? []
@@ -170,13 +230,35 @@ export function MultiSessionScheduler({
       const resolved = proposal.filter((p) => p.slot != null).map((p) => p.slot as SelectedSlot)
       const pending = proposal.filter((p) => p.slot == null).map((p) => ({ date: p.date }))
 
-      const merged = [...selected, ...resolved].sort((a, b) => a.start_at.localeCompare(b.start_at))
+      // La selección pudo editarse mientras llegaba la disponibilidad. Partimos
+      // del estado más reciente y abortamos si el ancla ya fue quitada.
+      if (proposalRunRef.current !== runId) return
+      const current = selectedRef.current
+      const anchorStillSelected = current.some(
+        (slot) => slotIdentity(slot, anyMode) === slotIdentity(anchor, anyMode),
+      )
+      if (!anchorStillSelected) return
+
+      const availableCapacity = Math.max(total - current.length, 0)
+      const newResolved = resolved
+        .filter(
+          (candidate) =>
+            !current.some(
+              (slot) =>
+                slot.date === candidate.date ||
+                slotIdentity(slot, anyMode) === slotIdentity(candidate, anyMode),
+            ),
+        )
+        .slice(0, availableCapacity)
+      const merged = [...current, ...newResolved].sort((a, b) => a.start_at.localeCompare(b.start_at))
+      selectedRef.current = merged
       onChange(merged)
-      setPendingProposals(pending)
+      const resolvedDates = new Set(merged.map((slot) => slot.date))
+      setPendingProposals(pending.filter((proposalDate) => !resolvedDates.has(proposalDate.date)))
     } catch {
-      setProposeError('No se pudo proponer las fechas automáticamente. Elegí manualmente.')
-    } finally {
-      setIsProposing(false)
+      if (proposalRunRef.current === runId) {
+        setProposeError('No se pudieron completar las fechas automáticamente. Elegí los horarios manualmente.')
+      }
     }
   }
 
@@ -235,34 +317,7 @@ export function MultiSessionScheduler({
         onDateChange={setDate}
       />
 
-      {/* Propuesta automática (Pedido B — bonos x5/x10 en días consecutivos):
-          disponible una vez elegido el primer horario a mano. */}
-      {total > 1 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void handleAutoPropose()}
-            disabled={!canPropose || isProposing}
-            className={[
-              'px-3 py-2 rounded-[8px] border text-sm font-medium min-h-[40px] transition-colors',
-              'bg-[var(--color-bg)] text-[var(--color-text-primary)] border-[var(--color-border)] hover:bg-[var(--color-surface)]',
-              !canPropose || isProposing ? 'opacity-50 cursor-not-allowed' : '',
-            ].join(' ')}
-          >
-            {isProposing
-              ? 'Proponiendo...'
-              : Math.max(total - count, 0) === 1
-                ? 'Proponer la próxima fecha'
-                : `Proponer las próximas ${Math.max(total - count, 0)} fechas`}
-          </button>
-          {count === 0 && (
-            <span className="text-xs text-[var(--color-text-secondary)]">
-              Elegí el primer horario para proponer el resto
-            </span>
-          )}
-        </div>
-      )}
-      {proposeError && (
+      {selected.length > 0 && proposeError && (
         <p role="alert" className="text-xs text-red-600">
           {proposeError}
         </p>
@@ -270,7 +325,7 @@ export function MultiSessionScheduler({
 
       {/* Fechas propuestas sin hueco a la hora del ancla — quedan pendientes de
           elegir a mano (nunca se inventa un horario). */}
-      {pendingProposals.length > 0 && (
+      {selected.length > 0 && pendingProposals.length > 0 && (
         <div className="rounded-[8px] border border-amber-300 bg-amber-50 p-3">
           <p className="mb-2 text-xs font-medium text-amber-800">
             Sin horario libre ese día — elegí uno a mano ({pendingProposals.length})

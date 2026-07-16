@@ -55,6 +55,123 @@ describe('makeMonthDateHeader', () => {
     await user.click(screen.getByText(/Navidad/))
     expect(onDayStatusClick).toHaveBeenCalledWith('2026-12-25')
   })
+
+  // ─── Click en el número del día → abre modal de turnos (pedido ISADI 2026-07-14) ───
+  describe('onDayNumberClick (clic en el número del día → modal de turnos)', () => {
+    it('sin drilldownView, CON onDayNumberClick → el número SÍ es un botón', () => {
+      const DateHeader = makeMonthDateHeader({}, vi.fn(), vi.fn())
+      render(<DateHeader label="15" date={new Date('2026-12-15T00:00:00')} drilldownView={null} onDrillDown={vi.fn()} />)
+      expect(screen.getByText('15').tagName).toBe('BUTTON')
+    })
+
+    it('click en el número llama onDayNumberClick con la fecha ISO (no onDrillDown)', async () => {
+      const user = userEvent.setup()
+      const onDayNumberClick = vi.fn()
+      const onDrillDown = vi.fn()
+      const DateHeader = makeMonthDateHeader({}, vi.fn(), onDayNumberClick)
+      render(<DateHeader label="15" date={new Date('2026-12-15T00:00:00')} drilldownView={null} onDrillDown={onDrillDown} />)
+      await user.click(screen.getByText('15'))
+      expect(onDayNumberClick).toHaveBeenCalledWith('2026-12-15')
+      expect(onDrillDown).not.toHaveBeenCalled()
+    })
+
+    it('el botón tiene un aria-label accesible con el día completo', () => {
+      const DateHeader = makeMonthDateHeader({}, vi.fn(), vi.fn())
+      render(<DateHeader label="14" date={new Date('2026-07-14T00:00:00')} drilldownView={null} onDrillDown={vi.fn()} />)
+      // 2026-07-14 es un martes.
+      expect(screen.getByRole('button', { name: /ver turnos del martes 14/i })).toBeInTheDocument()
+    })
+
+    it('onDayNumberClick tiene prioridad sobre drilldownView (no llama onDrillDown)', async () => {
+      const user = userEvent.setup()
+      const onDayNumberClick = vi.fn()
+      const onDrillDown = vi.fn()
+      const DateHeader = makeMonthDateHeader({}, vi.fn(), onDayNumberClick)
+      render(<DateHeader label="15" date={new Date('2026-12-15T00:00:00')} drilldownView="day" onDrillDown={onDrillDown} />)
+      await user.click(screen.getByText('15'))
+      expect(onDayNumberClick).toHaveBeenCalledWith('2026-12-15')
+      expect(onDrillDown).not.toHaveBeenCalled()
+    })
+
+    it('click en el badge ejecuta solo el estado y no el callback del número', async () => {
+      const user = userEvent.setup()
+      const onDayStatusClick = vi.fn()
+      const onDayNumberClick = vi.fn()
+      const DateHeader = makeMonthDateHeader(
+        { '2026-12-25': HOLIDAY_CLOSED },
+        onDayStatusClick,
+        onDayNumberClick,
+      )
+      render(
+        <DateHeader
+          label="25"
+          date={new Date('2026-12-25T00:00:00')}
+          drilldownView={null}
+          onDrillDown={vi.fn()}
+        />,
+      )
+
+      await user.click(screen.getByText(/Navidad/))
+
+      expect(onDayStatusClick).toHaveBeenCalledWith('2026-12-25')
+      expect(onDayNumberClick).not.toHaveBeenCalled()
+    })
+
+    it('click en el número ejecuta solo la consulta y no el callback del badge', async () => {
+      const user = userEvent.setup()
+      const onDayStatusClick = vi.fn()
+      const onDayNumberClick = vi.fn()
+      const DateHeader = makeMonthDateHeader(
+        { '2026-12-25': HOLIDAY_CLOSED },
+        onDayStatusClick,
+        onDayNumberClick,
+      )
+      render(
+        <DateHeader
+          label="25"
+          date={new Date('2026-12-25T00:00:00')}
+          drilldownView={null}
+          onDrillDown={vi.fn()}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: /ver turnos del viernes 25/i }))
+
+      expect(onDayNumberClick).toHaveBeenCalledWith('2026-12-25')
+      expect(onDayStatusClick).not.toHaveBeenCalled()
+    })
+
+    it('off-range muestra solo el número como texto y no expone controles que abran modales', async () => {
+      const user = userEvent.setup()
+      const onDayStatusClick = vi.fn()
+      const onDayNumberClick = vi.fn()
+      const onDrillDown = vi.fn()
+      const DateHeader = makeMonthDateHeader(
+        { '2026-12-25': HOLIDAY_CLOSED },
+        onDayStatusClick,
+        onDayNumberClick,
+      )
+      render(
+        <DateHeader
+          label="25"
+          date={new Date('2026-12-25T00:00:00')}
+          drilldownView="day"
+          isOffRange
+          onDrillDown={onDrillDown}
+        />,
+      )
+
+      const label = screen.getByText('25')
+      expect(label.tagName).toBe('SPAN')
+      expect(screen.queryByRole('button')).not.toBeInTheDocument()
+      expect(screen.queryByText(/Navidad/)).not.toBeInTheDocument()
+
+      await user.click(label)
+      expect(onDayNumberClick).not.toHaveBeenCalled()
+      expect(onDayStatusClick).not.toHaveBeenCalled()
+      expect(onDrillDown).not.toHaveBeenCalled()
+    })
+  })
 })
 
 describe('makeMonthDayPropGetter', () => {

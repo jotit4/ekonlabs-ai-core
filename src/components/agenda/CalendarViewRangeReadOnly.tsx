@@ -3,8 +3,22 @@
 // CSS imports — react-big-calendar base only (month view), no DnD styles
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 
-import { useMemo, useState } from 'react'
-import { Calendar, dateFnsLocalizer, Views } from 'react-big-calendar'
+import {
+  cloneElement,
+  useCallback,
+  useMemo,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactElement,
+  type ReactNode,
+} from 'react'
+import {
+  Calendar,
+  dateFnsLocalizer,
+  Views,
+  type DateCellWrapperProps,
+  type EventWrapperProps,
+} from 'react-big-calendar'
 import {
   format,
   parse,
@@ -69,6 +83,7 @@ function WeekGridView({
   onEmptyCellClick,
   dayStatusMap,
   onDayStatusClick,
+  onColumnHeaderClick,
 }: {
   weekDate: Date
   events: CalendarEvent[]
@@ -83,6 +98,14 @@ function WeekGridView({
   dayStatusMap?: Record<string, DayStatusEntry>
   /** Click en el badge de estado de un día → abre el modal "¿abre o no?". */
   onDayStatusClick?: (date: string) => void
+  /**
+   * Click en el ENCABEZADO de un día (o en "+N más" de una celda apretada) →
+   * abre el modal con todos los turnos de ese día (pedido ISADI 2026-07-14).
+   * Se reenvía directo a `TurneroGrid.onColumnHeaderClick`: el `columnId` de
+   * la vista Semana YA es la fecha ISO del día, así que no hace falta
+   * traducirlo acá.
+   */
+  onColumnHeaderClick?: (dateIso: string) => void
 }) {
   const grid = useMemo(() => {
     // Ventana de 7 días DESDE la fecha ancla (weekDate). El ancla es la PRIMERA
@@ -110,6 +133,9 @@ function WeekGridView({
       return {
         id: dayIso,
         label: format(day, 'EEE d', { locale: es }),
+        // Etiqueta larga para el aria-label del encabezado clickeable (ej.
+        // "martes 14" en vez de "mar 14" — más clara para lectores de pantalla).
+        fullLabel: format(day, 'EEEE d', { locale: es }),
         sublabel:
           count === 0
             ? 'Sin turnos'
@@ -201,37 +227,56 @@ function WeekGridView({
         isPastCell={isPastCell}
         nowLine={nowLine}
         ariaLabel="Grilla semanal de turnos"
+        onColumnHeaderClick={onColumnHeaderClick}
       />
     </div>
   )
 }
 
-// ─── Vista Mes: chip adaptivo via container queries ───────────────────────────
-// - ancho > 130px: hora + paciente + profesional
-// - 70–130px:      hora + paciente
-// - < 70px:        solo hora
+// ─── Vista Mes: resumen compacto ──────────────────────────────────────────────
+// El detalle (profesional/servicio) vive en el modal del día y en el detalle
+// del turno. En el mes cada fila se mantiene deliberadamente en una línea para
+// que RBC pueda medir cuántas entran y reemplazar el excedente por "+N turnos"
+// sin recortar contenido silenciosamente.
 function RangeEvent({ event }: { event: CalendarEvent }) {
-  const professionalName =
-    event.resource.professionals?.name ??
-    event.resource.services?.professional_name ??
-    null
   const hour = format(event.start, 'HH:mm')
   const patientName = event.resource.patients?.full_name ?? 'Paciente'
 
   return (
-    <div className="flex flex-col h-full px-1 py-0.5 cursor-pointer overflow-hidden">
-      <span className="rbc-re-header text-[11px] font-semibold leading-tight overflow-hidden whitespace-nowrap text-ellipsis">
+    <div className="rbc-month-event-summary">
+      <span className="rbc-month-event-text">
         <span className="rbc-re-hour">{hour}</span>
-        <span className="rbc-re-sep"> · </span>
-        <span className="rbc-re-name">{patientName}</span>
+        <span> · </span>
+        <span>{patientName}</span>
       </span>
-      {professionalName && (
-        <span className="rbc-re-prof text-[10px] opacity-85 truncate leading-tight mt-px">
-          {professionalName}
-        </span>
-      )}
     </div>
   )
+}
+
+type MonthEventWrapperProps = EventWrapperProps<CalendarEvent> & {
+  children?: ReactElement<{
+    role?: string
+    tabIndex?: number
+    'aria-label'?: string
+  }>
+}
+
+/**
+ * RBC renderiza los turnos del mes como `div` sin foco. El wrapper no agrega
+ * otra capa al DOM: clona ese mismo nodo y le da la semántica/foco de botón;
+ * su `onClick` original sigue siendo la única ruta de mouse de RBC.
+ */
+function MonthEventWrapper({ event, children }: MonthEventWrapperProps) {
+  if (!children) return null
+
+  const hour = format(event.start, 'HH:mm')
+  const patientName = event.resource.patients?.full_name ?? 'Paciente'
+
+  return cloneElement(children, {
+    role: 'button',
+    tabIndex: 0,
+    'aria-label': `Abrir turno de ${patientName} a las ${hour}`,
+  })
 }
 
 // ─── Modal "+N más" (vista Mes) ───────────────────────────────────────────────
@@ -445,12 +490,86 @@ export function CalendarViewRangeReadOnly({
 }: CalendarViewRangeReadOnlyProps) {
   const [dayPopup, setDayPopup] = useState<{ date: Date; events: CalendarEvent[] } | null>(null)
 
+  // Los CANCELADOS no se muestran en la agenda (Semana/Mes) — decisión 2026-07-14,
+  // igual criterio que la vista Día (ver CalendarView.tsx). Los no_show SÍ se
+  // muestran. Filtrado acá (no en useAppointmentsRange) porque ese hook no tiene
+  // otros consumidores hoy, pero mantenemos el mismo patrón que Día por
+  // consistencia y para no acoplar la regla de "qué muestra la agenda" al fetch.
+  //
+  // Memoizado (dep `[appointments]`, no en cada render) porque
+  // `handleDayNumberClick` lo necesita con identidad ESTABLE: si `events`
+  // fuera un array nuevo en cada render, `handleDayNumberClick` cambiaría de
+  // identidad también, y con él `monthDateHeader` — exactamente lo que ese
+  // memo evita (RBC trata `dateHeader` como definición de componente:
+  // cambiarla de identidad fuerza un remount visible del encabezado). Se
+  // computa ACÁ ARRIBA (antes de los early return de loading/error) porque
+  // las Reglas de Hooks exigen que todos los hooks se llamen siempre en el
+  // mismo orden, sin returns tempranos entre medio.
+  const events = useMemo<CalendarEvent[]>(
+    () =>
+      appointments
+        .filter((apt) => apt && apt.start_at && apt.end_at && apt.status !== 'cancelled')
+        .map(appointmentToCalendarEvent),
+    [appointments],
+  )
+
+  // Click en el ENCABEZADO de un día (Semana o Mes) o en "+N más" de una
+  // celda apretada (Semana) → abre el modal con TODOS los turnos de ese día
+  // (pedido ISADI 2026-07-14). Único handler compartido por ambas vistas.
+  const handleDayNumberClick = useCallback(
+    (dateIso: string) => {
+      const dayEvents = events.filter(
+        (ev) => formatISO(ev.start, { representation: 'date' }) === dateIso,
+      )
+      setDayPopup({ date: parseISO(dateIso), events: dayEvents })
+    },
+    [events],
+  )
+
   // Vista Mes — factories memoizadas para no recrear la identidad del
   // componente `dateHeader` en cada render (react-big-calendar las trata como
   // definiciones de componente, no como JSX).
   const monthDateHeader = useMemo(
-    () => makeMonthDateHeader(dayStatusMap, onDayStatusClick),
-    [dayStatusMap, onDayStatusClick],
+    () => makeMonthDateHeader(dayStatusMap, onDayStatusClick, handleDayNumberClick),
+    [dayStatusMap, onDayStatusClick, handleDayNumberClick],
+  )
+  const monthDateCellWrapper = useMemo(
+    () => {
+      const selectedMonth = parseISO(date)
+
+      return function MonthDateCellWrapper({ value, children }: DateCellWrapperProps) {
+        const belongsToSelectedMonth =
+          value.getFullYear() === selectedMonth.getFullYear() &&
+          value.getMonth() === selectedMonth.getMonth()
+
+        if (!belongsToSelectedMonth) {
+          return (
+            <div
+              className="rbc-month-day-wrapper rbc-month-day-wrapper--off-range"
+              aria-hidden="true"
+            >
+              {children}
+            </div>
+          )
+        }
+
+        const dateIso = formatISO(value, { representation: 'date' })
+
+        return (
+          // Esta capa amplía solo el target de mouse. No crea otro control
+          // accesible ni otro tab stop: el botón del número sigue siendo el
+          // acceso semántico/por teclado para consultar el día.
+          <div
+            className="rbc-month-day-wrapper rbc-month-day-hitarea"
+            aria-hidden="true"
+            onClick={() => handleDayNumberClick(dateIso)}
+          >
+            {children}
+          </div>
+        )
+      }
+    },
+    [date, handleDayNumberClick],
   )
   const monthDayPropGetter = useMemo(() => makeMonthDayPropGetter(dayStatusMap), [dayStatusMap])
 
@@ -475,18 +594,9 @@ export function CalendarViewRangeReadOnly({
     )
   }
 
-  // Los CANCELADOS no se muestran en la agenda (Semana/Mes) — decisión 2026-07-14,
-  // igual criterio que la vista Día (ver CalendarView.tsx). Los no_show SÍ se
-  // muestran. Filtrado acá (no en useAppointmentsRange) porque ese hook no tiene
-  // otros consumidores hoy, pero mantenemos el mismo patrón que Día por
-  // consistencia y para no acoplar la regla de "qué muestra la agenda" al fetch.
-  const events: CalendarEvent[] = appointments
-    .filter((apt) => apt && apt.start_at && apt.end_at && apt.status !== 'cancelled')
-    .map(appointmentToCalendarEvent)
-
   // Vista Semana: grilla HORA × DÍA (planilla, sin time-grid de RBC)
-  if (view === 'week') {
-    return (
+  const mainContent: ReactNode =
+    view === 'week' ? (
       <WeekGridView
         weekDate={parseISO(date)}
         events={events}
@@ -494,14 +604,11 @@ export function CalendarViewRangeReadOnly({
         onEmptyCellClick={onEmptyCellClick}
         dayStatusMap={dayStatusMap}
         onDayStatusClick={onDayStatusClick}
+        onColumnHeaderClick={handleDayNumberClick}
       />
-    )
-  }
-
-  // Vista Mes: react-big-calendar con chips adaptativos
-  return (
-    <>
-      <div className="rbc-wrapper">
+    ) : (
+      // Vista Mes: react-big-calendar con chips adaptativos
+      <div className="rbc-wrapper rbc-wrapper--month">
         <Calendar
           localizer={localizer}
           events={events}
@@ -514,9 +621,22 @@ export function CalendarViewRangeReadOnly({
           onSelectEvent={(event: CalendarEvent) => {
             onAppointmentClick?.(event.resource)
           }}
-          onShowMore={(shownEvents: CalendarEvent[], date: Date) => {
-            setDayPopup({ date, events: shownEvents })
+          onKeyPressEvent={(event: CalendarEvent, keyboardEvent) => {
+            const keyEvent = keyboardEvent as ReactKeyboardEvent<HTMLElement>
+            if (keyEvent.key !== 'Enter' && keyEvent.key !== ' ') return
+            keyEvent.preventDefault()
+            keyEvent.stopPropagation()
+            onAppointmentClick?.(event.resource)
           }}
+          onShowMore={(_shownEvents: CalendarEvent[], date: Date) => {
+            // RBC informa correctamente la fecha, pero según la versión puede
+            // entregar solo el subconjunto oculto. Recalcular desde `events`
+            // garantiza que el modal liste el día completo y ordenado.
+            handleDayNumberClick(formatISO(date, { representation: 'date' }))
+          }}
+          showAllEvents={false}
+          popup={false}
+          doShowMoreDrillDown={false}
           style={{ minHeight: '600px' }}
           culture="es"
           messages={{
@@ -525,7 +645,7 @@ export function CalendarViewRangeReadOnly({
             previous: 'Anterior',
             next: 'Siguiente',
             month: 'Mes',
-            showMore: (total: number) => `+${total} más`,
+            showMore: (total: number) => `+${total} ${total === 1 ? 'turno' : 'turnos'}`,
           }}
           eventPropGetter={(event: CalendarEvent) => {
             // Mismo lenguaje visual que el chip de la grilla (Semana/Día): el
@@ -547,6 +667,8 @@ export function CalendarViewRangeReadOnly({
           dayPropGetter={monthDayPropGetter}
           components={{
             event: (props: { event: CalendarEvent }) => <RangeEvent event={props.event} />,
+            eventWrapper: MonthEventWrapper,
+            dateCellWrapper: monthDateCellWrapper,
             // `components.month.dateHeader` es la forma tipada (Components<T>
             // de @types/react-big-calendar solo declara `dateHeader` anidado
             // bajo `month`, no en la raíz) — a nivel runtime RBC hace merge de
@@ -556,6 +678,11 @@ export function CalendarViewRangeReadOnly({
           }}
         />
       </div>
+    )
+
+  return (
+    <>
+      {mainContent}
 
       {dayPopup && (
         <DayEventsModal

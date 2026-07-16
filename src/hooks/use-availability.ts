@@ -11,6 +11,17 @@ export interface UseAvailabilityOptions {
   dateFrom: string // 'YYYY-MM-DD'
   dateTo: string // 'YYYY-MM-DD'
   serviceId?: string | null
+  /**
+   * Grupo de servicios (Pedido 1 ISADI 2026-07-16 — "Dar un turno" de
+   * recepción para el grupo Fisioterapia, sin elegir servicio ni profesional).
+   * Cuando se pasa una lista no vacía, tiene PRIORIDAD sobre `serviceId`: la
+   * API consulta TODOS esos service_id a la vez (cada uno con TODOS sus
+   * profesionales activos, salvo que venga un `professionalId` concreto) y
+   * devuelve la unión de huecos — cada uno conserva su propio
+   * service_id/professional_id, así que al confirmar el turno se crea con
+   * los del hueco elegido.
+   */
+  serviceIds?: string[] | null
   professionalId?: string | null
   summary?: boolean
   enabled?: boolean
@@ -42,6 +53,7 @@ export interface FetchAvailabilityDaysParams {
   dateFrom: string
   dateTo: string
   serviceId?: string | null
+  serviceIds?: string[] | null
   professionalId?: string | null
   summary?: boolean
   allProfessionals?: boolean
@@ -59,12 +71,19 @@ export async function fetchAvailabilityDays({
   dateFrom,
   dateTo,
   serviceId,
+  serviceIds,
   professionalId,
   summary = false,
   allProfessionals = false,
 }: FetchAvailabilityDaysParams): Promise<AvailabilityResponse> {
   const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo })
-  if (serviceId) params.set('service_id', serviceId)
+  // `serviceIds` (grupo) tiene prioridad sobre `serviceId` (puntual) — ver
+  // comentario en UseAvailabilityOptions.
+  if (serviceIds && serviceIds.length > 0) {
+    params.set('service_ids', serviceIds.join(','))
+  } else if (serviceId) {
+    params.set('service_id', serviceId)
+  }
   if (professionalId) params.set('professional_id', professionalId)
   if (summary) params.set('summary', 'true')
   if (allProfessionals) params.set('all_professionals', 'true')
@@ -80,6 +99,7 @@ export function useAvailability({
   dateFrom,
   dateTo,
   serviceId,
+  serviceIds,
   professionalId,
   summary = false,
   enabled = true,
@@ -90,13 +110,13 @@ export function useAvailability({
       'availability',
       dateFrom,
       dateTo,
-      serviceId ?? '',
+      serviceIds && serviceIds.length > 0 ? serviceIds.slice().sort().join(',') : (serviceId ?? ''),
       professionalId ?? '',
       summary,
       allProfessionals,
     ],
     queryFn: () =>
-      fetchAvailabilityDays({ dateFrom, dateTo, serviceId, professionalId, summary, allProfessionals }),
+      fetchAvailabilityDays({ dateFrom, dateTo, serviceId, serviceIds, professionalId, summary, allProfessionals }),
     staleTime: 60_000, // se invalida por Realtime de todos modos
     enabled,
   })

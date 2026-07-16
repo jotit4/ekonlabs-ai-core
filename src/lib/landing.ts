@@ -24,3 +24,28 @@ export const FALLBACK_LANDING = '/agenda'
 export function landingForRole(role: UserRole | undefined | null): string {
   return (role && LANDING_BY_ROLE[role]) || FALLBACK_LANDING
 }
+
+/**
+ * Ruta "padre" de una ruta, para el botón "Volver" de AppTopbar.
+ * Deriva por ESTRUCTURA DE PATHNAME ("subir un nivel"), no por history —
+ * evita que módulos que empujan estado al historial (ej. Agenda con
+ * fecha/vista/service_id como query/entries) hagan que "atrás" recorra
+ * esos estados intermedios en vez de ir al módulo anterior.
+ *
+ * Reglas:
+ *  - En el propio landing del rol → no hay padre (null): no hay a dónde subir.
+ *  - Subruta de un módulo (ej. "/pacientes/123", "/configuracion/agente")
+ *    → la raíz de ese módulo ("/pacientes", "/configuracion").
+ *  - Un módulo raíz (ej. "/agenda", "/conversaciones", "/recepcion")
+ *    → el landing del rol.
+ *
+ * Usada por src/components/AppTopbar.tsx.
+ */
+export function getParentPath(pathname: string, homeHref: string): string | null {
+  if (pathname === homeHref) return null
+
+  const segments = pathname.split('/').filter(Boolean)
+  if (segments.length === 0) return null
+  if (segments.length === 1) return homeHref
+  return `/${segments[0]}`
+}

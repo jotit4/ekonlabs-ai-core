@@ -37,12 +37,29 @@ export interface TurneroGridProps {
   /** Línea de "ahora": se dibuja sobre la fila `atHour` en las columnas que matchean. */
   nowLine?: { atHour: string; appliesToColumn: (columnId: string) => boolean }
   ariaLabel?: string
+  /**
+   * Click en el ENCABEZADO de una columna (el número/nombre del día) → abre
+   * el modal con TODOS los turnos de esa columna (pedido ISADI 2026-07-14 de
+   * poder abrir un día apretado). Opcional a propósito: la vista Día
+   * (columnas = profesionales, `CalendarView.tsx`) NO lo pasa, así que su
+   * encabezado sigue siendo texto plano, sin cambios.
+   *
+   * Se reutiliza también para el botón "+N más" de `GridCell`: ambos abren el
+   * mismo modal de turnos del día, por eso comparten esta única prop en vez
+   * de tener un callback separado para cada disparador.
+   */
+  onColumnHeaderClick?: (columnId: string) => void
 }
 
 const HOUR_COL_WIDTH = 60
 const ROW_MIN_HEIGHT = 56
 // Color de la línea de "ahora" (patrón calendario). Rojo reconocible.
 const NOW_COLOR = '#ef4444'
+// Máximo de chips de turno visibles por celda antes de colapsar a "+N más".
+// Solo aplica cuando `onColumnHeaderClick` está presente (vista Semana) — sin
+// él (vista Día) la celda sigue apilando todos los turnos, sin límite, para
+// no cambiar su comportamiento actual.
+const MAX_CHIPS_PER_CELL = 2
 
 // ─── Chip de turno ocupado ────────────────────────────────────────────────────
 
@@ -234,6 +251,7 @@ function GridCell({
   showNowLine = false,
   onAppointmentClick,
   onEmptyCellClick,
+  onColumnHeaderClick,
 }: {
   cell: TurneroCell
   columnId: string
@@ -244,6 +262,9 @@ function GridCell({
   showNowLine?: boolean
   onAppointmentClick?: (apt: Appointment) => void
   onEmptyCellClick?: (columnId: string, hour: string) => void
+  /** Ver doc en `TurneroGridProps.onColumnHeaderClick`. Cuando está presente,
+   * la celda cap-ea los chips visibles y ofrece "+N más" con el mismo handler. */
+  onColumnHeaderClick?: (columnId: string) => void
 }) {
   const { appointments, outOfHours } = cell
   const hasAppointments = appointments.length > 0
@@ -300,6 +321,17 @@ function GridCell({
     )
   }
 
+  // Superposición apretada (pedido ISADI 2026-07-14): con `onColumnHeaderClick`
+  // disponible (vista Semana) se cap-ean los chips visibles y el resto se
+  // resume en "+N más", que abre el mismo modal de turnos del día. Sin ese
+  // callback (vista Día) se sigue apilando TODO sin límite — cero cambio.
+  const canCollapse = !!onColumnHeaderClick
+  const visibleAppointments =
+    canCollapse && appointments.length > MAX_CHIPS_PER_CELL
+      ? appointments.slice(0, MAX_CHIPS_PER_CELL)
+      : appointments
+  const hiddenCount = appointments.length - visibleAppointments.length
+
   return (
     <div
       style={{
@@ -315,7 +347,7 @@ function GridCell({
         opacity: isPast ? 0.7 : 1,
       }}
     >
-      {appointments.map((apt) => (
+      {visibleAppointments.map((apt) => (
         <TurnoChip
           key={apt.appointment_id}
           apt={apt}
@@ -324,6 +356,31 @@ function GridCell({
           onClick={onAppointmentClick}
         />
       ))}
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          onClick={() => onColumnHeaderClick?.(columnId)}
+          aria-label={`Ver ${hiddenCount} ${hiddenCount === 1 ? 'turno más' : 'turnos más'} de ${columnLabel ?? 'este día'}`}
+          className="turnero-show-more"
+          style={{
+            width: '100%',
+            minHeight: 32,
+            padding: '6px 4px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 11,
+            fontWeight: 600,
+            color: 'var(--color-interactive)',
+            background: 'color-mix(in srgb, var(--color-interactive) 8%, transparent)',
+            border: 'none',
+            borderRadius: 4,
+            cursor: 'pointer',
+          }}
+        >
+          +{hiddenCount} más
+        </button>
+      )}
     </div>
   )
 }
@@ -340,6 +397,7 @@ export function TurneroGrid({
   isPastCell,
   nowLine,
   ariaLabel = 'Grilla de turnos',
+  onColumnHeaderClick,
 }: TurneroGridProps) {
   const gridTemplateColumns = `${HOUR_COL_WIDTH}px repeat(${columns.length}, minmax(120px, 1fr))`
 
@@ -362,6 +420,17 @@ export function TurneroGrid({
         }
         .turnero-empty-cell:hover .turnero-empty-plus { opacity: 0.6 !important; }
         .turnero-empty-cell:focus-visible {
+          outline: 2px solid var(--color-interactive);
+          outline-offset: -2px;
+        }
+        .turnero-header-btn:hover { text-decoration: underline; }
+        .turnero-header-btn:focus-visible {
+          outline: 2px solid var(--color-interactive);
+          outline-offset: 2px;
+          border-radius: 4px;
+        }
+        .turnero-show-more:hover { background: color-mix(in srgb, var(--color-interactive) 16%, transparent) !important; }
+        .turnero-show-more:focus-visible {
           outline: 2px solid var(--color-interactive);
           outline-offset: -2px;
         }
@@ -408,19 +477,49 @@ export function TurneroGrid({
                   : 'var(--color-surface)',
               }}
             >
-              <div
-                style={{
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: col.isHighlighted ? 'var(--color-interactive)' : 'var(--color-text-primary)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-                title={col.label}
-              >
-                {col.label}
-              </div>
+              {onColumnHeaderClick ? (
+                <button
+                  type="button"
+                  onClick={() => onColumnHeaderClick(col.id)}
+                  aria-label={`Ver turnos del ${col.fullLabel ?? col.label}`}
+                  title={col.label}
+                  className="turnero-header-btn"
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: col.isHighlighted ? 'var(--color-interactive)' : 'var(--color-text-primary)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    background: 'none',
+                    border: 'none',
+                    padding: 0,
+                    margin: 0,
+                    fontFamily: 'inherit',
+                    lineHeight: 'inherit',
+                    textAlign: 'inherit',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {col.label}
+                </button>
+              ) : (
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: col.isHighlighted ? 'var(--color-interactive)' : 'var(--color-text-primary)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={col.label}
+                >
+                  {col.label}
+                </div>
+              )}
               {col.sublabel && (
                 <div style={{ fontSize: 10, color: 'var(--color-text-secondary)', marginTop: 1 }}>
                   {col.sublabel}
@@ -471,6 +570,7 @@ export function TurneroGrid({
                     showNowLine={isNowRow && nowLine!.appliesToColumn(col.id)}
                     onAppointmentClick={onAppointmentClick}
                     onEmptyCellClick={onEmptyCellClick}
+                    onColumnHeaderClick={onColumnHeaderClick}
                   />
                 ))}
               </Fragment>

@@ -38,7 +38,16 @@ export interface Appointment {
   treatments?: { total_sessions: number; status: string } | null
   // Joins via Refine meta.select
   patients: { full_name: string | null } | null
-  services: { name: string; professional: string | null; professional_name?: string | null; duration_minutes?: number } | null
+  services: {
+    name: string
+    professional: string | null
+    professional_name?: string | null
+    duration_minutes?: number
+    // Agrupador de recepción (migración 053, pedido ISADI 2026-07-16 — botones
+    // de grupo Fisioterapia/Pileta/Pilates). Solo presente cuando el select lo
+    // pide explícitamente (use-appointments / use-appointments-range).
+    reception_group?: string | null
+  } | null
   professionals: { name: string } | null  // join desde professional_id → professionals
 }
 

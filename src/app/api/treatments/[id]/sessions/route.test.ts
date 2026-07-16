@@ -348,4 +348,37 @@ describe('POST /api/treatments/[id]/sessions', () => {
       )
     })
   })
+
+  describe('Pedido 6 (ISADI 2026-07-14/16) — color único de la tanda', () => {
+    it('sin color en el body, el UPDATE que liga package_id/session_index NO lleva color', async () => {
+      const cfg: FromConfig = {}
+      configureFrom(cfg)
+      rpcCreates()
+
+      const res = await POST(makeRequest(validBody(2)), makeParams())
+      expect(res.status).toBe(201)
+      expect(cfg.updatePayloads).toEqual([
+        { package_id: TREATMENT_ID, session_index: 1 },
+        { package_id: TREATMENT_ID, session_index: 2 },
+      ])
+    })
+
+    it('con color en el body, TODOS los turnos creados se ligan con ESE color', async () => {
+      const cfg: FromConfig = {}
+      configureFrom(cfg)
+      rpcCreates()
+
+      const res = await POST(makeRequest({ ...validBody(2), color: '#00FFFF' }), makeParams())
+      expect(res.status).toBe(201)
+      expect(cfg.updatePayloads).toEqual([
+        { package_id: TREATMENT_ID, session_index: 1, color: '#00FFFF' },
+        { package_id: TREATMENT_ID, session_index: 2, color: '#00FFFF' },
+      ])
+    })
+
+    it('400 si el color no tiene formato hex válido', async () => {
+      const res = await POST(makeRequest({ ...validBody(1), color: 'cyan' }), makeParams())
+      expect(res.status).toBe(400)
+    })
+  })
 })

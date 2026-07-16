@@ -216,4 +216,81 @@ describe('GET /api/availability', () => {
       )
     })
   })
+
+  describe('service_ids (grupo — Pedido 1 ISADI 2026-07-16, "Dar un turno" recepción)', () => {
+    beforeEach(() => {
+      // service_professionals → dos profesionales activos, mismos para cualquier
+      // service_id consultado (el mock no distingue por argumento, como el resto
+      // de la suite — alcanza para probar la iteración servicio x profesional).
+      mockFrom.mockReturnValue({
+        select: () => ({
+          eq: () =>
+            Promise.resolve({
+              data: [
+                { professional_id: 'prof-1', professionals: { professional_id: 'prof-1', active: true } },
+                { professional_id: 'prof-2', professionals: { professional_id: 'prof-2', active: true } },
+              ],
+              error: null,
+            }),
+        }),
+      })
+      mockRpc.mockImplementation(
+        (_fn: string, args: { p_service_id?: string; p_professional_id?: string }) => {
+          const svc = args.p_service_id ?? 'unknown'
+          const prof = args.p_professional_id ?? 'unknown'
+          return Promise.resolve({
+            data: [
+              {
+                available: true,
+                shifts: [{ ...SAMPLE_SHIFT, service_id: svc, professional_id: prof, professional_name: `Prof ${prof}` }],
+              },
+            ],
+            error: null,
+          })
+        },
+      )
+    })
+
+    it('itera TODOS los service_id del grupo x TODOS sus profesionales activos, uniendo huecos', async () => {
+      const res = await GET(
+        makeRequest('date_from=2026-06-04&date_to=2026-06-04&service_ids=svc-1,svc-2'),
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      const shifts = body.days['2026-06-04'].shifts as { service_id: string; professional_id: string }[]
+      // 2 servicios x 2 profesionales = 4 huecos
+      expect(shifts).toHaveLength(4)
+      const combos = shifts.map((s) => `${s.service_id}__${s.professional_id}`).sort()
+      expect(combos).toEqual(['svc-1__prof-1', 'svc-1__prof-2', 'svc-2__prof-1', 'svc-2__prof-2'])
+    })
+
+    it('con professional_id explícito junto a service_ids, NO consulta service_professionals (usa ese profesional para cada servicio)', async () => {
+      mockFrom.mockClear()
+      const res = await GET(
+        makeRequest(
+          'date_from=2026-06-04&date_to=2026-06-04&service_ids=svc-1,svc-2&professional_id=prof-9',
+        ),
+      )
+      expect(res.status).toBe(200)
+      expect(mockFrom).not.toHaveBeenCalled()
+      const body = await res.json()
+      const shifts = body.days['2026-06-04'].shifts as { professional_id: string }[]
+      expect(shifts).toHaveLength(2)
+      for (const s of shifts) expect(s.professional_id).toBe('prof-9')
+    })
+
+    it('service_ids tiene prioridad sobre service_id cuando ambos llegan', async () => {
+      const res = await GET(
+        makeRequest(
+          'date_from=2026-06-04&date_to=2026-06-04&service_id=svc-legacy&service_ids=svc-1,svc-2',
+        ),
+      )
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      const shifts = body.days['2026-06-04'].shifts as { service_id: string }[]
+      const svcIds = shifts.map((s) => s.service_id)
+      expect(svcIds).not.toContain('svc-legacy')
+      expect(svcIds.sort()).toEqual(['svc-1', 'svc-1', 'svc-2', 'svc-2'])
+    })
+  })
 })

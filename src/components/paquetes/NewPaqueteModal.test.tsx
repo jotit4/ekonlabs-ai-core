@@ -274,7 +274,7 @@ describe('NewPaqueteModal', () => {
       await user.click(screen.getByRole('button', { name: /crear paquete/i }))
 
       await waitFor(() => {
-        expect(screen.getByText(/Agendar sesión/i)).toBeInTheDocument()
+        expect(screen.getByText(/Paquete creado/i)).toBeInTheDocument()
       })
       // El form ya no se muestra tras crear; aparece el botón "Cerrar".
       expect(screen.getByRole('button', { name: /cerrar/i })).toBeInTheDocument()
@@ -477,6 +477,106 @@ describe('NewPaqueteModal', () => {
       })
       await waitFor(() => {
         expect(vi.mocked(toast.success)).toHaveBeenCalled()
+      })
+    })
+
+    it('Pedido 6 (ISADI 2026-07-14/16) — el scheduler embebido (5/10) ofrece color y lo manda al confirmar', async () => {
+      const user = userEvent.setup()
+      render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
+
+      await user.click(screen.getByRole('button', { name: '10 sesiones' }))
+      await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-1')
+      await user.click(screen.getByRole('button', { name: /crear paquete/i }))
+
+      await waitFor(() => screen.getByTestId('multi-session-scheduler'))
+      expect(screen.getByText('Color para todas las sesiones de este paquete')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'elegir-propuesta' }))
+      await user.click(screen.getByRole('button', { name: 'Color #00FFFF' }))
+
+      const confirmar = screen.getByRole('button', { name: /confirmar y agendar 1/i })
+      await waitFor(() => expect(confirmar).toBeEnabled())
+      await user.click(confirmar)
+
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find((c) => c[0] === '/api/treatments/trt-new/sessions')
+        expect(call).toBeTruthy()
+        const body = JSON.parse((call![1] as { body: string }).body)
+        expect(body.color).toBe('#00FFFF')
+      })
+    })
+  })
+
+  describe('Pedido 7 (ISADI 2026-07-16) — botón "Agendar sesión" para cantidades ≠ 5/10', () => {
+    beforeEach(() => {
+      mockFetch.mockImplementation((url: string, init?: { method?: string }) => {
+        if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse())
+        if (url === '/api/treatments' && init?.method === 'POST') return Promise.resolve(makeTreatmentResponse())
+        if (url === '/api/treatments/trt-new/sessions' && init?.method === 'POST') {
+          return Promise.resolve({ ok: true, status: 201, json: async () => ({ success: true, creadas: 1, skipped: [] }) })
+        }
+        return Promise.resolve(makeSearchResponse([]))
+      })
+    })
+
+    it('para 3 sesiones, ofrece "Agendar sesión" en el aviso (NO el scheduler embebido)', async () => {
+      const user = userEvent.setup()
+      render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
+
+      await fillTreatmentForm(user, '3')
+      await user.click(screen.getByRole('button', { name: /crear paquete/i }))
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Agendar sesión' })).toBeInTheDocument()
+      })
+      expect(screen.queryByTestId('multi-session-scheduler')).not.toBeInTheDocument()
+    })
+
+    it('clic en "Agendar sesión" abre el modal de agendado con los datos del bono recién creado, sin cerrar el modal padre', async () => {
+      const user = userEvent.setup()
+      render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
+
+      await fillTreatmentForm(user, '3')
+      await user.click(screen.getByRole('button', { name: /crear paquete/i }))
+      await waitFor(() => screen.getByRole('button', { name: 'Agendar sesión' }))
+
+      await user.click(screen.getByRole('button', { name: 'Agendar sesión' }))
+
+      // Bono nuevo → porAgendar = total (3); profesional PROF_1 elegido en el form.
+      await waitFor(() => {
+        expect(screen.getByText(/faltan agendar 3/i)).toBeInTheDocument()
+      })
+      // El modal padre NO se cerró. El botón trigger de la aviso desaparece
+      // mientras el sub-modal está abierto (evita el duplicado con el propio
+      // botón de confirmar de AgendarSesionModal, que arranca deshabilitado
+      // sin slots elegidos — por eso queda uno solo, y deshabilitado).
+      expect(mockOnClose).not.toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: 'Agendar sesión' })).toBeDisabled()
+    })
+
+    it('agendar desde ese botón hace POST a /sessions del bono recién creado', async () => {
+      const user = userEvent.setup()
+      render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
+
+      await fillTreatmentForm(user, '3')
+      await user.click(screen.getByRole('button', { name: /crear paquete/i }))
+      await waitFor(() => screen.getByRole('button', { name: 'Agendar sesión' }))
+      await user.click(screen.getByRole('button', { name: 'Agendar sesión' }))
+
+      await waitFor(() => screen.getByTestId('multi-session-scheduler'))
+      await user.click(screen.getByRole('button', { name: 'elegir-propuesta' }))
+      await user.click(screen.getByRole('button', { name: 'Color #00FFFF' }))
+
+      const confirmBtn = await screen.findByRole('button', { name: 'Agendar sesión' })
+      await waitFor(() => expect(confirmBtn).toBeEnabled())
+      await user.click(confirmBtn)
+
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find((c) => c[0] === '/api/treatments/trt-new/sessions')
+        expect(call).toBeTruthy()
+        const body = JSON.parse((call![1] as { body: string }).body)
+        expect(body.slots).toHaveLength(1)
+        expect(body.color).toBe('#00FFFF')
       })
     })
   })

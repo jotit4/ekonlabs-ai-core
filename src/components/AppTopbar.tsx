@@ -2,9 +2,9 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home } from 'lucide-react'
+import { ArrowLeft, Home } from 'lucide-react'
 import type { UserRole } from '@/types/index'
-import { landingForRole } from '@/lib/landing'
+import { getParentPath, landingForRole } from '@/lib/landing'
 
 // Título legible por sección (primer segmento de la ruta). Sin jerga.
 const SECTION_TITLE: Record<string, string> = {
@@ -22,9 +22,11 @@ const SECTION_TITLE: Record<string, string> = {
 
 /**
  * Barra superior fija y persistente, presente en TODOS los módulos del dashboard.
- * A la izquierda, un botón "Inicio" siempre visible que lleva a cada rol a SU
- * landing. Cuando NO estás en tu inicio, muestra además en qué módulo estás
- * ("Inicio / Pacientes") para ubicar a la persona.
+ * A la izquierda, un botón "Volver" (sube un nivel según la estructura de la
+ * ruta, no el history del browser) y un botón "Inicio" siempre visible que
+ * lleva a cada rol a SU landing. Cuando NO estás en tu inicio, muestra además
+ * en qué módulo estás ("Inicio / Pacientes") — clickeable — para ubicar y
+ * mover a la persona.
  */
 export function AppTopbar({ role }: { role: UserRole }) {
   const pathname = usePathname()
@@ -34,11 +36,28 @@ export function AppTopbar({ role }: { role: UserRole }) {
   const section = pathname.split('/')[1] ?? ''
   const title = SECTION_TITLE[section] ?? ''
   const showTitle = !!title && !isHome
+  const parentPath = getParentPath(pathname, homeHref)
 
   return (
     <header
       className="shrink-0 flex items-center gap-2 h-14 px-3 border-b border-[var(--color-border)] bg-[var(--color-bg)]"
     >
+      {parentPath && (
+        <Link
+          data-tour="topbar-volver"
+          href={parentPath}
+          aria-label="Volver"
+          className={[
+            'inline-flex items-center justify-center rounded-[8px] min-h-[44px] min-w-[44px]',
+            'cursor-pointer text-[var(--color-interactive)] hover:bg-[var(--color-surface)]',
+            'transition-colors duration-120',
+            'focus:outline-none focus-visible:ring-4 focus-visible:ring-[var(--color-interactive)]/30',
+          ].join(' ')}
+        >
+          <ArrowLeft size={20} className="shrink-0" />
+        </Link>
+      )}
+
       <Link
         data-tour="topbar-inicio"
         href={homeHref}
@@ -47,6 +66,7 @@ export function AppTopbar({ role }: { role: UserRole }) {
         className={[
           'inline-flex items-center gap-2 px-3 py-2 rounded-[8px] min-h-[40px]',
           'text-[14px] font-semibold transition-colors duration-120',
+          'focus:outline-none focus-visible:ring-4 focus-visible:ring-[var(--color-interactive)]/30',
           isHome
             ? 'bg-[var(--color-surface)] text-[var(--color-text-primary)]'
             : 'text-[var(--color-interactive)] hover:bg-[var(--color-surface)]',
@@ -61,9 +81,17 @@ export function AppTopbar({ role }: { role: UserRole }) {
           <span aria-hidden className="text-[var(--color-text-secondary)]">
             /
           </span>
-          <span className="text-[14px] font-medium text-[var(--color-text-primary)] truncate">
+          <Link
+            href={`/${section}`}
+            className={[
+              'cursor-pointer rounded-[4px] px-1 -mx-1',
+              'text-[14px] font-medium text-[var(--color-text-primary)] truncate',
+              'hover:text-[var(--color-interactive)] hover:underline transition-colors duration-120',
+              'focus:outline-none focus-visible:ring-4 focus-visible:ring-[var(--color-interactive)]/30',
+            ].join(' ')}
+          >
             {title}
-          </span>
+          </Link>
         </>
       )}
     </header>

@@ -129,7 +129,7 @@ describe('AvailabilitySlotPicker', () => {
       )
     })
 
-    it('muestra el profesional junto a la hora en cada botón', async () => {
+    it('muestra solo la hora, sin exponer el profesional', async () => {
       mockAvailability([
         makeShift('10:00', '2026-06-15T13:00:00.000Z'),
       ])
@@ -139,8 +139,9 @@ describe('AvailabilitySlotPicker', () => {
       )
       await user.type(screen.getByLabelText('Fecha'), '2026-06-15')
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: '10:00 · Patricia Pérez' })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: '10:00' })).toBeInTheDocument()
       })
+      expect(screen.queryByText(/Patricia Pérez/)).not.toBeInTheDocument()
     })
 
     it('emite onToggle con professional_id y professional_name del hueco', async () => {
@@ -151,13 +152,13 @@ describe('AvailabilitySlotPicker', () => {
         <AvailabilitySlotPicker serviceId={SERVICE} professionalId={null} selected={[]} onToggle={onToggle} />,
       )
       await user.type(screen.getByLabelText('Fecha'), '2026-06-15')
-      await user.click(await screen.findByRole('button', { name: '10:00 · Patricia Pérez' }))
+      await user.click(await screen.findByRole('button', { name: '10:00' }))
       expect(onToggle).toHaveBeenCalledWith(
         expect.objectContaining({ professional_id: PROF, professional_name: 'Patricia Pérez' }),
       )
     })
 
-    it('distingue por profesional dos huecos con la misma hora (no colapsa la selección)', async () => {
+    it('colapsa profesionales en una opción por hora y alterna el slot real ya seleccionado', async () => {
       const shiftA = makeShift('10:00', '2026-06-15T13:00:00.000Z')
       const shiftB = { ...shiftA, professional_id: 'prof-2', professional_name: 'Aldo Luque' }
       mockAvailability([shiftA, shiftB])
@@ -172,14 +173,16 @@ describe('AvailabilitySlotPicker', () => {
         },
       ]
       const user = userEvent.setup()
+      const onToggle = vi.fn()
       render(
-        <AvailabilitySlotPicker serviceId={SERVICE} professionalId={null} selected={selected} onToggle={vi.fn()} />,
+        <AvailabilitySlotPicker serviceId={SERVICE} professionalId={null} selected={selected} onToggle={onToggle} />,
       )
       await user.type(screen.getByLabelText('Fecha'), '2026-06-15')
-      const patriciaBtn = await screen.findByRole('button', { name: '10:00 · Patricia Pérez' })
-      const aldoBtn = await screen.findByRole('button', { name: '10:00 · Aldo Luque' })
-      expect(patriciaBtn).toHaveAttribute('aria-pressed', 'true')
-      expect(aldoBtn).toHaveAttribute('aria-pressed', 'false')
+      const hourButtons = await screen.findAllByRole('button', { name: '10:00' })
+      expect(hourButtons).toHaveLength(1)
+      expect(hourButtons[0]).toHaveAttribute('aria-pressed', 'true')
+      await user.click(hourButtons[0])
+      expect(onToggle).toHaveBeenCalledWith(selected[0])
     })
   })
 })

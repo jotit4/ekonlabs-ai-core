@@ -11,12 +11,32 @@ export type AreaFocus = 'rehab' | 'todos'
 
 // ─── Botones de Servicio (pedido ISADI 2026-07-14) ────────────────────────────
 
+// Pedido 2 (ISADI 2026-07-16) — recepción ve 3 botones de GRUPO en vez de un
+// botón por servicio: uno por cada `services.reception_group` no nulo
+// presente (Fisioterapia / Pileta / Pilates). Orden fijo (no alfabético) —
+// coincide con el orden en que el cliente los nombró. `hint` es SOLO
+// etiqueta (texto), sin lógica de cupos.
+const RECEPTION_GROUPS: { value: string; label: string; hint?: string }[] = [
+  { value: 'fisioterapia', label: 'Fisioterapia' },
+  { value: 'pileta', label: 'Pileta' },
+  { value: 'pilates', label: 'Pilates' },
+]
+
 interface AgendaServiceButtonsProps {
   serviceId: string | null
   onServiceChange: (id: string | null) => void
   // Rediseño foco rehabilitación — recorta el catálogo ofrecido, mismo criterio
-  // que el resto de los controles de agenda. Default = 'rehab'.
+  // que el resto de los controles de agenda. Default = 'rehab'. Sin efecto
+  // cuando `isReceptionist` (ese modo tiene su propio agrupador).
   areaFocus?: AreaFocus
+  // Pedido 2 (ISADI 2026-07-16) — cuando es true, el componente renderiza los
+  // 3 botones de GRUPO (Fisioterapia/Pileta/Pilates) en vez de un botón por
+  // servicio. `receptionGroup`/`onReceptionGroupChange` son el estado
+  // controlado de ESE modo (independiente de `serviceId`/`onServiceChange`,
+  // que siguen intactos para admin/doctor).
+  isReceptionist?: boolean
+  receptionGroup?: string | null
+  onReceptionGroupChange?: (group: string | null) => void
 }
 
 /**
@@ -27,21 +47,67 @@ interface AgendaServiceButtonsProps {
  * agenda por servicio, no un control secundario a esconder detrás de
  * "Filtrar" (a diferencia de <AgendaFilters>, que sí queda plegada para
  * recepción).
+ *
+ * Para `isReceptionist=true` (Pedido 2 ISADI 2026-07-16) el criterio cambia:
+ * en vez de un botón por servicio activo, se ofrecen 3 botones de GRUPO
+ * (Fisioterapia/Pileta/Pilates) — ver RECEPTION_GROUPS arriba.
  */
 export function AgendaServiceButtons({
   serviceId,
   onServiceChange,
   areaFocus = 'rehab',
+  isReceptionist = false,
+  receptionGroup = null,
+  onReceptionGroupChange,
 }: AgendaServiceButtonsProps) {
   const { result: serviciosResult } = useList<Service>({
     resource: 'services',
-    meta: { select: 'service_id, name' },
+    meta: { select: 'service_id, name, reception_group' },
     sorters: [{ field: 'name', order: 'asc' }],
     pagination: { mode: 'off' },
     filters: [{ field: 'active', operator: 'eq', value: true }],
   })
 
   const allServicios = serviciosResult?.data ?? []
+
+  if (isReceptionist) {
+    const presentGroups = new Set(
+      allServicios.map((s) => s.reception_group).filter((g): g is string => !!g),
+    )
+    const groups = RECEPTION_GROUPS.filter((g) => presentGroups.has(g.value))
+
+    if (groups.length === 0) return null
+
+    return (
+      <div
+        role="group"
+        aria-label="Filtrar por grupo"
+        className="flex items-center gap-2 overflow-x-auto pb-1 -mx-1 px-1 sm:flex-wrap sm:overflow-visible sm:mx-0 sm:px-0 sm:pb-0"
+      >
+        {groups.map((g) => {
+          const selected = receptionGroup === g.value
+          return (
+            <button
+              key={g.value}
+              type="button"
+              aria-pressed={selected}
+              onClick={() => onReceptionGroupChange?.(selected ? null : g.value)}
+              className={[
+                'shrink-0 min-h-[44px] px-4 rounded-[var(--radius-sm)] border text-sm font-medium whitespace-nowrap transition-colors',
+                selected
+                  ? 'border-[var(--color-interactive)] bg-[var(--color-interactive)] text-white'
+                  : 'border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-surface)]',
+              ].join(' ')}
+            >
+              {g.label}
+              {g.hint ? ` · ${g.hint}` : ''}
+            </button>
+          )
+        })}
+      </div>
+    )
+  }
+
   // Foco rehabilitación: cuando areaFocus='rehab' solo se ofrecen los servicios
   // del área de rehabilitación (heurística por nombre centralizada en
   // service-visuals). 'todos' muestra el catálogo completo.

@@ -82,6 +82,12 @@ export interface TurneroColumn {
   sublabel?: string
   /** Resalta la columna (ej. el día de hoy en la vista Semana). */
   isHighlighted?: boolean
+  /**
+   * Etiqueta larga/descriptiva de la columna (ej. "martes 14" en vez de
+   * "mar 14"), usada SOLO para el `aria-label` del encabezado cuando es
+   * clickeable (`TurneroGrid.onColumnHeaderClick`). Si falta, se usa `label`.
+   */
+  fullLabel?: string
 }
 
 export interface TurneroCell {

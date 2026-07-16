@@ -104,6 +104,12 @@ export function AvailabilitySlotPicker({
   })
 
   const shifts: AvailabilityShift[] = enabled ? shiftsForDate(date) : []
+  // En modo "cualquier profesional", recepción elige HORARIO, no persona.
+  // Conservamos internamente el primer hueco real de cada hora para que el
+  // professional_id viaje al guardar, pero mostramos una sola opción HH:MM.
+  const visibleShifts = anyMode
+    ? Array.from(new Map(shifts.map((shift) => [shift.open, shift])).values())
+    : shifts
   const selectedKeys = new Set(selected.map((s) => slotIdentity(s, anyMode)))
 
   return (
@@ -151,25 +157,30 @@ export function AvailabilitySlotPicker({
                 Horarios libres — {fmtDateLong(date)}
               </p>
               <div className="flex flex-wrap gap-2" role="group" aria-label="Horarios disponibles">
-                {shifts.map((shift) => {
-                  const isSelected = selectedKeys.has(
-                    slotIdentity({ start_at: shift.slot_start_iso, professional_id: shift.professional_id }, anyMode),
-                  )
+                {visibleShifts.map((shift) => {
+                  // Una propuesta automática puede haber elegido otro
+                  // profesional para esta misma hora. Si ya existe, alternamos
+                  // ESE slot real para que quitarlo no cambie silenciosamente la
+                  // asignación al representante visual de la hora.
+                  const selectedAtTime = anyMode
+                    ? selected.find((slot) => slot.date === date && slot.label === shift.open)
+                    : undefined
+                  const displayedSlot: SelectedSlot = {
+                    start_at: shift.slot_start_iso,
+                    end_at: shift.slot_end_iso,
+                    date,
+                    label: shift.open,
+                    professional_id: shift.professional_id,
+                    professional_name: shift.professional_name,
+                  }
+                  const slotToToggle = selectedAtTime ?? displayedSlot
+                  const isSelected = selectedKeys.has(slotIdentity(slotToToggle, anyMode))
                   return (
                     <button
-                      key={`${shift.slot_start_iso}-${shift.professional_id}`}
+                      key={anyMode ? shift.open : `${shift.slot_start_iso}-${shift.professional_id}`}
                       type="button"
                       aria-pressed={isSelected}
-                      onClick={() =>
-                        onToggle({
-                          start_at: shift.slot_start_iso,
-                          end_at: shift.slot_end_iso,
-                          date,
-                          label: shift.open,
-                          professional_id: shift.professional_id,
-                          professional_name: shift.professional_name,
-                        })
-                      }
+                      onClick={() => onToggle(slotToToggle)}
                       className={[
                         'px-3 py-2 rounded-[8px] border text-sm font-medium min-h-[40px] transition-colors',
                         isSelected
@@ -177,10 +188,7 @@ export function AvailabilitySlotPicker({
                           : 'bg-[var(--color-bg)] text-[var(--color-text-primary)] border-[var(--color-border)] hover:bg-[var(--color-surface)]',
                       ].join(' ')}
                     >
-                      {/* Modo "cualquier profesional": mostrar a quién le tocaría ese
-                          hueco (varios profesionales pueden compartir la misma hora). */}
                       {shift.open}
-                      {anyMode ? ` · ${shift.professional_name}` : ''}
                     </button>
                   )
                 })}

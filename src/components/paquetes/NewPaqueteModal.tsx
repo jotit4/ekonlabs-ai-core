@@ -19,6 +19,8 @@ import {
 import { ANY_PROFESSIONAL } from '@/lib/agenda/any-professional'
 import { MultiSessionScheduler } from '@/components/agenda/MultiSessionScheduler'
 import { type SelectedSlot } from '@/components/agenda/AvailabilitySlotPicker'
+import { ColorSwatchPicker } from '@/components/agenda/ColorSwatchPicker'
+import { AgendarSesionModal } from './AgendarSesionModal'
 
 // Botones de acceso rápido para el total de sesiones — Pedido B (ISADI
 // 2026-07-14: "agregar 5 y 10 sesiones en pantalla de paquetes"). Conviven con
@@ -87,9 +89,19 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
   const [scheduleSlots, setScheduleSlots] = useState<SelectedSlot[]>([])
   const [isConfirmingSchedule, setIsConfirmingSchedule] = useState(false)
   const [scheduleError, setScheduleError] = useState<string | null>(null)
+  // Pedido 6 (ISADI 2026-07-14/16): color manual OPCIONAL, UN solo color para
+  // TODAS las sesiones que se agenden en esta operación (scheduler embebido
+  // 5/10). Reusa ColorSwatchPicker — misma paleta muda del turno único.
+  const [scheduleColor, setScheduleColor] = useState<string | null>(null)
   // Ofrecer la propuesta automática de fechas solo para 5/10 (el pedido explícito
   // del cliente); otras cantidades siguen el flujo clásico (agendar después).
   const offerAutoSchedule = createdTotalSessions === 5 || createdTotalSessions === 10
+
+  // Pedido 7 (ISADI 2026-07-16): para cantidades DISTINTAS de 5/10 (3, 7, 8…),
+  // el aviso de éxito ofrece un botón "Agendar sesión" que abre el MISMO modal
+  // que usa la ficha del paciente (AgendarSesionModal) — sin salir de acá. Para
+  // 5/10 no hace falta: el scheduler embebido de arriba ya cubre ese caso.
+  const [showAgendarSesionModal, setShowAgendarSesionModal] = useState(false)
 
   // Search form
   const searchForm = useForm<PatientSearchValues>({
@@ -199,6 +211,8 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
     setScheduleSlots([])
     setIsConfirmingSchedule(false)
     setScheduleError(null)
+    setScheduleColor(null)
+    setShowAgendarSesionModal(false)
     searchForm.reset()
     treatmentForm.reset({
       patient_id: initialPatient?.patient_id ?? '',
@@ -330,6 +344,9 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
             end_at: s.end_at,
             ...(createdProfessionalId === null ? { professional_id: s.professional_id } : {}),
           })),
+          // Color ÚNICO para TODA la tanda (Pedido 6) — sin elegir ninguno, no
+          // se manda (las sesiones quedan sin color, como hoy).
+          ...(scheduleColor ? { color: scheduleColor } : {}),
         }),
       })
 
@@ -408,14 +425,30 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
 
             {/* Body */}
             <div className="px-6 py-4 space-y-5">
-              {/* Mensaje de éxito */}
+              {/* Mensaje de éxito. Pedido 7 (ISADI 2026-07-16): para 5/10 el
+                  scheduler embebido de abajo ya agenda ahí mismo; para
+                  CUALQUIER OTRA cantidad (3, 7, 8…) el aviso ya no es un
+                  callejón sin salida — ofrece "Agendar sesión" sin salir del
+                  modal (mismo AgendarSesionModal que usa la ficha del paciente). */}
               {submitSuccess && (
                 <div
                   role="status"
-                  className="rounded-[8px] border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-800"
+                  className="rounded-[8px] border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-800 space-y-3"
                 >
-                  Paquete creado. Ahora agendá las sesiones desde la ficha del paciente con
-                  &quot;Agendar sesión&quot;.
+                  <p>
+                    {offerAutoSchedule
+                      ? 'Paquete creado. Elegí los horarios de las sesiones más abajo.'
+                      : 'Paquete creado. Agendá las sesiones ahora, o después desde la ficha del paciente.'}
+                  </p>
+                  {!offerAutoSchedule && createdTreatmentId && !showAgendarSesionModal && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAgendarSesionModal(true)}
+                      className="inline-flex items-center px-3 py-2 rounded-[8px] text-sm font-medium min-h-[40px] bg-[var(--color-interactive)] text-white hover:opacity-90 transition-opacity"
+                    >
+                      Agendar sesión
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -718,12 +751,40 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
                     }}
                     minDate={today}
                   />
+                  {/* Color manual OPCIONAL (Pedido 6 ISADI 2026-07-14/16): UN solo
+                      color para TODAS las sesiones de esta tanda. */}
+                  <ColorSwatchPicker
+                    value={scheduleColor}
+                    onChange={setScheduleColor}
+                    label="Color para todas las sesiones de este paquete"
+                  />
                   {scheduleError && (
                     <p role="alert" className="text-xs text-red-600">
                       {scheduleError}
                     </p>
                   )}
                 </div>
+              )}
+
+              {/* Pedido 7 (ISADI 2026-07-16): botón "Agendar sesión" del aviso
+                  (cantidades ≠ 5/10) — abre el modal ESTÁNDAR de agendado,
+                  apilado sobre este mismo modal (no lo cierra: la secretaria
+                  puede volver a "Cerrar" cuando termine). Bono recién creado →
+                  porAgendar = total (0 sesiones agendadas todavía). */}
+              {showAgendarSesionModal && createdTreatmentId && (
+                <AgendarSesionModal
+                  open
+                  onClose={() => setShowAgendarSesionModal(false)}
+                  treatmentId={createdTreatmentId}
+                  serviceId={createdServiceId}
+                  professionalId={createdProfessionalId}
+                  serviceName={services.find((s) => s.service_id === createdServiceId)?.name ?? null}
+                  professionalName={
+                    professionals.find((p) => p.professional_id === createdProfessionalId)?.name ?? null
+                  }
+                  porAgendar={createdTotalSessions}
+                  patientId={patient?.patient_id ?? ''}
+                />
               )}
             </div>
 

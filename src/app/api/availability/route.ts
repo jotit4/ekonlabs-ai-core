@@ -52,6 +52,13 @@ export async function GET(request: Request): Promise<Response> {
   const dateFrom = searchParams.get('date_from')
   const dateTo = searchParams.get('date_to')
   const serviceId = searchParams.get('service_id')
+  // Pedido 1 (ISADI 2026-07-16) — "Dar un turno" de recepción para el grupo
+  // Fisioterapia: varios service_id a la vez (comma-separated), CON PRIORIDAD
+  // sobre `service_id` cuando ambos llegan. Ver 6.c más abajo.
+  const serviceIdsParam = searchParams.get('service_ids')
+  const serviceIdList = serviceIdsParam
+    ? serviceIdsParam.split(',').map((s) => s.trim()).filter(Boolean)
+    : null
   const professionalId = searchParams.get('professional_id')
   const summary = searchParams.get('summary') === 'true'
   // P0.1 — "Cualquier profesional disponible": cuando se pide un servicio sin
@@ -110,6 +117,41 @@ export async function GET(request: Request): Promise<Response> {
       .map((p) => p.professional_id)
   }
 
+  // 6.c. Modo GRUPO (Pedido 1 ISADI 2026-07-16 — "Dar un turno" de recepción
+  // para el grupo Fisioterapia): varios service_id a la vez. Para cada uno se
+  // resuelve QUÉ profesionales consultar — el `professional_id` concreto si
+  // vino explícito, o TODOS sus profesionales activos (mismo criterio que
+  // `all_professionals` para un único servicio). Se resuelve UNA vez (no por
+  // día), igual que `serviceProfessionalIds` arriba.
+  let groupServiceProfessionals: Record<string, string[]> | null = null
+  if (serviceIdList && serviceIdList.length > 0) {
+    groupServiceProfessionals = {}
+    if (professionalId) {
+      for (const sid of serviceIdList) {
+        groupServiceProfessionals[sid] = [professionalId]
+      }
+    } else {
+      for (const sid of serviceIdList) {
+        const { data: spData, error: spError } = await supabase
+          .from('service_professionals')
+          .select('professional_id, professionals ( professional_id, active )')
+          .eq('service_id', sid)
+
+        if (spError) {
+          console.error('[availability/GET] service_professionals error (group):', spError)
+          return Response.json({ error: 'Error al calcular la disponibilidad' }, { status: 500 })
+        }
+
+        type ProfRow = { professional_id: string; active: boolean } | null
+        groupServiceProfessionals[sid] = (spData ?? [])
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .map((row: any) => row.professionals as ProfRow)
+          .filter((p): p is { professional_id: string; active: boolean } => p != null && p.active === true)
+          .map((p) => p.professional_id)
+      }
+    }
+  }
+
   // 7. Iterar server-side — una llamada a la RPC por día (y por profesional en
   // modo "todos los profesionales").
   const daysShifts: Record<string, DayShifts> = {}
@@ -119,7 +161,35 @@ export async function GET(request: Request): Promise<Response> {
     let shifts: AvailabilityShift[]
     let available: boolean
 
-    if (serviceProfessionalIds) {
+    if (groupServiceProfessionals) {
+      // Unir los huecos de CADA service_id del grupo x CADA uno de sus
+      // profesionales (o el professional_id concreto si vino explícito).
+      const merged: AvailabilityShift[] = []
+      for (const sid of serviceIdList!) {
+        const profIds = groupServiceProfessionals[sid] ?? []
+        for (const profId of profIds) {
+          const { data, error } = await supabase.rpc('check_clinic_availability', {
+            p_org_id: tenantId,
+            p_date: isoDay,
+            p_service_id: sid,
+            p_professional_id: profId,
+          })
+          if (error) {
+            console.error('[availability/GET] rpc error (group):', error)
+            return Response.json({ error: 'Error al calcular la disponibilidad' }, { status: 500 })
+          }
+          const row = (Array.isArray(data) ? data[0] : data) as RpcRow | undefined
+          merged.push(...((row?.shifts ?? []) as AvailabilityShift[]))
+        }
+      }
+      merged.sort(
+        (a, b) =>
+          a.slot_start_iso.localeCompare(b.slot_start_iso) ||
+          a.professional_name.localeCompare(b.professional_name),
+      )
+      shifts = merged
+      available = merged.length > 0
+    } else if (serviceProfessionalIds) {
       // Unir los huecos de cada profesional del servicio. Cada llamada filtra por
       // un profesional → la RPC NO colapsa por hora, así cada hueco mantiene su
       // professional_id/professional_name.

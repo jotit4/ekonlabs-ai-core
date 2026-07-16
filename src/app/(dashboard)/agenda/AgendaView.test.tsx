@@ -140,11 +140,13 @@ vi.mock('@/components/agenda/NewTurnoModal', () => ({
     initialDate,
     initialTimeHHmm,
     initialProfessionalId,
+    isReceptionist,
   }: {
     open: boolean
     initialDate?: string
     initialTimeHHmm?: string
     initialProfessionalId?: string
+    isReceptionist?: boolean
   }) =>
     open ? (
       <div
@@ -152,6 +154,7 @@ vi.mock('@/components/agenda/NewTurnoModal', () => ({
         data-date={initialDate}
         data-time={initialTimeHHmm}
         data-prof={initialProfessionalId}
+        data-is-receptionist={String(!!isReceptionist)}
       />
     ) : null,
 }))
@@ -191,12 +194,26 @@ vi.mock('@/components/agenda/AgendaFilters', () => ({
   AgendaServiceButtons: ({
     onServiceChange,
     areaFocus,
+    isReceptionist,
+    receptionGroup,
+    onReceptionGroupChange,
   }: {
     onServiceChange: (id: string | null) => void
     areaFocus?: string
+    isReceptionist?: boolean
+    receptionGroup?: string | null
+    onReceptionGroupChange?: (group: string | null) => void
   }) => (
-    <div data-testid="agenda-service-buttons" data-area-focus={areaFocus}>
+    <div
+      data-testid="agenda-service-buttons"
+      data-area-focus={areaFocus}
+      data-is-receptionist={String(!!isReceptionist)}
+      data-reception-group={receptionGroup ?? ''}
+    >
       <button onClick={() => onServiceChange('svc-1')}>mock-pick-svc</button>
+      {/* Botón stub de los 3 botones de grupo (Pedido 2 ISADI 2026-07-16) */}
+      <button onClick={() => onReceptionGroupChange?.('fisioterapia')}>mock-pick-grupo-fisio</button>
+      <button onClick={() => onReceptionGroupChange?.(null)}>mock-clear-grupo</button>
     </div>
   ),
 }))
@@ -374,17 +391,20 @@ describe('AgendaPage', () => {
       expect(screen.queryByRole('button', { name: /^filtrar$/i })).not.toBeInTheDocument()
     })
 
-    it('receptionist: por defecto NO muestra filtros ni selector de vista, pero sí "Dar turno" + "Filtrar"', () => {
+    it('receptionist: por defecto NO muestra AgendaFilters (profesional/área), pero sí selector de vista, "Dar turno" y "Filtrar"', () => {
       vi.mocked(useUserRole).mockReturnValue('receptionist')
       render(<AgendaPage />)
       expect(screen.queryByTestId('agenda-filters')).not.toBeInTheDocument()
-      expect(screen.queryByTestId('calendar-view-selector')).not.toBeInTheDocument()
+      // Pedido 3 (ISADI 2026-07-16): el selector de vista (Día/Semana/Mes) ya
+      // NO vive detrás de "Filtrar" — visible siempre, mismo criterio que
+      // AgendaServiceButtons (pedido 2026-07-14).
+      expect(screen.getByTestId('calendar-view-selector')).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /nuevo paquete/i })).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: /dar turno/i })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /^filtrar$/i })).toBeInTheDocument()
     })
 
-    it('receptionist: al hacer click en "Filtrar" se revelan filtros, selector de vista y "Nuevo paquete"', () => {
+    it('receptionist: al hacer click en "Filtrar" se revelan AgendaFilters y "Nuevo paquete" (el selector de vista ya estaba visible)', () => {
       vi.mocked(useUserRole).mockReturnValue('receptionist')
       render(<AgendaPage />)
       const filtrarBtn = screen.getByRole('button', { name: /^filtrar$/i })
@@ -552,6 +572,79 @@ describe('AgendaPage', () => {
       vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, isPending: true })
       render(<AgendaPage />)
       expect(vi.mocked(useGCalChannelStatus)).toHaveBeenCalledWith(false)
+    })
+  })
+
+  // ── Pedido 1 (ISADI 2026-07-16) — NewTurnoModal recibe isReceptionist ──────
+  describe('Pedido 1 — isReceptionist se propaga a NewTurnoModal', () => {
+    it('receptionist: NewTurnoModal recibe isReceptionist=true', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: /dar turno/i }))
+      expect(screen.getByTestId('new-turno-modal')).toHaveAttribute('data-is-receptionist', 'true')
+    })
+
+    it('admin: NewTurnoModal recibe isReceptionist=false (modal queda igual que hoy)', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      mockSearchParamsData = { vista: 'dia' }
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: /nuevo turno/i }))
+      expect(screen.getByTestId('new-turno-modal')).toHaveAttribute('data-is-receptionist', 'false')
+    })
+  })
+
+  // ── Pedido 2 (ISADI 2026-07-16) — 3 botones de grupo para recepción ────────
+  describe('Pedido 2 — grupo de recepción (Fisioterapia/Pileta/Pilates)', () => {
+    it('receptionist: AgendaServiceButtons recibe isReceptionist=true y receptionGroup=null por defecto', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      render(<AgendaPage />)
+      const el = screen.getByTestId('agenda-service-buttons')
+      expect(el).toHaveAttribute('data-is-receptionist', 'true')
+      expect(el).toHaveAttribute('data-reception-group', '')
+    })
+
+    it('admin: AgendaServiceButtons recibe isReceptionist=false (sin cambios de comportamiento)', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      render(<AgendaPage />)
+      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute('data-is-receptionist', 'false')
+    })
+
+    it('receptionist: click en un botón de grupo actualiza receptionGroup (estado local, no URL)', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'mock-pick-grupo-fisio' }))
+      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute(
+        'data-reception-group',
+        'fisioterapia',
+      )
+      // No navega — no es un filtro de URL como service_id/professional_id.
+      expect(mockRouterPush).not.toHaveBeenCalled()
+    })
+
+    it('receptionist: click de nuevo limpia el grupo (vuelve a null)', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'mock-pick-grupo-fisio' }))
+      fireEvent.click(screen.getByRole('button', { name: 'mock-clear-grupo' }))
+      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute('data-reception-group', '')
+    })
+  })
+
+  // ── Pedido 3 (ISADI 2026-07-16) — selector de vista siempre visible ────────
+  describe('Pedido 3 — CalendarViewSelector visible sin abrir "Filtrar"', () => {
+    it('receptionist: el selector de vista ya está visible en el primer render (sin tocar "Filtrar")', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      render(<AgendaPage />)
+      expect(screen.getByTestId('calendar-view-selector')).toBeInTheDocument()
+      // "Filtrar" sigue cerrado — Pedido 3 no cambia ese estado, solo saca el
+      // selector de vista de detrás de él.
+      expect(screen.getByRole('button', { name: /^filtrar$/i })).toHaveAttribute('aria-expanded', 'false')
+    })
+
+    it('admin: sin cambios — el selector de vista sigue visible (no había gate)', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      render(<AgendaPage />)
+      expect(screen.getByTestId('calendar-view-selector')).toBeInTheDocument()
     })
   })
 

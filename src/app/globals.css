@@ -110,6 +110,123 @@
   background-color: var(--color-interactive, #007aff);
 }
 
+/* Vista Mes: cada fecha es una superficie consultable completa. El wrapper
+   pertenece a la capa de fondo de RBC; los controles (turno, número, badge y
+   "+N turnos") permanecen en la capa superior y conservan su acción propia. */
+.rbc-wrapper--month .rbc-month-day-wrapper {
+  position: relative;
+  display: flex;
+  flex: 1 0 0%;
+  min-width: 0;
+}
+
+.rbc-wrapper--month .rbc-month-day-hitarea {
+  cursor: pointer;
+}
+
+.rbc-wrapper--month .rbc-month-day-wrapper + .rbc-month-day-wrapper {
+  border-left: 1px solid var(--color-border);
+}
+
+.rbc-wrapper--month .rbc-month-day-wrapper > .rbc-day-bg {
+  flex: 1 0 0%;
+  min-width: 0;
+}
+
+.rbc-wrapper--month .rbc-month-day-hitarea::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  pointer-events: none;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+.rbc-wrapper--month .rbc-month-day-hitarea:hover::after {
+  background: color-mix(in srgb, var(--color-interactive) 5%, transparent);
+}
+
+/* La capa de contenido de RBC ocupa toda la celda aunque se vea vacía. Se le
+   quitan los eventos de puntero solo al espacio transparente y se restauran
+   en los cuatro controles internos, para que el clic libre llegue al fondo. */
+.rbc-wrapper--month .rbc-row-content,
+.rbc-wrapper--month .rbc-date-cell {
+  pointer-events: none;
+}
+
+.rbc-wrapper--month .rbc-date-cell button,
+.rbc-wrapper--month .rbc-event,
+.rbc-wrapper--month .rbc-show-more {
+  pointer-events: auto;
+}
+
+.rbc-wrapper--month .rbc-row-segment {
+  padding: 1px 3px;
+}
+
+.rbc-wrapper--month .rbc-event {
+  min-height: 22px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+  transition: box-shadow 120ms ease, filter 120ms ease;
+}
+
+.rbc-wrapper--month .rbc-event:hover {
+  filter: brightness(0.97);
+  box-shadow: 0 2px 5px rgb(0 0 0 / 14%);
+}
+
+.rbc-wrapper--month .rbc-event:focus-visible {
+  outline: 2px solid var(--color-interactive);
+  outline-offset: 1px;
+}
+
+.rbc-wrapper--month .rbc-month-event-summary {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  min-height: 20px;
+  padding: 2px 6px;
+  overflow: hidden;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.rbc-wrapper--month .rbc-month-event-text {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rbc-wrapper--month .rbc-show-more {
+  min-height: 22px;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm, 6px);
+  background: color-mix(in srgb, var(--color-interactive) 8%, var(--color-surface));
+  color: var(--color-interactive);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 16px;
+  text-align: left;
+}
+
+.rbc-wrapper--month .rbc-show-more:hover {
+  background: color-mix(in srgb, var(--color-interactive) 14%, var(--color-surface));
+  color: var(--color-interactive);
+}
+
+.rbc-wrapper--month .rbc-show-more:focus-visible {
+  background: color-mix(in srgb, var(--color-interactive) 14%, var(--color-surface));
+  color: var(--color-interactive);
+  outline: 2px solid var(--color-interactive);
+  outline-offset: 1px;
+}
+
 /* Vista semana: ocultar el label de hora de RBC que duplica el horario del chip */
 .rbc-wrapper--week .rbc-event-label {
   display: none;

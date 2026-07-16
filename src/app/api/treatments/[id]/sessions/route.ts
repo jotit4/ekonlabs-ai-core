@@ -87,7 +87,9 @@ export async function POST(
       { status: 400 },
     )
   }
-  const { slots } = parsed.data
+  // `color` es OPCIONAL y único para TODA la tanda (Pedido 6 ISADI 2026-07-14/16):
+  // sin elegir ninguno, las sesiones se crean sin color (comportamiento actual).
+  const { slots, color } = parsed.data
 
   // 6. Cargar el paquete (RLS 038 filtra por tenant — NO .eq('tenant_id'), AR14).
   //    De acá salen patient_id / service_id / professional_id REALES: no se confía
@@ -216,9 +218,16 @@ export async function POST(
 
     // Paso 2: ligar el turno NUEVO al paquete. RLS de appointments filtra por
     // tenant — NO .eq('tenant_id') (AR14). Usar el id DEVUELTO por la RPC.
+    // `create_appointment` no acepta color (no tiene p_color): el turno se crea
+    // con color NULL, y acá — mismo UPDATE que liga package_id/session_index —
+    // se aplica el color ÚNICO de la tanda si se eligió uno (Pedido 6).
     const { error: updateError } = await supabase
       .from('appointments')
-      .update({ package_id: treatmentId, session_index: nextSessionIndex })
+      .update({
+        package_id: treatmentId,
+        session_index: nextSessionIndex,
+        ...(color ? { color } : {}),
+      })
       .eq('appointment_id', apptRow.appointment_id)
 
     if (updateError) {

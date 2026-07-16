@@ -58,6 +58,11 @@ export interface Service {
   reminder_hours_before: number | null
   reminder_instructions: string | null
   prerequisite_note: string | null
+  // Agrupador para la vista de recepción (migración 053, pedido ISADI
+  // 2026-07-16): 'fisioterapia' | 'pileta' | 'pilates' | null. NULL = el
+  // servicio no aparece agrupado en la agenda de recepción (ej. Odontología).
+  // Los roles admin/doctor siguen viendo el servicio real, nunca el grupo.
+  reception_group?: string | null
   created_at: string
 }
 

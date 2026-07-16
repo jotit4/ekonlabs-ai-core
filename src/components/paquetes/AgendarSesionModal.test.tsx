@@ -59,6 +59,12 @@ vi.mock('@/components/agenda/AvailabilitySlotPicker', () => ({
   ),
 }))
 
+// La auto-propuesta del scheduler se prueba en su archivo. Acá evitamos que la
+// consulta de rango consuma el mock global de fetch reservado para el POST.
+vi.mock('@/hooks/use-availability', () => ({
+  fetchAvailabilityDays: vi.fn().mockResolvedValue({ days: {} }),
+}))
+
 const baseProps = {
   open: true,
   onClose: vi.fn(),
@@ -153,8 +159,9 @@ describe('AgendarSesionModal', () => {
       const user = userEvent.setup()
       render(<AgendarSesionModal {...baseProps} onClose={vi.fn()} professionalId={null} professionalName={null} />)
 
-      // El encabezado indica "cualquier profesional" en vez del nombre fijo.
-      expect(screen.getByText(/Cualquier profesional disponible/i)).toBeInTheDocument()
+      // El encabezado ya no expone ni pide profesional: sólo informa servicio y cupo.
+      expect(screen.getByText(/Kinesiología.*faltan agendar 8/i)).toBeInTheDocument()
+      expect(screen.queryByText(/Cualquier profesional|Patricia Pérez/i)).not.toBeInTheDocument()
 
       await user.click(screen.getByRole('button', { name: 'slot-1000' }))
       await user.click(screen.getByRole('button', { name: 'slot-1001' }))
@@ -186,6 +193,44 @@ describe('AgendarSesionModal', () => {
       expect(body.slots).toEqual([
         { start_at: '2026-06-15T13:00:00.000Z', end_at: '2026-06-15T14:00:00.000Z' },
       ])
+    })
+  })
+
+  describe('Pedido 6 (ISADI 2026-07-14/16) — color único para toda la tanda', () => {
+    it('muestra el ColorSwatchPicker (una sola vez, no por sesión)', () => {
+      render(<AgendarSesionModal {...baseProps} onClose={vi.fn()} />)
+      expect(screen.getByText('Color para todas las sesiones de este paquete')).toBeInTheDocument()
+      // 16 colores de la paleta + "Sin color" = 17 botones.
+      expect(screen.getAllByRole('button', { name: /^Color #|^Sin color$/ })).toHaveLength(17)
+    })
+
+    it('sin elegir color, el POST no manda "color" en el body', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 201, json: async () => ({ success: true, creadas: 1, skipped: [] }) })
+      const user = userEvent.setup()
+      render(<AgendarSesionModal {...baseProps} onClose={vi.fn()} />)
+
+      await user.click(screen.getByRole('button', { name: 'slot-1000' }))
+      await user.click(screen.getByRole('button', { name: /agendar sesión/i }))
+
+      await waitFor(() => expect(mockFetch).toHaveBeenCalled())
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      expect(body).not.toHaveProperty('color')
+    })
+
+    it('al elegir un color, TODAS las sesiones de la tanda viajan con ese color (a nivel request, no por slot)', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 201, json: async () => ({ success: true, creadas: 2, skipped: [] }) })
+      const user = userEvent.setup()
+      render(<AgendarSesionModal {...baseProps} onClose={vi.fn()} />)
+
+      await user.click(screen.getByRole('button', { name: 'slot-1000' }))
+      await user.click(screen.getByRole('button', { name: 'slot-1001' }))
+      await user.click(screen.getByRole('button', { name: 'Color #00FFFF' }))
+      await user.click(screen.getByRole('button', { name: /agendar 2 sesiones/i }))
+
+      await waitFor(() => expect(mockFetch).toHaveBeenCalled())
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      expect(body.color).toBe('#00FFFF')
+      expect(body.slots).toHaveLength(2)
     })
   })
 })

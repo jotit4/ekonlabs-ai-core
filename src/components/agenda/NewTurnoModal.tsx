@@ -38,7 +38,14 @@ interface ServiceOption {
   professional_name: string | null
   duration_minutes: number
   booking_mode?: 'appointment' | 'walk_in' | 'gated' | 'cycle'
+  // Agrupador de recepción (migración 053, Pedido 1 ISADI 2026-07-16).
+  reception_group?: string | null
 }
+
+// Grupo fijo que usa el turno único de recepción ("Dar un turno" sin elegir
+// servicio ni profesional). Los otros grupos (pileta/pilates) no tienen este
+// flujo simplificado — solo Fisioterapia, por pedido explícito del cliente.
+const RECEPTION_FISIO_GROUP = 'fisioterapia'
 
 interface ProfessionalOption {
   professional_id: string
@@ -58,6 +65,10 @@ interface NewTurnoModalProps {
   initialProfessionalId?: string
   initialDate?: string // YYYY-MM-DD
   initialTimeHHmm?: string // HH:MM
+  // Pedido 1 (ISADI 2026-07-16) — modo recepción: el turno único (1 sesión)
+  // es siempre del grupo Fisioterapia, sin elegir servicio ni profesional.
+  // Default false (admin/doctor): el modal queda EXACTAMENTE como antes.
+  isReceptionist?: boolean
 }
 
 export function NewTurnoModal({
@@ -68,6 +79,7 @@ export function NewTurnoModal({
   initialProfessionalId,
   initialDate,
   initialTimeHHmm,
+  isReceptionist = false,
 }: NewTurnoModalProps) {
   const queryClient = useQueryClient()
   const router = useRouter()
@@ -111,6 +123,21 @@ export function NewTurnoModal({
   // resetea al cambiar cualquier dato del bono (paciente/servicio/profesional/cantidad).
   const [createdTreatmentId, setCreatedTreatmentId] = useState<string | null>(null)
   const isPackageMode = sessionCount > 1
+
+  // Pedido 1 (ISADI 2026-07-16) — modo recepción para el turno ÚNICO (1
+  // sesión): recepción NO elige servicio ni profesional, ambos se resuelven
+  // del hueco elegido (grupo Fisioterapia completo). Solo aplica al turno
+  // suelto — el alta de series/bono (x5/x10) usa MultiSessionScheduler, que
+  // necesita un servicio+profesional concretos y queda fuera de este pedido
+  // (para recepción, el select de Servicio en modo serie sigue existiendo
+  // pero recortado al grupo Fisioterapia — ver `servicesForSelect`).
+  const isReceptionSingleTurno = isReceptionist && !isPackageMode
+  // Hueco elegido en modo recepción: clave compuesta
+  // `${service_id}__${professional_id}__${HH:MM}` — a diferencia de
+  // `anySlotKey` (solo profesional), acá también hace falta el service_id
+  // porque el hueco puede pertenecer a CUALQUIER servicio del grupo.
+  const [receptionSlotKey, setReceptionSlotKey] = useState<string>('')
+  const [isSubmittingReceptionTurno, setIsSubmittingReceptionTurno] = useState(false)
 
   // Profesionales del servicio elegido
   const [professionals, setProfessionals] = useState<ProfessionalOption[]>([])
@@ -167,6 +194,15 @@ export function NewTurnoModal({
     (s) => s.booking_mode === undefined || s.booking_mode === 'appointment',
   )
 
+  // Pedido 1 (ISADI 2026-07-16) — subconjunto del grupo Fisioterapia
+  // (`reception_group='fisioterapia'`). Se usa para: (a) la disponibilidad
+  // de grupo del turno único de recepción, y (b) recortar el <select> de
+  // Servicio al grupo cuando recepción está en modo serie (x5/x10, que sigue
+  // usando el flujo con select porque MultiSessionScheduler no se toca).
+  const fisioServices = services.filter((s) => s.reception_group === RECEPTION_FISIO_GROUP)
+  const fisioServiceIds = fisioServices.map((s) => s.service_id)
+  const servicesForSelect = isReceptionist ? fisioServices : services
+
   // Watch selección de servicio / profesional / fecha para calcular la
   // disponibilidad REAL (no horarios inventados). El horario solo se elige
   // sobre los huecos libres del servicio+profesional para la fecha elegida.
@@ -189,8 +225,11 @@ export function NewTurnoModal({
   // Disponibilidad real (RPC check_clinic_availability vía /api/availability).
   // Solo se consulta cuando hay servicio + profesional (o "cualquiera") + fecha;
   // si falta alguno, no se muestran horarios inventados.
-  const availabilityEnabled =
-    !!selectedServiceId && !!selectedProfessionalId && !!selectedDate
+  // Modo recepción (turno único): no hay servicio/profesional elegidos — la
+  // condición pasa a ser "hay servicios del grupo Fisioterapia + fecha".
+  const availabilityEnabled = isReceptionSingleTurno
+    ? fisioServiceIds.length > 0 && !!selectedDate
+    : !!selectedServiceId && !!selectedProfessionalId && !!selectedDate
   const {
     shiftsForDate,
     isLoading: isLoadingAvailability,
@@ -198,9 +237,13 @@ export function NewTurnoModal({
   } = useAvailability({
     dateFrom: selectedDate || '',
     dateTo: selectedDate || '',
-    serviceId: selectedServiceId || null,
-    professionalId: isAnyProfessional ? null : selectedProfessionalId || null,
-    allProfessionals: isAnyProfessional,
+    serviceId: isReceptionSingleTurno ? null : selectedServiceId || null,
+    // Pedido 1 — grupo completo de Fisioterapia, cualquier profesional (la
+    // API resuelve TODOS los profesionales de TODOS esos servicios y une los
+    // huecos; cada uno conserva su propio service_id/professional_id).
+    serviceIds: isReceptionSingleTurno ? fisioServiceIds : undefined,
+    professionalId: isReceptionSingleTurno ? null : (isAnyProfessional ? null : selectedProfessionalId || null),
+    allProfessionals: isReceptionSingleTurno ? true : isAnyProfessional,
     enabled: availabilityEnabled,
   })
 
@@ -209,6 +252,14 @@ export function NewTurnoModal({
   // los profesionales del servicio (uno por hueco real, no colapsado por hora).
   const availableShifts = availabilityEnabled ? shiftsForDate(selectedDate) : []
   const availableTimes = availableShifts.map((shift) => shift.open)
+  // Recepción: una opción por HORARIO, no por servicio/profesional. El grupo
+  // Fisioterapia tiene varios servicios/profesionales, así que la misma hora
+  // viene repetida en availableShifts; colapsamos a un ítem por hora (recepción
+  // no ve ni elige profesional — el servicio/profesional del hueco se resuelve
+  // al guardar). Se conserva el orden por hora de availableShifts.
+  const receptionTimeOptions = isReceptionSingleTurno
+    ? Array.from(new Map(availableShifts.map((shift) => [shift.open, shift])).values())
+    : availableShifts
 
   // Cargar profesionales del servicio elegido (modelo de turnos por profesional).
   // El paciente elige el profesional, por eso el selector se filtra por servicio.
@@ -337,6 +388,8 @@ export function NewTurnoModal({
     setIsSubmittingPackage(false)
     setCreatedTreatmentId(null)
     setSelectedColor(null)
+    setReceptionSlotKey('')
+    setIsSubmittingReceptionTurno(false)
     searchForm.reset()
     createPatientForm.reset()
     appointmentForm.reset({
@@ -563,6 +616,74 @@ export function NewTurnoModal({
     }
   }
 
+  // Pedido 1 (ISADI 2026-07-16) — envío del turno único en modo recepción:
+  // NO pasa por el schema de RHF (service_id/professional_id nunca se
+  // eligen), se resuelven acá del hueco elegido (`receptionSlotKey`), igual
+  // que el mecanismo "cualquier profesional" pero también con el service_id.
+  const handleSubmitReceptionTurno = async () => {
+    setSlotConflictError(null)
+    setSubmitError(null)
+
+    if (!patient) return
+    if (!receptionSlotKey) {
+      setSlotConflictError('Elegí un horario disponible')
+      return
+    }
+    const [svcId, profId, hhmm] = receptionSlotKey.split('__')
+    if (!svcId || !profId || !hhmm) {
+      setSlotConflictError('Elegí un horario disponible')
+      return
+    }
+    const svc = fisioServices.find((s) => s.service_id === svcId)
+    const receptionDurationMinutes = svc?.duration_minutes ?? 60
+    const appointmentTimeISO = `${selectedDate}T${hhmm}:00-03:00`
+
+    setIsSubmittingReceptionTurno(true)
+    try {
+      const response = await fetch('/api/appointments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patient_id: patient.patient_id,
+          service_id: svcId,
+          professional_id: profId,
+          appointment_time: appointmentTimeISO,
+          duration_minutes: receptionDurationMinutes,
+          ...(selectedColor ? { color: selectedColor } : {}),
+        }),
+      })
+
+      if (response.status === 409) {
+        queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
+        queryClient.invalidateQueries({ queryKey: ['availability'], exact: false })
+        setSlotConflictError('Ese horario ya no está disponible')
+        return
+      }
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}))
+        setSubmitError((body as { error?: string }).error ?? 'Error al crear el turno')
+        return
+      }
+
+      // Éxito
+      queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
+      queryClient.invalidateQueries({ queryKey: ['availability'], exact: false })
+      handleClose()
+    } catch {
+      setSubmitError('Error de red. Verificá tu conexión e intentá de nuevo.')
+    } finally {
+      setIsSubmittingReceptionTurno(false)
+    }
+  }
+
+  // Hueco elegido en modo recepción (grupo Fisioterapia) — ver comentario en
+  // `receptionSlotKey` más arriba.
+  const handleReceptionSlotChange = (key: string) => {
+    setReceptionSlotKey(key)
+    setSlotConflictError(null)
+  }
+
   // Cambio de cantidad de sesiones (1 / 5 / 10). Al entrar/salir del modo serie
   // se descartan los huecos elegidos y el bono a medio crear. El profesional
   // elegido (concreto o "cualquiera") se conserva: el bono TAMBIÉN puede
@@ -573,6 +694,7 @@ export function NewTurnoModal({
     setSubmitError(null)
     setSlotConflictError(null)
     setCreatedTreatmentId(null)
+    setReceptionSlotKey('')
   }
 
   // Reservar una SERIE (bono x5/x10): crea el treatment y agenda las N sesiones
@@ -646,6 +768,9 @@ export function NewTurnoModal({
             end_at: s.end_at,
             ...(isAny ? { professional_id: s.professional_id } : {}),
           })),
+          // Color ÚNICO para TODA la serie (Pedido 6) — sin elegir ninguno, no
+          // se manda (las sesiones quedan sin color, como hoy).
+          ...(selectedColor ? { color: selectedColor } : {}),
         }),
       })
 
@@ -1015,7 +1140,14 @@ export function NewTurnoModal({
                   <p className={sectionLabel}>Turno</p>
                   <form
                     id="appointment-form"
-                    onSubmit={appointmentForm.handleSubmit(handleSubmitAppointment)}
+                    onSubmit={
+                      isReceptionSingleTurno
+                        ? (e) => {
+                            e.preventDefault()
+                            void handleSubmitReceptionTurno()
+                          }
+                        : appointmentForm.handleSubmit(handleSubmitAppointment)
+                    }
                     noValidate
                     className="space-y-4"
                     aria-label="Datos del turno"
@@ -1056,39 +1188,58 @@ export function NewTurnoModal({
                       )}
                     </div>
 
-                    {/* Servicio */}
-                    <div>
-                      <label
-                        htmlFor="service-select"
-                        className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
-                      >
-                        Servicio
-                      </label>
-                      <select
-                        id="service-select"
-                        {...appointmentForm.register('service_id')}
-                        className={inputClass(!!appointmentForm.formState.errors.service_id)}
-                        aria-invalid={!!appointmentForm.formState.errors.service_id}
-                        aria-describedby={
-                          appointmentForm.formState.errors.service_id ? 'service-error' : undefined
-                        }
-                      >
-                        <option value="">Seleccioná un servicio</option>
-                        {services.map((svc) => (
-                          <option key={svc.service_id} value={svc.service_id}>
-                            {svc.name}
-                            {svc.professional_name ? ` · ${svc.professional_name}` : ''}
-                          </option>
-                        ))}
-                      </select>
-                      {appointmentForm.formState.errors.service_id && (
-                        <p id="service-error" role="alert" className="mt-1 text-xs text-red-600">
-                          {appointmentForm.formState.errors.service_id.message}
+                    {/* Servicio — Pedido 1 (ISADI 2026-07-16): para recepción, en el
+                        turno único NO hay selector — es SIEMPRE Fisioterapia, sin
+                        elegir servicio ni profesional (ver rótulo fijo abajo). En
+                        modo serie (x5/x10) recepción sigue viendo el select, pero
+                        recortado al grupo Fisioterapia (servicesForSelect). */}
+                    {isReceptionSingleTurno ? (
+                      <div>
+                        <span className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
+                          Servicio
+                        </span>
+                        <p className="px-3 py-2 rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text-primary)]">
+                          Fisioterapia
                         </p>
-                      )}
-                    </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <label
+                          htmlFor="service-select"
+                          className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
+                        >
+                          Servicio
+                        </label>
+                        <select
+                          id="service-select"
+                          {...appointmentForm.register('service_id')}
+                          className={inputClass(!!appointmentForm.formState.errors.service_id)}
+                          aria-invalid={!!appointmentForm.formState.errors.service_id}
+                          aria-describedby={
+                            appointmentForm.formState.errors.service_id ? 'service-error' : undefined
+                          }
+                        >
+                          <option value="">Seleccioná un servicio</option>
+                          {servicesForSelect.map((svc) => (
+                            <option key={svc.service_id} value={svc.service_id}>
+                              {svc.name}
+                              {svc.professional_name ? ` · ${svc.professional_name}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                        {appointmentForm.formState.errors.service_id && (
+                          <p id="service-error" role="alert" className="mt-1 text-xs text-red-600">
+                            {appointmentForm.formState.errors.service_id.message}
+                          </p>
+                        )}
+                      </div>
+                    )}
 
-                    {/* Profesional — el paciente elige (modelo por profesional) */}
+                    {/* Profesional — el paciente elige (modelo por profesional).
+                        Pedido 1: oculto en el turno único de recepción — se resuelve
+                        automáticamente del hueco elegido (cualquier profesional del
+                        grupo Fisioterapia). */}
+                    {!isReceptionSingleTurno && (
                     <div>
                       <label
                         htmlFor="professional-select"
@@ -1148,6 +1299,7 @@ export function NewTurnoModal({
                         </p>
                       )}
                     </div>
+                    )}
 
                     {/* Turno único (1): Fecha + Horario. En modo serie se usa el
                         MultiSessionScheduler (más abajo). */}
@@ -1171,6 +1323,7 @@ export function NewTurnoModal({
                           // El hueco compuesto de "cualquiera" pertenece a la fecha
                           // anterior: descartarlo al cambiar de día.
                           setAnySlotKey('')
+                          setReceptionSlotKey('')
                         }}
                         className={inputClass(!!appointmentForm.formState.errors.appointment_date)}
                         aria-invalid={!!appointmentForm.formState.errors.appointment_date}
@@ -1193,7 +1346,42 @@ export function NewTurnoModal({
                       >
                         Horario
                       </label>
-                      {isAnyProfessional ? (
+                      {isReceptionSingleTurno ? (
+                        // Pedido 1 (ISADI 2026-07-16) — modo recepción: cada opción es
+                        // un hueco real de CUALQUIER servicio/profesional del grupo
+                        // Fisioterapia, etiquetado "HH:MM · Profesional" (el servicio
+                        // interno no se muestra — recepción no lo elige ni le importa).
+                        // Controlado por receptionSlotKey (clave compuesta de 3 partes).
+                        <select
+                          id="time-select"
+                          value={receptionSlotKey}
+                          onChange={(e) => handleReceptionSlotChange(e.target.value)}
+                          disabled={!availabilityEnabled || isLoadingAvailability || availableShifts.length === 0}
+                          className={inputClass(!!slotConflictError)}
+                          aria-invalid={!!slotConflictError}
+                          aria-describedby={slotConflictError ? 'slot-conflict-error' : undefined}
+                        >
+                          <option value="">
+                            {!availabilityEnabled
+                              ? 'Elegí una fecha'
+                              : isLoadingAvailability
+                                ? 'Cargando horarios disponibles...'
+                                : isAvailabilityError
+                                  ? 'No se pudo cargar la disponibilidad'
+                                  : availableShifts.length === 0
+                                    ? 'Sin horarios libres para esta fecha'
+                                    : 'Seleccioná un horario'}
+                          </option>
+                          {receptionTimeOptions.map((shift) => (
+                            <option
+                              key={shift.open}
+                              value={`${shift.service_id}__${shift.professional_id}__${shift.open}`}
+                            >
+                              {shift.open}
+                            </option>
+                          ))}
+                        </select>
+                      ) : isAnyProfessional ? (
                         // Modo "cualquier profesional": cada opción es un hueco real
                         // de un profesional concreto, etiquetado "HH:MM · Profesional".
                         // Controlado por anySlotKey (valor compuesto).
@@ -1335,6 +1523,15 @@ export function NewTurnoModal({
                             {slotConflictError}
                           </p>
                         )}
+                        {/* Color manual OPCIONAL (Pedido 6 ISADI 2026-07-14/16): el
+                            turno único ya lo tenía (paleta muda del turnero) — acá
+                            se aplica UN solo color a TODAS las sesiones de la serie,
+                            reusando el mismo estado `selectedColor`. */}
+                        <ColorSwatchPicker
+                          value={selectedColor}
+                          onChange={setSelectedColor}
+                          label="Color para todas las sesiones de la serie"
+                        />
                       </div>
                     )}
 
@@ -1383,15 +1580,27 @@ export function NewTurnoModal({
                 <button
                   type="submit"
                   form="appointment-form"
-                  disabled={!patient || appointmentForm.formState.isSubmitting}
+                  disabled={
+                    isReceptionSingleTurno
+                      ? !patient || !receptionSlotKey || isSubmittingReceptionTurno
+                      : !patient || appointmentForm.formState.isSubmitting
+                  }
                   className={[
                     'px-4 py-2 rounded-[8px] text-sm font-medium min-h-[44px]',
                     'bg-[var(--color-interactive)] text-white',
                     'hover:opacity-90 transition-opacity',
-                    !patient || appointmentForm.formState.isSubmitting ? 'opacity-50 cursor-not-allowed' : '',
+                    (
+                      isReceptionSingleTurno
+                        ? !patient || !receptionSlotKey || isSubmittingReceptionTurno
+                        : !patient || appointmentForm.formState.isSubmitting
+                    )
+                      ? 'opacity-50 cursor-not-allowed'
+                      : '',
                   ].join(' ')}
                 >
-                  {appointmentForm.formState.isSubmitting ? 'Guardando...' : 'Guardar turno'}
+                  {isReceptionSingleTurno
+                    ? (isSubmittingReceptionTurno ? 'Guardando...' : 'Guardar turno')
+                    : (appointmentForm.formState.isSubmitting ? 'Guardando...' : 'Guardar turno')}
                 </button>
               )}
             </div>

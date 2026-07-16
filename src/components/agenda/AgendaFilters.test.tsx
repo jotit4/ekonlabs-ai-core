@@ -16,8 +16,10 @@ vi.mock('@refinedev/core', () => ({
   useList: () => ({
     result: {
       data: [
-        { service_id: 'svc-1', name: 'Kinesiología' },
-        { service_id: 'svc-2', name: 'Pediatría' },
+        { service_id: 'svc-1', name: 'Kinesiología', reception_group: 'fisioterapia' },
+        { service_id: 'svc-2', name: 'Pediatría', reception_group: null },
+        { service_id: 'svc-3', name: 'Aquagym', reception_group: 'pileta' },
+        { service_id: 'svc-4', name: 'Pilates', reception_group: 'pilates' },
       ],
     },
   }),
@@ -232,5 +234,75 @@ describe('AgendaServiceButtons', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Pediatría' }))
     expect(onServiceChange).toHaveBeenCalledWith('svc-2')
+  })
+})
+
+// ─── Botones de GRUPO para recepción (Pedido 2 ISADI 2026-07-16) ─────────────
+// isReceptionist=true reemplaza los botones por servicio por 3 botones de
+// GRUPO (Fisioterapia/Pileta/Pilates) — uno por cada `reception_group` no
+// nulo presente en el catálogo.
+describe('AgendaServiceButtons — modo recepción (isReceptionist)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  const receptionProps = {
+    serviceId: null,
+    onServiceChange: vi.fn(),
+    isReceptionist: true,
+    receptionGroup: null,
+    onReceptionGroupChange: vi.fn(),
+  }
+
+  it('renderiza un botón por cada reception_group presente (Fisioterapia/Pileta/Pilates)', () => {
+    render(<AgendaServiceButtons {...receptionProps} />)
+    expect(screen.getByRole('button', { name: /^fisioterapia$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^pileta$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /pilates/i })).toBeInTheDocument()
+    // NO aparece un botón por servicio individual (Kinesiología es del grupo
+    // Fisioterapia, no debe verse suelta).
+    expect(screen.queryByRole('button', { name: 'Kinesiología' })).not.toBeInTheDocument()
+    // Pediatría (reception_group null) tampoco genera ningún botón.
+    expect(screen.queryByRole('button', { name: /pediatría/i })).not.toBeInTheDocument()
+  })
+
+  it('el botón de Pilates dice solo "Pilates" (sin hint de cupos)', () => {
+    render(<AgendaServiceButtons {...receptionProps} />)
+    expect(screen.getByRole('button', { name: 'Pilates' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /lugares\/hora/i })).not.toBeInTheDocument()
+  })
+
+  it('el contenedor tiene role="group" con aria-label "Filtrar por grupo"', () => {
+    render(<AgendaServiceButtons {...receptionProps} />)
+    expect(screen.getByRole('group', { name: /filtrar por grupo/i })).toBeInTheDocument()
+  })
+
+  it('click en un grupo no seleccionado llama onReceptionGroupChange con su value', () => {
+    const onReceptionGroupChange = vi.fn()
+    render(<AgendaServiceButtons {...receptionProps} onReceptionGroupChange={onReceptionGroupChange} />)
+    fireEvent.click(screen.getByRole('button', { name: /^fisioterapia$/i }))
+    expect(onReceptionGroupChange).toHaveBeenCalledWith('fisioterapia')
+  })
+
+  it('el grupo activo tiene aria-pressed="true"; click de nuevo lo deselecciona (null)', () => {
+    const onReceptionGroupChange = vi.fn()
+    render(
+      <AgendaServiceButtons
+        {...receptionProps}
+        receptionGroup="fisioterapia"
+        onReceptionGroupChange={onReceptionGroupChange}
+      />,
+    )
+    const btn = screen.getByRole('button', { name: /^fisioterapia$/i })
+    expect(btn).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(btn)
+    expect(onReceptionGroupChange).toHaveBeenCalledWith(null)
+  })
+
+  it('no llama a onServiceChange (los botones de grupo no tocan el service_id real)', () => {
+    const onServiceChange = vi.fn()
+    render(<AgendaServiceButtons {...receptionProps} onServiceChange={onServiceChange} />)
+    fireEvent.click(screen.getByRole('button', { name: /^pileta$/i }))
+    expect(onServiceChange).not.toHaveBeenCalled()
   })
 })

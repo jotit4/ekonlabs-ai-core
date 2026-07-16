@@ -30,6 +30,7 @@ function shiftFor(date: string, hhmm: string, prof = 'prof-1'): AvailabilityShif
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(fetchAvailabilityDays).mockResolvedValue({ days: {} })
   vi.mocked(useAvailability).mockImplementation(({ enabled }) => ({
     daysShifts: {},
     daysSummary: {},
@@ -100,7 +101,7 @@ describe('MultiSessionScheduler', () => {
     await user.click(screen.getByRole('button', { name: '12:00' }))
     expect(screen.getByLabelText('Vas 1 de 3')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /Quitar/i }))
+    await user.click(screen.getByRole('button', { name: /Quitar martes.*09:00/i }))
     expect(screen.getByLabelText('Vas 0 de 3')).toBeInTheDocument()
     expect(screen.queryByText(/Sesiones elegidas/)).not.toBeInTheDocument()
   })
@@ -111,9 +112,10 @@ describe('MultiSessionScheduler', () => {
   })
 
   describe('Proponer automáticamente (Pedido B — bonos x5/x10 en días consecutivos)', () => {
-    it('el botón arranca deshabilitado sin ningún horario elegido', () => {
+    it('no muestra botón "Proponer" ni texto "Proponiendo"', () => {
       render(<Harness total={5} />)
-      expect(screen.getByRole('button', { name: /Proponer las próximas/i })).toBeDisabled()
+      expect(screen.queryByRole('button', { name: /Proponer/i })).not.toBeInTheDocument()
+      expect(screen.queryByText(/Proponiendo/i)).not.toBeInTheDocument()
     })
 
     it('tras elegir el primer horario, propone el resto y los agrega a la selección', async () => {
@@ -130,9 +132,6 @@ describe('MultiSessionScheduler', () => {
 
       await pickDate('2026-07-07')
       await user.click(screen.getByRole('button', { name: '12:00' }))
-      expect(screen.getByLabelText('Vas 1 de 5')).toBeInTheDocument()
-
-      await user.click(screen.getByRole('button', { name: /Proponer las próximas 4 fechas/i }))
 
       await waitFor(() => {
         expect(screen.getByLabelText('Vas 5 de 5')).toBeInTheDocument()
@@ -159,7 +158,6 @@ describe('MultiSessionScheduler', () => {
 
       await pickDate('2026-07-07')
       await user.click(screen.getByRole('button', { name: '12:00' }))
-      await user.click(screen.getByRole('button', { name: /Proponer la próxima fecha/i }))
 
       await waitFor(() => {
         expect(screen.getByText(/Sin horario libre ese día/i)).toBeInTheDocument()
@@ -174,14 +172,63 @@ describe('MultiSessionScheduler', () => {
       render(<Harness total={2} professionalId={null} />)
 
       fireEvent.change(screen.getByLabelText('Fecha'), { target: { value: '2026-07-07' } })
-      await user.click(await screen.findByRole('button', { name: '12:00 · Patricia Pérez' }))
-      await user.click(screen.getByRole('button', { name: /Proponer/i }))
+      await user.click(await screen.findByRole('button', { name: '12:00' }))
 
       await waitFor(() => {
         expect(fetchAvailabilityDays).toHaveBeenCalledWith(
           expect.objectContaining({ professionalId: undefined, allProfessionals: true }),
         )
       })
+    })
+
+    it('la propuesta automática sigue siendo editable antes de confirmar', async () => {
+      vi.mocked(fetchAvailabilityDays).mockResolvedValue({
+        days: {
+          '2026-07-08': { available: true, shifts: [shiftFor('2026-07-08', '12:00')] },
+        },
+      })
+      const user = userEvent.setup()
+      render(<Harness total={2} />)
+
+      await pickDate('2026-07-07')
+      await user.click(screen.getByRole('button', { name: '12:00' }))
+      await waitFor(() => expect(screen.getByLabelText('Vas 2 de 2')).toBeInTheDocument())
+
+      const removeButtons = screen.getAllByRole('button', { name: /Quitar/i })
+      await user.click(removeButtons[1])
+      expect(screen.getByLabelText('Vas 1 de 2')).toBeInTheDocument()
+    })
+
+    it('si falla la propuesta conserva el ancla y permite completar manualmente', async () => {
+      vi.mocked(fetchAvailabilityDays).mockRejectedValue(new Error('network'))
+      const user = userEvent.setup()
+      render(<Harness total={2} />)
+
+      await pickDate('2026-07-07')
+      await user.click(screen.getByRole('button', { name: '12:00' }))
+
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/manualmente/i))
+      expect(screen.getByLabelText('Vas 1 de 2')).toBeInTheDocument()
+    })
+
+    it('divide en rangos válidos una propuesta de cadencia larga', async () => {
+      vi.mocked(fetchAvailabilityDays).mockResolvedValue({ days: {} })
+      const user = userEvent.setup()
+      render(<Harness total={12} />)
+
+      await user.click(screen.getByRole('button', { name: '1 vez/sem' }))
+      await pickDate('2026-07-07')
+      await user.click(screen.getByRole('button', { name: '12:00' }))
+
+      await waitFor(() => expect(fetchAvailabilityDays).toHaveBeenCalledTimes(2))
+      expect(fetchAvailabilityDays).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ dateFrom: '2026-07-14', dateTo: '2026-09-08' }),
+      )
+      expect(fetchAvailabilityDays).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ dateFrom: '2026-09-15', dateTo: '2026-09-22' }),
+      )
     })
   })
 })

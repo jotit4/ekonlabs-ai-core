@@ -384,10 +384,15 @@ export default function RecepcionPage() {
       )}
 
       {/* ── Modal "Dar un turno" — reusado tal cual de la agenda ──────────── */}
+      {/* Pedido 1 (ISADI 2026-07-16): esta página ES la home de recepción, así
+          que el modal arranca directo en modo simplificado (grupo
+          Fisioterapia, sin elegir servicio ni profesional) — mismo criterio
+          que /agenda para el rol receptionist. */}
       <NewTurnoModal
         open={modalTurnoAbierto}
         onClose={() => setModalTurnoAbierto(false)}
         date={hoyISO}
+        isReceptionist
       />
 
       {/* ── Atajo discreto para abrir el panel completo ──────────────────── */}

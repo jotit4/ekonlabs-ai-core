@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { HEX_COLOR_REGEX } from '@/lib/agenda/turnero-palette'
 
 // ─── Agendar sesiones de un paquete — MANUAL Y FLEXIBLE (reclamo ISADI) ───────
 // Body del POST /api/treatments/[id]/sessions: una LISTA de slots elegidos de la
@@ -28,11 +29,23 @@ export type SessionSlotInput = z.infer<typeof sessionSlotSchema>
 // (el bono típico es de 8–12). Limita el blast-radius si el body viene corrupto.
 export const MAX_SESSIONS_PER_REQUEST = 60
 
+// Color manual OPCIONAL de la TANDA completa (Pedido 6, ISADI 2026-07-14/16):
+// un solo color por operación de agendado, aplicado a TODOS los turnos que se
+// crean en esta corrida — no es por slot (a diferencia de `professional_id`,
+// que sí varía sesión a sesión en modo "cualquier profesional"). Mismo formato
+// que exige el CHECK de `appointments.color` (migración 051) y el mismo
+// validador que usa el turno único (HEX_COLOR_REGEX / isValidHexColor de
+// turnero-palette.ts). Sin elegir ninguno, las sesiones se crean sin color
+// (comportamiento actual, sin cambios).
 export const createSessionsApiSchema = z.object({
   slots: z
     .array(sessionSlotSchema)
     .min(1, { error: 'Elegí al menos un horario' })
     .max(MAX_SESSIONS_PER_REQUEST, { error: 'Demasiados horarios en una sola operación' }),
+  color: z
+    .string()
+    .regex(HEX_COLOR_REGEX, { error: 'Color inválido (formato #RRGGBB)' })
+    .optional(),
 })
 
 export type CreateSessionsApiBody = z.infer<typeof createSessionsApiSchema>

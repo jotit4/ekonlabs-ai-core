@@ -30,7 +30,7 @@ export async function GET(): Promise<Response> {
   const { data, error } = await supabase
     .from('services')
     .select(
-      'service_id, tenant_id, name, calendar_id, professional_name, duration_minutes, active, booking_mode, capacity_per_slot, requires_prescription, is_referral_only, reminder_hours_before, reminder_instructions, prerequisite_note, created_at'
+      'service_id, tenant_id, name, calendar_id, professional_name, duration_minutes, active, booking_mode, capacity_per_slot, requires_prescription, is_referral_only, reminder_hours_before, reminder_instructions, prerequisite_note, reception_group, created_at'
     )
     .order('name', { ascending: true })
 

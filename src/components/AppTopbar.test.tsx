@@ -53,4 +53,62 @@ describe('AppTopbar', () => {
     // No debe duplicar "Inicio / Inicio": el único "Inicio" es el del botón.
     expect(screen.getAllByText('Inicio')).toHaveLength(1)
   })
+
+  describe('botón "Volver"', () => {
+    it('subruta /pacientes/123 (admin): Volver sube al módulo raíz "/pacientes"', () => {
+      mockPathname = '/pacientes/123'
+      render(<AppTopbar role="admin" />)
+      const volver = screen.getByRole('link', { name: /volver/i })
+      expect(volver).toHaveAttribute('href', '/pacientes')
+    })
+
+    it('subruta /configuracion/agente (admin): Volver sube a "/configuracion"', () => {
+      mockPathname = '/configuracion/agente'
+      render(<AppTopbar role="admin" />)
+      const volver = screen.getByRole('link', { name: /volver/i })
+      expect(volver).toHaveAttribute('href', '/configuracion')
+    })
+
+    it('módulo raíz /agenda (recepción): Volver va al landing del rol "/recepcion"', () => {
+      mockPathname = '/agenda'
+      render(<AppTopbar role="receptionist" />)
+      const volver = screen.getByRole('link', { name: /volver/i })
+      expect(volver).toHaveAttribute('href', '/recepcion')
+    })
+
+    it('módulo raíz /conversaciones (doctor): Volver va al landing del rol "/mi-jornada"', () => {
+      mockPathname = '/conversaciones'
+      render(<AppTopbar role="doctor" />)
+      const volver = screen.getByRole('link', { name: /volver/i })
+      expect(volver).toHaveAttribute('href', '/mi-jornada')
+    })
+
+    it('en el propio landing del rol (/recepcion para recepción): Volver no se muestra', () => {
+      mockPathname = '/recepcion'
+      render(<AppTopbar role="receptionist" />)
+      expect(screen.queryByRole('link', { name: /volver/i })).toBeNull()
+    })
+
+    it('en el propio landing del rol (/inicio para admin): Volver no se muestra', () => {
+      mockPathname = '/inicio'
+      render(<AppTopbar role="admin" />)
+      expect(screen.queryByRole('link', { name: /volver/i })).toBeNull()
+    })
+  })
+
+  describe('breadcrumb clickeable', () => {
+    it('el nombre del módulo en el breadcrumb es un link a la raíz del módulo', () => {
+      mockPathname = '/pacientes/123'
+      render(<AppTopbar role="admin" />)
+      const modulo = screen.getByRole('link', { name: 'Pacientes' })
+      expect(modulo).toHaveAttribute('href', '/pacientes')
+    })
+
+    it('"Inicio" del breadcrumb es el mismo botón, ya es link al landing del rol', () => {
+      mockPathname = '/agenda'
+      render(<AppTopbar role="doctor" />)
+      const inicio = screen.getByRole('link', { name: /inicio/i })
+      expect(inicio).toHaveAttribute('href', '/mi-jornada')
+    })
+  })
 })
