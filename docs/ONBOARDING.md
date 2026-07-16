@@ -176,7 +176,7 @@ src/components/agenda/SyncStatusBanner.test.tsx  ← mismo directorio
 ### Correr tests
 
 ```bash
-pnpm test              # todos los tests (actualmente 162 passing)
+pnpm test              # todos los tests (baseline 2026-07-16: 2913 passing)
 pnpm test:watch        # watch mode
 pnpm test src/hooks    # solo tests de hooks
 ```

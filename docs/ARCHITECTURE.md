@@ -188,22 +188,41 @@ Formato obligatorio: `[feature, operation, ...params]`
 ## Arquitectura de componentes — Agenda
 
 ```
-AgendaPage (page.tsx)
-├── useAppointments(date)         → datos de la agenda
-├── useAgendaRealtime(date)       → invalida queries por realtime
-├── useGCalChannelStatus()        → estado del canal push GCal
-├── KPIStrip                      → 5 KPIs computados client-side
-├── NewTurnoModal                 → creación manual de turno
-├── CalendarView                  → vista principal DnD
-│   ├── SyncStatusBanner          → banner si calendar_event_id IS NULL
-│   ├── GCalDegradationBanner     → banner si canal GCal degradado
-│   ├── DragAndDropCalendar       → react-big-calendar con DnD
-│   │   └── CustomEvent           → evento custom con Clock icon si pendiente sync
-│   ├── RescheduleConfirmModal    → confirmar drop DnD
-│   └── RescheduleTurnoModal      → alternativa accesible sin DnD
-└── AgendaDayView                 → lista agrupada por profesional (vista alternativa)
-    └── TurnoCard                 → fila de turno individual
+AgendaView
+├── useAppointments / useAppointmentsRange  → turnos del rango visible
+├── useDayStatusRange                       → feriados + decisión abre/cierra
+├── AgendaFilters / AgendaServiceButtons    → filtros y grupos de recepción
+├── CalendarView                            → vista Día
+├── CalendarViewRangeReadOnly
+│   ├── WeekGridView + TurneroGrid          → grilla hora × día
+│   └── react-big-calendar (Mes)            → resumen compacto + modal diario
+├── NewTurnoModal                           → turno único o serie 5/10
+├── NewPaqueteModal                         → alta de bono + scheduler opcional
+├── TurnoDetailModal                        → detalle/estado del turno
+└── DayStatusModal                          → decisión operativa de feriados/cierres
 ```
+
+### Disponibilidad y grupos de recepción
+
+- `GET /api/availability` acepta `service_id` o `service_ids` separados por coma.
+- Sin `professional_id`, el endpoint resuelve todos los profesionales activos de cada servicio y une los huecos sin perder `service_id`/`professional_id`.
+- `services.reception_group` clasifica servicios para los botones operativos de recepción (`fisioterapia`, `pileta`, `pilates`).
+- En el turno simplificado de recepción, la UI deduplica por hora; el slot elegido conserva internamente el servicio y profesional reales.
+- En paquetes sin profesional fijo, `AvailabilitySlotPicker` también deduplica por hora, pero la identidad de selección es fecha+hora+profesional.
+
+### Paquetes y propuesta automática
+
+- `MultiSessionScheduler` es controlado: no crea turnos hasta confirmar desde el contenedor.
+- Elegir la primera sesión dispara la propuesta de las restantes según cadencia y disponibilidad real.
+- Una fecha sin el mismo horario queda pendiente y editable; nunca se fabrica un slot.
+- `POST /api/treatments/[id]/sessions` recibe los slots finales, valida el cupo disponible y crea la tanda.
+
+### Vista Mes
+
+- El mes es una vista de resumen: cada turno muestra sólo hora y paciente.
+- React Big Calendar limita filas (`showAllEvents=false`) y el excedente abre `DayEventsModal` con el día completo.
+- El fondo de una fecha del mes seleccionado es clickeable; las fechas grises adyacentes son inertes porque no están en el rango consultado.
+- Los eventos mantienen click propio y acceso por teclado mediante `eventWrapper`.
 
 ---
 

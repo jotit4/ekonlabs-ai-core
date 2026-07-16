@@ -4,6 +4,49 @@ Registro de trabajo por Epic/Story — decisiones técnicas, hallazgos de code r
 
 ---
 
+## Sesión ISADI — recepción, paquetes y vista Mes — 2026-07-16
+
+**Tipo:** Implementación + recuperación de sesión + hardening UX | **Commit:** `0c45764` | **Deploy:** `origin/ekonlabs-dashboard` | **Tests:** 2913/2913 suite previa al ajuste visual; 104/104 paquetes; 55/55 Mes
+
+### Contexto
+
+Se retomó la sesión Claude Code `isadi-16-7`, interrumpida por límite de contexto, y se completó el frente pendiente de agendado de sesiones de paquetes. Luego se incorporó feedback directo de ISADI sobre densidad e interacción de la vista Mes. El lote también consolidó la simplificación del flujo de recepción preparada en la sesión original.
+
+### Recepción
+
+- Grupos de agenda `Fisioterapia`, `Pileta` y `Pilates` mediante `services.reception_group`.
+- Selector Día/Semana/Mes siempre visible para recepción.
+- “Dar un turno” de Fisioterapia sin pedir servicio ni profesional: la persona elige hora y el sistema conserva el servicio/profesional reales del hueco.
+- `/api/availability` acepta múltiples servicios y modo cualquier profesional, preservando la identidad de cada slot.
+- Navegación de inicio y padre por rol centralizada en `src/lib/landing.ts` y usada por `AppTopbar`.
+
+### Paquetes
+
+- Bonos con profesional fijo o “cualquier profesional disponible”.
+- Horarios deduplicados visualmente por hora, sin perder el `professional_id` real.
+- La primera sesión dispara automáticamente la propuesta editable de las restantes; no hay botón ni estado intermedio “Proponer/Proponiendo”.
+- Fechas sin coincidencia quedan pendientes, sin inventar horarios; rangos largos se dividen según el límite del endpoint.
+- El color elegido se propaga a toda la tanda.
+
+### Vista Mes
+
+- Chips de una línea `hora · paciente`, con hover/foco y acceso por teclado.
+- Excedentes explícitos `+N turno(s)` que abren el modal con el día completo.
+- Toda el área libre de un día del mes seleccionado abre el modal; turnos, número y badges mantienen acciones aisladas.
+- Días grises adyacentes inertes porque no pertenecen al rango cargado.
+
+### Persistencia y despliegue
+
+- Versionada la migración `20260716120000_053_services_reception_group.sql`, ya aplicada en producción antes del commit.
+- Commit `0c45764fffcaa4ed2fc00598ebba828199554053` publicado por fast-forward en `origin/ekonlabs-dashboard`.
+- `.claude/` y dos imágenes de WhatsApp quedaron fuera deliberadamente.
+
+### Deuda conocida
+
+La carrera de cupo/índice al crear sesiones, el posible appointment huérfano tras fallo del UPDATE, respuestas parciales `skipped`, límites de `service_ids` y hardening del modal diario quedaron registrados en `_bmad-output/implementation-artifacts/deferred-work.md` para tareas separadas.
+
+---
+
 ## Sesión UX/UI Calendario — 2026-05-21
 
 **Tipo:** Mejora visual + rediseño de vistas | **Commits:** `2c0f55b`, `1cb6781` | **Tests:** 13 nuevos passing (CalendarView), suite completa estable
