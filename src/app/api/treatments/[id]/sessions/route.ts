@@ -10,25 +10,26 @@ import { createSessionsApiSchema } from '@/lib/schemas/treatment-session.schema'
 // una lista de slots elegidos de la disponibilidad REAL del profesional+servicio
 // del paquete y crea los appointments correspondientes, ligándolos al paquete.
 //
-// Reusa el MISMO camino de creación que la agenda y la generación de series:
-// RPC `create_appointment` (029, anti-overbooking POR PROFESIONAL + idempotencia)
-// y luego un UPDATE del turno con `package_id` / `session_index`. NO inventa un
-// mecanismo nuevo de creación de turnos.
+// La creación es ATÓMICA vía RPC `create_package_sessions` (054): toma FOR UPDATE
+// del treatment, recalcula cupo y session_index BAJO ESE LOCK, y crea+liga cada
+// turno (reusando `create_appointment` 029 — anti-overbooking por profesional +
+// idempotencia) dentro de un savepoint por slot. Esto cierra dos fallas de
+// integridad que tenía el bucle anterior en JS: requests paralelos que superaban
+// total_sessions / repetían session_index, y el turno que quedaba huérfano si el
+// UPDATE de ligado fallaba. Las validaciones de UX previas (404/409/422) se
+// conservan como pre-chequeo best-effort; la RPC es la autoridad final.
 //
 // CRÍTICO (AR14/AR15): tenant_id SIEMPRE del JWT (nunca del body). La RPC es
 // SECURITY DEFINER → recibe `p_org_id = tenantId` como frontera de aislamiento.
-// Las queries autenticadas a `treatments` / `appointments` filtran por RLS → NO
-// `.eq('tenant_id')`. NO admin.ts. `await params` (ruta dinámica Next.js 16).
-//
-// `session_index` se asigna correlativo: max(session_index existente del paquete) + 1,
-// incremental por cada turno NUEVO de esta corrida.
+// Las queries autenticadas a `treatments` filtran por RLS → NO `.eq('tenant_id')`.
+// NO admin.ts. `await params` (ruta dinámica Next.js 16).
 
-interface CreateApptRow {
-  success: boolean
-  appointment_id: string | null
-  short_id: string | null
-  duplicate: boolean
-  error: string | null
+// Retorno de la RPC create_package_sessions (054): cuántos turnos NUEVOS se crearon
+// y qué slots se saltearon, con el motivo (para el 409 all-conflict y para que el
+// frontend pueda, a futuro, informar los parciales).
+interface PackageSessionsResult {
+  creadas: number
+  skipped: { start_at?: string; reason: string }[] | null
 }
 
 // Forma del paquete que esta ruta consume (select con join a appointments).
@@ -130,13 +131,13 @@ export async function POST(
       )
     }
   }
-  const patientId = treatment.patient_id
-  const serviceId = treatment.service_id
   const totalSessions = treatment.total_sessions
 
-  // 7. Contador HONESTO derivado de los appointments reales (mismo criterio que
-  //    treatmentProgress): "agendadas" = turnos NO cancelados. `por_agendar` es el
-  //    cupo libre del bono. No se permite sobre-agendar más allá del total.
+  // 7. Pre-chequeo de cupo (best-effort, para dar buenos mensajes de UX). El
+  //    contador HONESTO deriva de los appointments reales (mismo criterio que
+  //    treatmentProgress): "agendadas" = turnos NO cancelados; `por_agendar` es
+  //    el cupo libre del bono. La AUTORIDAD final es la RPC (recalcula bajo lock);
+  //    esto sólo evita llamarla cuando ya se sabe que no hay lugar.
   const SCHEDULED = new Set(['confirmed', 'completed', 'no_show', 'pending_calendar'])
   const existingAppts = treatment.appointments ?? []
   const agendadas = existingAppts.filter((a) => SCHEDULED.has(a.status)).length
@@ -157,90 +158,37 @@ export async function POST(
     )
   }
 
-  // 8. Próximo session_index = max(existente) + 1, incremental por turno NUEVO.
-  let nextSessionIndex =
-    existingAppts.reduce((max, a) => Math.max(max, a.session_index ?? 0), 0) + 1
+  // 8. Crear las sesiones DE FORMA ATÓMICA (054). El cupo y el session_index los
+  //    recalcula la RPC bajo `FOR UPDATE` del treatment (autoritativo), así que
+  //    acá NO se calcula el índice ni se hace un UPDATE de ligado por separado:
+  //    todo (create_appointment + ligado package_id/session_index/color) corre en
+  //    una sola transacción con savepoint por slot. `professional_id` se resuelve
+  //    por slot igual que antes (fijo del paquete o el del hueco) — la RPC lo
+  //    valida de todos modos.
+  const rpcSlots = slots.map((s) => ({
+    start_at: s.start_at,
+    end_at: s.end_at,
+    professional_id: treatmentProfessionalId ?? s.professional_id ?? null,
+  }))
 
-  // 9. Crear cada turno con el MISMO camino que la agenda / generación:
-  //    paso 1 → create_appointment (029, candado + idempotencia)
-  //    paso 2 → UPDATE package_id / session_index sobre el id DEVUELTO por la RPC.
-  let creadas = 0
-  const skipped: { start_at: string; reason: string }[] = []
+  const { data: rpcData, error: rpcError } = await supabase.rpc('create_package_sessions', {
+    p_org_id: tenantId,
+    p_treatment_id: treatmentId,
+    p_slots: rpcSlots,
+    p_color: color ?? null,
+    p_booked_via: 'manual',
+  })
 
-  for (const slot of slots) {
-    const startAt = new Date(slot.start_at)
-    const endAt = new Date(slot.end_at)
-    if (isNaN(startAt.getTime()) || isNaN(endAt.getTime())) {
-      skipped.push({ start_at: slot.start_at, reason: 'invalid_date' })
-      continue
-    }
-
-    // Profesional del paquete si es fijo; si no, el que trae ESTE slot (ya
-    // validado arriba que existe cuando el paquete no tiene uno fijo).
-    const slotProfessionalId = treatmentProfessionalId ?? slot.professional_id
-    if (!slotProfessionalId) {
-      skipped.push({ start_at: slot.start_at, reason: 'missing_professional' })
-      continue
-    }
-
-    const generatedId = crypto.randomUUID()
-    const { data: rpcData, error: rpcError } = await supabase.rpc('create_appointment', {
-      p_org_id: tenantId,
-      p_patient_id: patientId,
-      p_service_id: serviceId,
-      p_start: startAt.toISOString(),
-      p_end: endAt.toISOString(),
-      p_appointment_id: generatedId,
-      p_professional_id: slotProfessionalId,
-      p_booked_via: 'manual',
-    })
-
-    if (rpcError) {
-      console.error('[treatments/sessions] create_appointment error:', rpcError)
-      skipped.push({ start_at: slot.start_at, reason: 'rpc_error' })
-      continue
-    }
-
-    const apptRow = (Array.isArray(rpcData) ? rpcData[0] : rpcData) as CreateApptRow | undefined
-    if (!apptRow || !apptRow.success || !apptRow.appointment_id) {
-      // p.ej. professional_service_mismatch
-      console.warn('[treatments/sessions] create_appointment falló:', apptRow?.error)
-      skipped.push({ start_at: slot.start_at, reason: apptRow?.error ?? 'create_failed' })
-      continue
-    }
-
-    if (apptRow.duplicate) {
-      // El slot ya estaba ocupado (candado / idempotencia): no consume cupo ni
-      // session_index. Lo informamos como conflicto, no como creado.
-      skipped.push({ start_at: slot.start_at, reason: 'slot_conflict' })
-      continue
-    }
-
-    // Paso 2: ligar el turno NUEVO al paquete. RLS de appointments filtra por
-    // tenant — NO .eq('tenant_id') (AR14). Usar el id DEVUELTO por la RPC.
-    // `create_appointment` no acepta color (no tiene p_color): el turno se crea
-    // con color NULL, y acá — mismo UPDATE que liga package_id/session_index —
-    // se aplica el color ÚNICO de la tanda si se eligió uno (Pedido 6).
-    const { error: updateError } = await supabase
-      .from('appointments')
-      .update({
-        package_id: treatmentId,
-        session_index: nextSessionIndex,
-        ...(color ? { color } : {}),
-      })
-      .eq('appointment_id', apptRow.appointment_id)
-
-    if (updateError) {
-      console.error('[treatments/sessions] update package_id error:', updateError)
-      // El turno quedó creado pero sin ligar: lo contamos igual como creado (existe)
-      // y avanzamos el índice para no reasignar el mismo a otra sesión.
-    }
-
-    creadas += 1
-    nextSessionIndex += 1
+  if (rpcError) {
+    console.error('[treatments/sessions] create_package_sessions error:', rpcError)
+    return Response.json({ error: 'No se pudieron agendar las sesiones' }, { status: 500 })
   }
 
-  // 10. Audit log — DESPUÉS de procesar (entity_id = treatment_id).
+  const result = (Array.isArray(rpcData) ? rpcData[0] : rpcData) as PackageSessionsResult | undefined
+  const creadas = result?.creadas ?? 0
+  const skipped = result?.skipped ?? []
+
+  // 9. Audit log — DESPUÉS de procesar (entity_id = treatment_id).
   if (creadas > 0) {
     await logAudit({
       action: 'treatment_sessions_scheduled',
@@ -250,13 +198,21 @@ export async function POST(
     })
   }
 
-  // 11. Si NO se creó ninguna y todas fueron conflicto → 409 (la UI invalida y
-  //     refresca la disponibilidad). Si hubo al menos una, 201 con el resumen.
-  const allConflict =
-    creadas === 0 && skipped.length > 0 && skipped.every((s) => s.reason === 'slot_conflict')
+  // 10. Si NO se creó ninguna y todas fueron conflicto de slot (o cupo agotado por
+  //     una carrera) → 409: la UI invalida y refresca la disponibilidad para
+  //     reelegir. Si hubo al menos una, 201 con el resumen (creadas + skipped).
+  const noneCreated = creadas === 0 && skipped.length > 0
+  const allConflict = noneCreated && skipped.every((s) => s.reason === 'slot_conflict')
+  const allNoCapacity = noneCreated && skipped.every((s) => s.reason === 'no_capacity')
   if (allConflict) {
     return Response.json(
       { error: 'Esos horarios ya no están disponibles', creadas, skipped },
+      { status: 409 },
+    )
+  }
+  if (allNoCapacity) {
+    return Response.json(
+      { error: 'El paquete ya tiene todas sus sesiones agendadas', creadas, skipped },
       { status: 409 },
     )
   }

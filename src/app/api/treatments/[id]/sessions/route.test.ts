@@ -53,14 +53,13 @@ function defaultTreatment(
 interface FromConfig {
   treatment?: Record<string, unknown> | null
   treatmentLoadError?: unknown
-  updatedApptIds?: string[]
-  updatePayloads?: Record<string, unknown>[]
 }
 
+// El route SOLO consulta `treatments` (carga para las validaciones de UX). La
+// creación + ligado los hace la RPC atómica create_package_sessions (054): el
+// route ya NO toca `appointments` por su cuenta. El throw en cualquier otra tabla
+// es una aserción implícita de que ese UPDATE por separado desapareció.
 function configureFrom(cfg: FromConfig) {
-  cfg.updatedApptIds = cfg.updatedApptIds ?? []
-  cfg.updatePayloads = cfg.updatePayloads ?? []
-
   mockFrom.mockImplementation((table: string) => {
     if (table === 'treatments') {
       const builder: Record<string, unknown> = {
@@ -75,42 +74,35 @@ function configureFrom(cfg: FromConfig) {
       }
       return builder
     }
-    if (table === 'appointments') {
-      let payload: Record<string, unknown> | null = null
-      const builder: Record<string, unknown> = {
-        update: vi.fn((p: Record<string, unknown>) => {
-          payload = p
-          return builder
-        }),
-        eq: vi.fn((_col: string, id: string) => {
-          cfg.updatedApptIds!.push(id)
-          if (payload) cfg.updatePayloads!.push(payload)
-          return Promise.resolve({ error: null })
-        }),
-      }
-      return builder
-    }
     throw new Error(`unexpected table ${table}`)
   })
 }
 
-// RPC create_appointment: por defecto crea un turno NUEVO con id determinístico.
-function rpcCreates(rows?: Array<{ success: boolean; appointment_id: string | null; duplicate: boolean; error?: string | null }>) {
-  let i = 0
-  mockRpc.mockImplementation((_fn: string, args: { p_appointment_id: string }) => {
-    if (rows && rows[i]) {
-      const r = rows[i++]
+// RPC create_package_sessions: por defecto reporta creadas = cantidad de slots
+// recibidos, skipped vacío (todos creados). Con `result`, devuelve ese resumen
+// exacto. Con `error`, simula un fallo duro de la RPC.
+function rpcSessions(opts: {
+  result?: { creadas: number; skipped?: { start_at?: string; reason: string }[] }
+  error?: unknown
+} = {}) {
+  mockRpc.mockImplementation((fn: string, args: { p_slots?: unknown[] }) => {
+    if (fn !== 'create_package_sessions') {
+      return Promise.resolve({ data: null, error: null })
+    }
+    if (opts.error) return Promise.resolve({ data: null, error: opts.error })
+    if (opts.result) {
       return Promise.resolve({
-        data: [{ success: r.success, appointment_id: r.appointment_id, short_id: null, duplicate: r.duplicate, error: r.error ?? null }],
+        data: [{ creadas: opts.result.creadas, skipped: opts.result.skipped ?? [] }],
         error: null,
       })
     }
-    i++
-    return Promise.resolve({
-      data: [{ success: true, appointment_id: args.p_appointment_id, short_id: null, duplicate: false, error: null }],
-      error: null,
-    })
+    const n = Array.isArray(args.p_slots) ? args.p_slots.length : 0
+    return Promise.resolve({ data: [{ creadas: n, skipped: [] }], error: null })
   })
+}
+
+function rpcCall() {
+  return mockRpc.mock.calls.find((c) => c[0] === 'create_package_sessions')
 }
 
 function makeRequest(body: unknown) {
@@ -142,7 +134,7 @@ describe('POST /api/treatments/[id]/sessions', () => {
     mockParseJwt.mockReturnValue({ app_role: 'admin', tenant_id: 'tenant-1' })
     mockLogAudit.mockResolvedValue(undefined)
     configureFrom({})
-    rpcCreates()
+    rpcSessions()
   })
 
   it('401 sin usuario', async () => {
@@ -203,80 +195,86 @@ describe('POST /api/treatments/[id]/sessions', () => {
     expect(res.status).toBe(409)
   })
 
-  it('201 crea las sesiones vía RPC create_appointment y las liga al paquete', async () => {
-    const cfg: FromConfig = {}
-    configureFrom(cfg)
-    rpcCreates()
-
+  it('201 crea las sesiones vía la RPC atómica create_package_sessions', async () => {
     const res = await POST(makeRequest(validBody(2)), makeParams())
     expect(res.status).toBe(201)
     const body = await res.json()
     expect(body.success).toBe(true)
     expect(body.creadas).toBe(2)
 
-    // Se llamó la RPC anti-overbooking 2 veces con el profesional del paquete.
-    expect(mockRpc).toHaveBeenCalledTimes(2)
+    // Una sola llamada a la RPC atómica con TODOS los slots (no una por slot).
+    expect(mockRpc).toHaveBeenCalledTimes(1)
     expect(mockRpc).toHaveBeenCalledWith(
-      'create_appointment',
+      'create_package_sessions',
       expect.objectContaining({
         p_org_id: 'tenant-1',
-        p_professional_id: PROF,
-        p_patient_id: PATIENT,
-        p_service_id: SERVICE,
+        p_treatment_id: TREATMENT_ID,
+        p_color: null,
         p_booked_via: 'manual',
       }),
     )
-    // Cada turno se ligó con package_id + session_index correlativo (1, 2).
-    expect(cfg.updatePayloads).toEqual([
-      { package_id: TREATMENT_ID, session_index: 1 },
-      { package_id: TREATMENT_ID, session_index: 2 },
+    // Los slots viajan con el profesional FIJO del paquete resuelto por slot.
+    expect(rpcCall()![1].p_slots).toEqual([
+      { start_at: '2026-06-10T13:00:00.000Z', end_at: '2026-06-10T14:00:00.000Z', professional_id: PROF },
+      { start_at: '2026-06-11T13:00:00.000Z', end_at: '2026-06-11T14:00:00.000Z', professional_id: PROF },
     ])
+    // El route NO calcula el índice ni hace un UPDATE propio de appointments:
+    // la RPC es autoridad del session_index/cupo bajo lock.
+    expect(mockFrom).not.toHaveBeenCalledWith('appointments')
   })
 
-  it('session_index continúa desde el max existente del paquete', async () => {
-    const cfg: FromConfig = {
-      treatment: defaultTreatment({ total_sessions: 10 }, [
-        { session_index: 3, status: 'completed' },
-        { session_index: 5, status: 'confirmed' },
-      ]),
-    }
-    configureFrom(cfg)
-    rpcCreates()
-
+  it('201 parcial: reporta creadas y skipped tal como los devuelve la RPC', async () => {
+    // Cupo llenado por una carrera: la RPC crea 1 y saltea 1 (no_capacity).
+    rpcSessions({ result: { creadas: 1, skipped: [{ start_at: '2026-06-11T13:00:00.000Z', reason: 'no_capacity' }] } })
     const res = await POST(makeRequest(validBody(2)), makeParams())
     expect(res.status).toBe(201)
-    // max existente = 5 → nuevos = 6, 7.
-    expect(cfg.updatePayloads).toEqual([
-      { package_id: TREATMENT_ID, session_index: 6 },
-      { package_id: TREATMENT_ID, session_index: 7 },
-    ])
+    const body = await res.json()
+    expect(body.creadas).toBe(1)
+    expect(body.skipped).toEqual([{ start_at: '2026-06-11T13:00:00.000Z', reason: 'no_capacity' }])
   })
 
-  it('409 si TODOS los slots resultan duplicados (slot ocupado)', async () => {
-    configureFrom({})
-    rpcCreates([
-      { success: true, appointment_id: 'existing-1', duplicate: true },
-      { success: true, appointment_id: 'existing-2', duplicate: true },
-    ])
+  it('409 si TODOS los slots resultan conflicto de slot (ocupado)', async () => {
+    rpcSessions({
+      result: {
+        creadas: 0,
+        skipped: [
+          { start_at: '2026-06-10T13:00:00.000Z', reason: 'slot_conflict' },
+          { start_at: '2026-06-11T13:00:00.000Z', reason: 'slot_conflict' },
+        ],
+      },
+    })
     const res = await POST(makeRequest(validBody(2)), makeParams())
     expect(res.status).toBe(409)
     const body = await res.json()
     expect(body.creadas).toBe(0)
+    // creadas=0 → NO se audita.
+    expect(mockLogAudit).not.toHaveBeenCalled()
+  })
+
+  it('409 si el cupo se agotó por una carrera (todos no_capacity)', async () => {
+    rpcSessions({ result: { creadas: 0, skipped: [{ start_at: '2026-06-10T13:00:00.000Z', reason: 'no_capacity' }] } })
+    const res = await POST(makeRequest(validBody(1)), makeParams())
+    expect(res.status).toBe(409)
+    const body = await res.json()
+    expect(body.error).toMatch(/ya tiene todas/i)
+  })
+
+  it('500 si la RPC devuelve un error duro', async () => {
+    rpcSessions({ error: { message: 'boom' } })
+    const res = await POST(makeRequest(validBody(1)), makeParams())
+    expect(res.status).toBe(500)
+    expect(mockLogAudit).not.toHaveBeenCalled()
   })
 
   it('tenant_id usado en la RPC proviene del JWT, no del body', async () => {
-    configureFrom({})
-    rpcCreates()
     await POST(makeRequest({ ...validBody(1), tenant_id: 'evil' }), makeParams())
     expect(mockRpc).toHaveBeenCalledWith(
-      'create_appointment',
+      'create_package_sessions',
       expect.objectContaining({ p_org_id: 'tenant-1' }),
     )
   })
 
   it('audita treatment_sessions_scheduled cuando creó al menos una', async () => {
-    configureFrom({})
-    rpcCreates()
     await POST(makeRequest(validBody(1)), makeParams())
     expect(mockLogAudit).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -294,10 +292,8 @@ describe('POST /api/treatments/[id]/sessions', () => {
       return { slots }
     }
 
-    it('201 usa el professional_id de CADA slot (no el del paquete, que es null)', async () => {
+    it('201 pasa a la RPC el professional_id de CADA slot (no el del paquete, que es null)', async () => {
       configureFrom({ treatment: defaultTreatment({ professional_id: null }) })
-      rpcCreates()
-
       const res = await POST(
         makeRequest(
           anyBody([
@@ -308,16 +304,10 @@ describe('POST /api/treatments/[id]/sessions', () => {
         makeParams(),
       )
       expect(res.status).toBe(201)
-      expect(mockRpc).toHaveBeenNthCalledWith(
-        1,
-        'create_appointment',
-        expect.objectContaining({ p_professional_id: PROF }),
-      )
-      expect(mockRpc).toHaveBeenNthCalledWith(
-        2,
-        'create_appointment',
-        expect.objectContaining({ p_professional_id: PROF_2 }),
-      )
+      expect(rpcCall()![1].p_slots).toEqual([
+        { start_at: '2026-06-10T13:00:00.000Z', end_at: '2026-06-10T14:00:00.000Z', professional_id: PROF },
+        { start_at: '2026-06-11T13:00:00.000Z', end_at: '2026-06-11T14:00:00.000Z', professional_id: PROF_2 },
+      ])
     })
 
     it('422 si falta professional_id en AL MENOS un slot', async () => {
@@ -334,46 +324,30 @@ describe('POST /api/treatments/[id]/sessions', () => {
       expect(res.status).toBe(422)
     })
 
-    it('con profesional FIJO en el paquete, ignora professional_id que traiga el slot y usa el del paquete', async () => {
+    it('con profesional FIJO en el paquete, ignora el professional_id del slot y usa el del paquete', async () => {
       configureFrom({}) // paquete con professional_id = PROF (default)
-      rpcCreates()
       const res = await POST(
         makeRequest(anyBody([{ start_at: '2026-06-10T13:00:00.000Z', end_at: '2026-06-10T14:00:00.000Z', professional_id: PROF_2 }])),
         makeParams(),
       )
       expect(res.status).toBe(201)
-      expect(mockRpc).toHaveBeenCalledWith(
-        'create_appointment',
-        expect.objectContaining({ p_professional_id: PROF }),
-      )
+      expect(rpcCall()![1].p_slots).toEqual([
+        { start_at: '2026-06-10T13:00:00.000Z', end_at: '2026-06-10T14:00:00.000Z', professional_id: PROF },
+      ])
     })
   })
 
   describe('Pedido 6 (ISADI 2026-07-14/16) — color único de la tanda', () => {
-    it('sin color en el body, el UPDATE que liga package_id/session_index NO lleva color', async () => {
-      const cfg: FromConfig = {}
-      configureFrom(cfg)
-      rpcCreates()
-
+    it('sin color en el body, la RPC recibe p_color null', async () => {
       const res = await POST(makeRequest(validBody(2)), makeParams())
       expect(res.status).toBe(201)
-      expect(cfg.updatePayloads).toEqual([
-        { package_id: TREATMENT_ID, session_index: 1 },
-        { package_id: TREATMENT_ID, session_index: 2 },
-      ])
+      expect(rpcCall()![1].p_color).toBeNull()
     })
 
-    it('con color en el body, TODOS los turnos creados se ligan con ESE color', async () => {
-      const cfg: FromConfig = {}
-      configureFrom(cfg)
-      rpcCreates()
-
+    it('con color en el body, la RPC recibe ESE color (aplicado a toda la tanda)', async () => {
       const res = await POST(makeRequest({ ...validBody(2), color: '#00FFFF' }), makeParams())
       expect(res.status).toBe(201)
-      expect(cfg.updatePayloads).toEqual([
-        { package_id: TREATMENT_ID, session_index: 1, color: '#00FFFF' },
-        { package_id: TREATMENT_ID, session_index: 2, color: '#00FFFF' },
-      ])
+      expect(rpcCall()![1].p_color).toBe('#00FFFF')
     })
 
     it('400 si el color no tiene formato hex válido', async () => {
