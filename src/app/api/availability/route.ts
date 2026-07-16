@@ -17,6 +17,13 @@ import type { AvailabilityShift, DayShifts, DaySummary } from '@/types/availabil
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const MAX_RANGE_DAYS = 60
+// Mismo patrón UUID_REGEX usado en appointments/[id], patients/[id]/clinical-data,
+// treatments/[id]/discharge, etc. — formato UUID genérico (no exige la variante v4).
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+// B3 (hardening) — el grupo real (Fisioterapia/Pileta/Pilates) tiene ~3 service_id.
+// 10 es holgado sobre ese uso real y evita que N servicios x M profesionales x
+// MAX_RANGE_DAYS días dispare cientos/miles de llamadas a la RPC.
+const MAX_SERVICE_IDS = 10
 
 interface RpcRow {
   available: boolean
@@ -56,8 +63,10 @@ export async function GET(request: Request): Promise<Response> {
   // Fisioterapia: varios service_id a la vez (comma-separated), CON PRIORIDAD
   // sobre `service_id` cuando ambos llegan. Ver 6.c más abajo.
   const serviceIdsParam = searchParams.get('service_ids')
+  // B3 (hardening) — dedup preservando orden (un id repetido no debe multiplicar
+  // llamadas a la RPC) antes de validar formato/cantidad más abajo (paso 5).
   const serviceIdList = serviceIdsParam
-    ? serviceIdsParam.split(',').map((s) => s.trim()).filter(Boolean)
+    ? [...new Set(serviceIdsParam.split(',').map((s) => s.trim()).filter(Boolean))]
     : null
   const professionalId = searchParams.get('professional_id')
   const summary = searchParams.get('summary') === 'true'
@@ -73,6 +82,23 @@ export async function GET(request: Request): Promise<Response> {
   }
   if (!DATE_RE.test(dateFrom) || !DATE_RE.test(dateTo)) {
     return Response.json({ error: 'Formato de fecha inválido (se espera YYYY-MM-DD)' }, { status: 400 })
+  }
+
+  // B3 (hardening) — service_ids: límite de cantidad + UUID de cada elemento.
+  // Evita que un id malformado llegue a `.eq('service_id', sid)`/la RPC (→ 500)
+  // y que una lista desmedida dispare cientos de llamadas (N servicios x M
+  // profesionales x MAX_RANGE_DAYS días).
+  if (serviceIdList && serviceIdList.length > 0) {
+    if (serviceIdList.length > MAX_SERVICE_IDS) {
+      return Response.json(
+        { error: `service_ids no puede tener más de ${MAX_SERVICE_IDS} elementos` },
+        { status: 400 },
+      )
+    }
+    const invalidId = serviceIdList.find((sid) => !UUID_REGEX.test(sid))
+    if (invalidId) {
+      return Response.json({ error: `service_ids contiene un id inválido: ${invalidId}` }, { status: 400 })
+    }
   }
 
   const fromDate = parseISO(dateFrom)

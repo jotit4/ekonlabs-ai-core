@@ -15,11 +15,13 @@ import {
   type NewAppointmentFormValues,
 } from '@/lib/schemas/appointment.schema'
 import { PatientFormSchema, type PatientFormValues } from '@/lib/schemas/patient.schema'
-import { useAvailability } from '@/hooks/use-availability'
+import { useAvailability, fetchAvailabilityDays } from '@/hooks/use-availability'
 import { MultiSessionScheduler } from '@/components/agenda/MultiSessionScheduler'
 import { type SelectedSlot } from '@/components/agenda/AvailabilitySlotPicker'
 import { ColorSwatchPicker } from '@/components/agenda/ColorSwatchPicker'
 import { ANY_PROFESSIONAL } from '@/lib/agenda/any-professional'
+import { listAlternateProfessionalShifts } from '@/lib/agenda/reception-retry'
+import type { AvailabilityShift, DayShifts } from '@/types/availability'
 
 // Opciones del selector de cantidad: turno suelto o serie/bono de sesiones (x5/x10).
 const SESSION_OPTIONS = [1, 5, 10] as const
@@ -46,6 +48,13 @@ interface ServiceOption {
 // servicio ni profesional). Los otros grupos (pileta/pilates) no tienen este
 // flujo simplificado — solo Fisioterapia, por pedido explícito del cliente.
 const RECEPTION_FISIO_GROUP = 'fisioterapia'
+
+// Ítem B5 — tope duro de reintentos con OTRO profesional a la misma hora tras
+// un 409 del hueco colapsado (ver `handleSubmitReceptionTurno`). El bound real
+// ya lo da la cantidad de profesionales alternativos que devuelve el refetch
+// (normalmente unos pocos), pero esta constante evita un loop patológico si
+// esa lista fuera inusualmente larga.
+const MAX_RECEPTION_RETRY_ATTEMPTS = 4
 
 interface ProfessionalOption {
   professional_id: string
@@ -616,10 +625,43 @@ export function NewTurnoModal({
     }
   }
 
+  // Ítem B5 (resiliencia ante carreras) — hace el POST del turno único de
+  // recepción para un service_id/professional_id/HH:MM concretos. Extraído
+  // para reusarlo tanto en el intento original como en cada reintento con un
+  // profesional alternativo (la duración depende del servicio del hueco, que
+  // puede cambiar de un intento a otro dentro del mismo grupo Fisioterapia).
+  const postReceptionAppointment = (patientId: string, svcId: string, profId: string, hhmm: string) => {
+    const svc = fisioServices.find((s) => s.service_id === svcId)
+    const receptionDurationMinutes = svc?.duration_minutes ?? 60
+    const appointmentTimeISO = `${selectedDate}T${hhmm}:00-03:00`
+    return fetch('/api/appointments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        patient_id: patientId,
+        service_id: svcId,
+        professional_id: profId,
+        appointment_time: appointmentTimeISO,
+        duration_minutes: receptionDurationMinutes,
+        ...(selectedColor ? { color: selectedColor } : {}),
+      }),
+    })
+  }
+
   // Pedido 1 (ISADI 2026-07-16) — envío del turno único en modo recepción:
   // NO pasa por el schema de RHF (service_id/professional_id nunca se
   // eligen), se resuelven acá del hueco elegido (`receptionSlotKey`), igual
   // que el mecanismo "cualquier profesional" pero también con el service_id.
+  //
+  // Ítem B5 — el hueco elegido es un REPRESENTANTE colapsado por hora (puede
+  // haber varios profesionales del grupo libres a la misma hora, la UI
+  // muestra uno solo). Si ESE profesional se ocupó por una carrera (409 de
+  // check_clinic_availability, RPC 029), antes de forzar a elegir otra hora:
+  // refrescar la disponibilidad del grupo y, si sigue habiendo OTRO
+  // profesional libre a la MISMA hora, reintentar con ese. Solo si no queda
+  // ninguno se pide reelegir horario. Acotado por `MAX_RECEPTION_RETRY_ATTEMPTS`
+  // y por la cantidad de alternativas reales que trae el refetch — no hay
+  // reintento sin candidato concreto.
   const handleSubmitReceptionTurno = async () => {
     setSlotConflictError(null)
     setSubmitError(null)
@@ -634,42 +676,73 @@ export function NewTurnoModal({
       setSlotConflictError('Elegí un horario disponible')
       return
     }
-    const svc = fisioServices.find((s) => s.service_id === svcId)
-    const receptionDurationMinutes = svc?.duration_minutes ?? 60
-    const appointmentTimeISO = `${selectedDate}T${hhmm}:00-03:00`
+    const patientId = patient.patient_id
 
     setIsSubmittingReceptionTurno(true)
     try {
-      const response = await fetch('/api/appointments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          patient_id: patient.patient_id,
-          service_id: svcId,
-          professional_id: profId,
-          appointment_time: appointmentTimeISO,
-          duration_minutes: receptionDurationMinutes,
-          ...(selectedColor ? { color: selectedColor } : {}),
-        }),
-      })
+      let currentSvcId = svcId
+      let currentProfId = profId
+      // Alternativas a la MISMA hora (`hhmm`), obtenidas con un único refetch
+      // tras el primer 409 — se prueba cada una como máximo una vez.
+      let alternates: AvailabilityShift[] | null = null
+      let alternateIndex = 0
 
-      if (response.status === 409) {
+      for (let attempt = 0; attempt <= MAX_RECEPTION_RETRY_ATTEMPTS; attempt++) {
+        const response = await postReceptionAppointment(patientId, currentSvcId, currentProfId, hhmm)
+
+        if (response.status === 409) {
+          if (alternates === null) {
+            // Primera carrera: recién ahí vale la pena refrescar (evita un
+            // fetch extra en el camino feliz).
+            try {
+              const fresh = await fetchAvailabilityDays({
+                dateFrom: selectedDate,
+                dateTo: selectedDate,
+                serviceIds: fisioServiceIds,
+                allProfessionals: true,
+              })
+              const freshShifts = (fresh.days as Record<string, DayShifts>)[selectedDate]?.shifts ?? []
+              alternates = listAlternateProfessionalShifts(freshShifts, hhmm, profId)
+            } catch {
+              alternates = []
+            }
+          }
+
+          const next = alternates[alternateIndex]
+          alternateIndex += 1
+
+          if (!next) {
+            // No queda ningún otro profesional libre a esa hora: recién acá
+            // se le pide a recepción que elija otro horario.
+            queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
+            queryClient.invalidateQueries({ queryKey: ['availability'], exact: false })
+            setSlotConflictError('Ese horario ya no está disponible')
+            return
+          }
+
+          currentSvcId = next.service_id
+          currentProfId = next.professional_id
+          toast.info(`Ese profesional se ocupó justo ahora. Reintentando con otro a las ${hhmm}…`)
+          continue
+        }
+
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}))
+          setSubmitError((body as { error?: string }).error ?? 'Error al crear el turno')
+          return
+        }
+
+        // Éxito (intento original o reintento transparente)
         queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
         queryClient.invalidateQueries({ queryKey: ['availability'], exact: false })
-        setSlotConflictError('Ese horario ya no está disponible')
+        handleClose()
         return
       }
 
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}))
-        setSubmitError((body as { error?: string }).error ?? 'Error al crear el turno')
-        return
-      }
-
-      // Éxito
+      // Tope duro de reintentos alcanzado (ver MAX_RECEPTION_RETRY_ATTEMPTS).
       queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
       queryClient.invalidateQueries({ queryKey: ['availability'], exact: false })
-      handleClose()
+      setSlotConflictError('Ese horario ya no está disponible')
     } catch {
       setSubmitError('Error de red. Verificá tu conexión e intentá de nuevo.')
     } finally {

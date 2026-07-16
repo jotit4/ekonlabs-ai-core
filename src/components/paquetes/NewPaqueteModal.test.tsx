@@ -42,6 +42,20 @@ vi.mock('@/components/agenda/MultiSessionScheduler', () => ({
       >
         elegir-propuesta
       </button>
+      {/* Botón adicional (deuda técnica B2) — emite DOS slots de una, para
+          poder simular un lote de 2 sesiones y así un 201 PARCIAL (1 creada, 1
+          skipped) en el submodal de agendado embebido (Pedido 7). */}
+      <button
+        type="button"
+        onClick={() =>
+          onChange([
+            { start_at: '2026-07-08T13:00:00.000Z', end_at: '2026-07-08T14:00:00.000Z', date: '2026-07-08', label: '10:00', professional_id: PROF_1 },
+            { start_at: '2026-07-09T13:00:00.000Z', end_at: '2026-07-09T14:00:00.000Z', date: '2026-07-09', label: '10:00', professional_id: PROF_1 },
+          ])
+        }
+      >
+        elegir-2-slots
+      </button>
     </div>
   ),
 }))
@@ -577,6 +591,67 @@ describe('NewPaqueteModal', () => {
         const body = JSON.parse((call![1] as { body: string }).body)
         expect(body.slots).toHaveLength(1)
         expect(body.color).toBe('#00FFFF')
+      })
+    })
+
+    describe('B2 (deuda técnica) — cupo obsoleto al reabrir el submodal tras un 201 parcial', () => {
+      it('al reabrir el submodal tras un parcial, el cupo mostrado descuenta lo ya agendado (no vuelve al total)', async () => {
+        mockFetch.mockImplementation((url: string, init?: { method?: string }) => {
+          if (url.includes('/profesionales')) return Promise.resolve(makeProfessionalsResponse())
+          if (url === '/api/treatments' && init?.method === 'POST') return Promise.resolve(makeTreatmentResponse())
+          if (url === '/api/treatments/trt-new/sessions' && init?.method === 'POST') {
+            return Promise.resolve({
+              ok: true,
+              status: 201,
+              json: async () => ({
+                success: true,
+                creadas: 1,
+                skipped: [{ start_at: '2026-07-09T13:00:00.000Z', reason: 'slot_conflict' }],
+              }),
+            })
+          }
+          return Promise.resolve(makeSearchResponse([]))
+        })
+
+        const user = userEvent.setup()
+        render(<NewPaqueteModal open={true} onClose={mockOnClose} initialPatient={singlePatient} />)
+
+        await fillTreatmentForm(user, '3')
+        await user.click(screen.getByRole('button', { name: /crear paquete/i }))
+        await waitFor(() => screen.getByRole('button', { name: 'Agendar sesión' }))
+
+        // 1ra apertura: nada agendado todavía → cupo = total del bono.
+        await user.click(screen.getByRole('button', { name: 'Agendar sesión' }))
+        await waitFor(() => {
+          expect(screen.getByText(/faltan agendar 3/i)).toBeInTheDocument()
+        })
+
+        // Elige 2 horarios y confirma — el backend agenda 1 y saltea el otro.
+        await user.click(screen.getByRole('button', { name: 'elegir-2-slots' }))
+        const confirmBtn = screen.getByRole('button', { name: /agendar 2 sesiones/i })
+        await waitFor(() => expect(confirmBtn).toBeEnabled())
+        await user.click(confirmBtn)
+
+        // Parcial: el submodal NO se cierra solo (comportamiento B1). Nota:
+        // hay OTRO elemento con role="status" (el aviso verde "Paquete
+        // creado..." del modal padre) — por eso se busca por texto, no por rol.
+        await waitFor(() => {
+          expect(screen.getByText(/se agendaron 1 de 2/i)).toBeInTheDocument()
+        })
+        expect(screen.queryByTestId('multi-session-scheduler')).toBeInTheDocument()
+
+        // La persona cierra el submodal manualmente...
+        await user.click(screen.getByRole('button', { name: 'Cancelar' }))
+        await waitFor(() => {
+          expect(screen.getByRole('button', { name: 'Agendar sesión' })).toBeEnabled()
+        })
+
+        // ...y lo reabre: el cupo YA NO es el total (3) — descuenta la sesión
+        // que sí se creó en el intento anterior.
+        await user.click(screen.getByRole('button', { name: 'Agendar sesión' }))
+        await waitFor(() => {
+          expect(screen.getByText(/faltan agendar 2/i)).toBeInTheDocument()
+        })
       })
     })
   })

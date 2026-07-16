@@ -173,11 +173,13 @@ vi.mock('@/components/agenda/AgendaFilters', () => ({
   AgendaFilters: ({
     showFilters,
     onProfessionalChange,
+    onClear,
     areaFocus,
     onAreaFocusChange,
   }: {
     showFilters: boolean
     onProfessionalChange: (id: string | null) => void
+    onClear: () => void
     areaFocus?: string
     onAreaFocusChange?: (focus: string) => void
   }) =>
@@ -187,6 +189,8 @@ vi.mock('@/components/agenda/AgendaFilters', () => ({
         <button onClick={() => onProfessionalChange('prof-1')}>mock-pick-prof</button>
         {/* Botón stub del radiogroup real "Rehabilitación | Ver todo" */}
         <button onClick={() => onAreaFocusChange?.('todos')}>mock-ver-todo</button>
+        {/* Botón stub de "Limpiar" — ejercita handleClearFilters desde AgendaView */}
+        <button onClick={() => onClear()}>mock-limpiar</button>
       </div>
     ) : null,
   // Los botones de Servicio viven en un componente aparte, siempre visible
@@ -627,6 +631,84 @@ describe('AgendaPage', () => {
       fireEvent.click(screen.getByRole('button', { name: 'mock-pick-grupo-fisio' }))
       fireEvent.click(screen.getByRole('button', { name: 'mock-clear-grupo' }))
       expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute('data-reception-group', '')
+    })
+  })
+
+  // ── Deuda B4 — filtros de recepción intersectados ──────────────────────────
+  // Cambiar (o limpiar) el grupo de recepción es una selección más gruesa que
+  // service_id/professional_id: si alguno de esos dos quedó residual en la
+  // URL, debe limpiarse en el mismo push para que el grupo activo y el
+  // service_id/profesional nunca se contradigan (agenda vacía + filtro
+  // visual engañoso).
+  describe('Deuda B4 — unificación de transiciones receptionGroup ⊕ service_id/professional_id', () => {
+    it('elegir un grupo SIN residuo en la URL no navega (comportamiento previo intacto)', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      mockSearchParamsData = {}
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'mock-pick-grupo-fisio' }))
+      expect(mockRouterPush).not.toHaveBeenCalled()
+      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute(
+        'data-reception-group',
+        'fisioterapia',
+      )
+    })
+
+    it('elegir un grupo con professional_id residual en la URL lo limpia en un único push', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      mockSearchParamsData = { professional_id: 'prof-1' }
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'mock-pick-grupo-fisio' }))
+      expect(mockRouterPush).toHaveBeenCalledOnce()
+      const url = mockRouterPush.mock.calls.at(-1)![0] as string
+      expect(url).not.toContain('professional_id')
+      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute(
+        'data-reception-group',
+        'fisioterapia',
+      )
+    })
+
+    it('elegir un grupo con service_id residual en la URL lo limpia en un único push', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      mockSearchParamsData = { service_id: 'svc-1' }
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'mock-pick-grupo-fisio' }))
+      expect(mockRouterPush).toHaveBeenCalledOnce()
+      const url = mockRouterPush.mock.calls.at(-1)![0] as string
+      expect(url).not.toContain('service_id')
+    })
+
+    it('limpiar el grupo (deseleccionar) con professional_id residual también lo limpia', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      mockSearchParamsData = { professional_id: 'prof-1' }
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'mock-clear-grupo' }))
+      expect(mockRouterPush).toHaveBeenCalledOnce()
+      const url = mockRouterPush.mock.calls.at(-1)![0] as string
+      expect(url).not.toContain('professional_id')
+    })
+
+    it('"Limpiar" (AgendaFilters) resetea también el grupo de recepción — sin residuo', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      render(<AgendaPage />)
+      // Abrir "Filtrar" para revelar AgendaFilters (modo turnero: plegado por defecto).
+      fireEvent.click(screen.getByRole('button', { name: /^filtrar$/i }))
+      fireEvent.click(screen.getByRole('button', { name: 'mock-pick-grupo-fisio' }))
+      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute(
+        'data-reception-group',
+        'fisioterapia',
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'mock-limpiar' }))
+      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute('data-reception-group', '')
+    })
+
+    it('admin: "Limpiar" sigue funcionando igual que antes (receptionGroup no le aplica)', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      mockSearchParamsData = { professional_id: 'prof-1' }
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'mock-limpiar' }))
+      const url = mockRouterPush.mock.calls.at(-1)![0] as string
+      expect(url).not.toContain('professional_id')
+      expect(url).not.toContain('service_id')
     })
   })
 

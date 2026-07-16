@@ -102,6 +102,15 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
   // que usa la ficha del paciente (AgendarSesionModal) — sin salir de acá. Para
   // 5/10 no hace falta: el scheduler embebido de arriba ya cubre ese caso.
   const [showAgendarSesionModal, setShowAgendarSesionModal] = useState(false)
+  // Deuda técnica: cupo obsoleto al reabrir el submodal. `AgendarSesionModal`
+  // puede quedar abierto tras un 201 PARCIAL (algunas sesiones creadas, otras
+  // no) y la persona puede cerrarlo y reabrirlo. `createdTotalSessions` es el
+  // total del bono, NO lo pendiente — sin este contador, reabrir mostraría de
+  // nuevo el cupo completo aunque ya se hayan creado sesiones. Se acumula con
+  // `creadas` de CADA intento (vía `onScheduled` de AgendarSesionModal),
+  // incluidos los parciales.
+  const [scheduledFromSubmodal, setScheduledFromSubmodal] = useState(0)
+  const pendingFromSubmodal = Math.max(createdTotalSessions - scheduledFromSubmodal, 0)
 
   // Search form
   const searchForm = useForm<PatientSearchValues>({
@@ -213,6 +222,7 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
     setScheduleError(null)
     setScheduleColor(null)
     setShowAgendarSesionModal(false)
+    setScheduledFromSubmodal(0)
     searchForm.reset()
     treatmentForm.reset({
       patient_id: initialPatient?.patient_id ?? '',
@@ -770,7 +780,9 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
                   (cantidades ≠ 5/10) — abre el modal ESTÁNDAR de agendado,
                   apilado sobre este mismo modal (no lo cierra: la secretaria
                   puede volver a "Cerrar" cuando termine). Bono recién creado →
-                  porAgendar = total (0 sesiones agendadas todavía). */}
+                  porAgendar arranca en el total, pero descuenta lo YA agendado
+                  si el submodal quedó abierto por un 201 parcial y se reabrió
+                  (deuda técnica — cupo obsoleto). */}
               {showAgendarSesionModal && createdTreatmentId && (
                 <AgendarSesionModal
                   open
@@ -782,8 +794,9 @@ export function NewPaqueteModal({ open, onClose, initialPatient }: NewPaqueteMod
                   professionalName={
                     professionals.find((p) => p.professional_id === createdProfessionalId)?.name ?? null
                   }
-                  porAgendar={createdTotalSessions}
+                  porAgendar={pendingFromSubmodal}
                   patientId={patient?.patient_id ?? ''}
+                  onScheduled={(creadas) => setScheduledFromSubmodal((prev) => prev + creadas)}
                 />
               )}
             </div>

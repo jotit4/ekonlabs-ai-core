@@ -8,7 +8,7 @@ import type { AvailabilityShift } from '@/types/availability'
 // Reserva parcial de series x5/x10: aviso por toast (sonner, ya global) +
 // navegación a la ficha del paciente ("Ir a completar").
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }))
 import { toast } from 'sonner'
 
@@ -1392,6 +1392,133 @@ describe('NewTurnoModal', () => {
         expect(body.professional_id).toBe('prof-1')
         expect(body.appointment_time).toContain('T10:00:00')
         expect(body.duration_minutes).toBe(60) // duration_minutes de svc-1 (Kinesiología) en el mock
+      })
+    })
+
+    // ─── Ítem B5 — resiliencia ante carreras: 409 del hueco colapsado ──────────
+    describe('Ítem B5 — 409 del profesional representante colapsado', () => {
+      // Dos profesionales del grupo libres a la MISMA hora (10:00). El
+      // representante colapsado que ve recepción es el ÚLTIMO del array (el
+      // Map de `receptionTimeOptions` pisa por clave `open`), así que
+      // seleccionar "10:00" arma `receptionSlotKey = 'svc-2__prof-2__10:00'`.
+      const shiftProf1 = {
+        ...makeShift('10:00'),
+        service_id: 'svc-1',
+        service_name: 'Kinesiología',
+        professional_id: 'prof-1',
+        professional_name: 'Patricia Pérez',
+      }
+      const shiftProf2 = {
+        ...makeShift('10:00'),
+        service_id: 'svc-2',
+        service_name: 'Fisioterapia',
+        professional_id: 'prof-2',
+        professional_name: 'Aldo Luque',
+      }
+
+      it('con OTRO profesional libre a esa hora: reintenta transparente (sin pedir reelegir horario)', async () => {
+        vi.mocked(useAvailability).mockImplementation(({ enabled }) => ({
+          daysShifts: {},
+          daysSummary: {},
+          isLoading: false,
+          isError: false,
+          refetch: vi.fn(),
+          shiftsForDate: () => (enabled ? [shiftProf1, shiftProf2] : []),
+        }))
+        // Refetch tras el 409: ambos profesionales siguen apareciendo en la
+        // respuesta cruda (la RPC no "borra" al ocupado, el 409 lo confirma).
+        vi.mocked(fetchAvailabilityDays).mockResolvedValue({
+          days: { '2026-07-16': { available: true, shifts: [shiftProf1, shiftProf2] } },
+        })
+
+        let appointmentAttempts = 0
+        mockFetch.mockImplementation((url: string, init?: { method?: string }) => {
+          if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
+          if (url === '/api/appointments' && init?.method === 'POST') {
+            appointmentAttempts += 1
+            if (appointmentAttempts === 1) {
+              return Promise.resolve({ ok: false, status: 409, json: async () => ({ error: 'conflict' }) })
+            }
+            return Promise.resolve(makeAppointmentResponse(true, 201))
+          }
+          return Promise.resolve(makeSearchResponse([]))
+        })
+
+        const user = userEvent.setup()
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" isReceptionist />)
+
+        await search(user, '87654321')
+        await waitFor(() => screen.getByText(/María López/))
+        await waitFor(() => expect(screen.getByRole('option', { name: '10:00' })).toBeInTheDocument())
+
+        await user.selectOptions(screen.getByLabelText('Horario'), 'svc-2__prof-2__10:00')
+        await user.click(screen.getByRole('button', { name: /guardar turno/i }))
+
+        // Se cierra (éxito) tras el reintento — el modal no se queda pidiendo
+        // que se reelija horario.
+        await waitFor(() => expect(mockOnClose).toHaveBeenCalled())
+
+        const postCalls = mockFetch.mock.calls.filter(
+          (c) => c[0] === '/api/appointments' && (c[1] as { method?: string })?.method === 'POST',
+        )
+        expect(postCalls).toHaveLength(2)
+
+        const firstBody = JSON.parse((postCalls[0][1] as { body: string }).body)
+        expect(firstBody.professional_id).toBe('prof-2')
+        expect(firstBody.service_id).toBe('svc-2')
+
+        // El reintento usa el OTRO profesional libre a la MISMA hora (10:00),
+        // con el service_id/duración de SU propio servicio (svc-1, 60min).
+        const secondBody = JSON.parse((postCalls[1][1] as { body: string }).body)
+        expect(secondBody.professional_id).toBe('prof-1')
+        expect(secondBody.service_id).toBe('svc-1')
+        expect(secondBody.appointment_time).toContain('T10:00:00')
+        expect(secondBody.duration_minutes).toBe(60)
+
+        expect(screen.queryByText('Ese horario ya no está disponible')).not.toBeInTheDocument()
+      })
+
+      it('sin ningún otro profesional libre a esa hora: pide reelegir horario (no reintenta indefinidamente)', async () => {
+        vi.mocked(useAvailability).mockImplementation(({ enabled }) => ({
+          daysShifts: {},
+          daysSummary: {},
+          isLoading: false,
+          isError: false,
+          refetch: vi.fn(),
+          shiftsForDate: () => (enabled ? [shiftProf2] : []),
+        }))
+        // El refetch confirma que YA NO queda nadie más libre a las 10:00.
+        vi.mocked(fetchAvailabilityDays).mockResolvedValue({
+          days: { '2026-07-16': { available: true, shifts: [] } },
+        })
+
+        let appointmentAttempts = 0
+        mockFetch.mockImplementation((url: string, init?: { method?: string }) => {
+          if (url.includes('/api/patients/search')) return Promise.resolve(makeSearchResponse([singlePatient]))
+          if (url === '/api/appointments' && init?.method === 'POST') {
+            appointmentAttempts += 1
+            return Promise.resolve({ ok: false, status: 409, json: async () => ({ error: 'conflict' }) })
+          }
+          return Promise.resolve(makeSearchResponse([]))
+        })
+
+        const user = userEvent.setup()
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" isReceptionist />)
+
+        await search(user, '87654321')
+        await waitFor(() => screen.getByText(/María López/))
+        await waitFor(() => expect(screen.getByRole('option', { name: '10:00' })).toBeInTheDocument())
+
+        await user.selectOptions(screen.getByLabelText('Horario'), 'svc-2__prof-2__10:00')
+        await user.click(screen.getByRole('button', { name: /guardar turno/i }))
+
+        await waitFor(() => {
+          expect(screen.getByText('Ese horario ya no está disponible')).toBeInTheDocument()
+        })
+        // Un solo intento real (sin candidato no hay reintento) y el modal
+        // sigue abierto para que recepción elija otro horario.
+        expect(appointmentAttempts).toBe(1)
+        expect(mockOnClose).not.toHaveBeenCalled()
       })
     })
 

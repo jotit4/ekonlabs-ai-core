@@ -218,6 +218,11 @@ describe('GET /api/availability', () => {
   })
 
   describe('service_ids (grupo — Pedido 1 ISADI 2026-07-16, "Dar un turno" recepción)', () => {
+    // UUIDs válidos (formato) para probar el modo grupo — B3 (hardening) exige
+    // que cada service_id de la lista sea un UUID.
+    const SVC_A = '11111111-1111-1111-1111-111111111111'
+    const SVC_B = '22222222-2222-2222-2222-222222222222'
+
     beforeEach(() => {
       // service_professionals → dos profesionales activos, mismos para cualquier
       // service_id consultado (el mock no distingue por argumento, como el resto
@@ -253,7 +258,7 @@ describe('GET /api/availability', () => {
 
     it('itera TODOS los service_id del grupo x TODOS sus profesionales activos, uniendo huecos', async () => {
       const res = await GET(
-        makeRequest('date_from=2026-06-04&date_to=2026-06-04&service_ids=svc-1,svc-2'),
+        makeRequest(`date_from=2026-06-04&date_to=2026-06-04&service_ids=${SVC_A},${SVC_B}`),
       )
       expect(res.status).toBe(200)
       const body = await res.json()
@@ -261,14 +266,14 @@ describe('GET /api/availability', () => {
       // 2 servicios x 2 profesionales = 4 huecos
       expect(shifts).toHaveLength(4)
       const combos = shifts.map((s) => `${s.service_id}__${s.professional_id}`).sort()
-      expect(combos).toEqual(['svc-1__prof-1', 'svc-1__prof-2', 'svc-2__prof-1', 'svc-2__prof-2'])
+      expect(combos).toEqual([`${SVC_A}__prof-1`, `${SVC_A}__prof-2`, `${SVC_B}__prof-1`, `${SVC_B}__prof-2`])
     })
 
     it('con professional_id explícito junto a service_ids, NO consulta service_professionals (usa ese profesional para cada servicio)', async () => {
       mockFrom.mockClear()
       const res = await GET(
         makeRequest(
-          'date_from=2026-06-04&date_to=2026-06-04&service_ids=svc-1,svc-2&professional_id=prof-9',
+          `date_from=2026-06-04&date_to=2026-06-04&service_ids=${SVC_A},${SVC_B}&professional_id=prof-9`,
         ),
       )
       expect(res.status).toBe(200)
@@ -282,7 +287,7 @@ describe('GET /api/availability', () => {
     it('service_ids tiene prioridad sobre service_id cuando ambos llegan', async () => {
       const res = await GET(
         makeRequest(
-          'date_from=2026-06-04&date_to=2026-06-04&service_id=svc-legacy&service_ids=svc-1,svc-2',
+          `date_from=2026-06-04&date_to=2026-06-04&service_id=svc-legacy&service_ids=${SVC_A},${SVC_B}`,
         ),
       )
       expect(res.status).toBe(200)
@@ -290,7 +295,66 @@ describe('GET /api/availability', () => {
       const shifts = body.days['2026-06-04'].shifts as { service_id: string }[]
       const svcIds = shifts.map((s) => s.service_id)
       expect(svcIds).not.toContain('svc-legacy')
-      expect(svcIds.sort()).toEqual(['svc-1', 'svc-1', 'svc-2', 'svc-2'])
+      expect(svcIds.sort()).toEqual([SVC_A, SVC_A, SVC_B, SVC_B])
+    })
+
+    it('dedupe: ids repetidos no multiplican las llamadas ni cambian el resultado', async () => {
+      const resRepeated = await GET(
+        makeRequest(`date_from=2026-06-04&date_to=2026-06-04&service_ids=${SVC_A},${SVC_A},${SVC_A}`),
+      )
+      expect(resRepeated.status).toBe(200)
+      const bodyRepeated = await resRepeated.json()
+      const shiftsRepeated = bodyRepeated.days['2026-06-04'].shifts as { service_id: string; professional_id: string }[]
+      const callsWithRepeated = mockRpc.mock.calls.length
+
+      mockRpc.mockClear()
+      mockFrom.mockClear()
+
+      const resSingle = await GET(
+        makeRequest(`date_from=2026-06-04&date_to=2026-06-04&service_ids=${SVC_A}`),
+      )
+      expect(resSingle.status).toBe(200)
+      const bodySingle = await resSingle.json()
+      const shiftsSingle = bodySingle.days['2026-06-04'].shifts as { service_id: string; professional_id: string }[]
+      const callsWithSingle = mockRpc.mock.calls.length
+
+      // service_ids=A,A,A debe comportarse EXACTAMENTE igual que service_ids=A
+      // (mismo número de llamadas a la RPC, mismos huecos).
+      expect(callsWithRepeated).toBe(callsWithSingle)
+      expect(shiftsRepeated).toEqual(shiftsSingle)
+    })
+
+    it('400 si service_ids excede MAX_SERVICE_IDS (11 elementos)', async () => {
+      const tooMany = [
+        '11111111-1111-1111-1111-111111111111',
+        '22222222-2222-2222-2222-222222222222',
+        '33333333-3333-3333-3333-333333333333',
+        '44444444-4444-4444-4444-444444444444',
+        '55555555-5555-5555-5555-555555555555',
+        '66666666-6666-6666-6666-666666666666',
+        '77777777-7777-7777-7777-777777777777',
+        '88888888-8888-8888-8888-888888888888',
+        '99999999-9999-9999-9999-999999999999',
+        'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+      ].join(',')
+      const res = await GET(
+        makeRequest(`date_from=2026-06-04&date_to=2026-06-04&service_ids=${tooMany}`),
+      )
+      expect(res.status).toBe(400)
+      const body = await res.json()
+      expect(body.error).toMatch(/10/)
+      expect(mockRpc).not.toHaveBeenCalled()
+    })
+
+    it('400 si algún service_id de la lista no es un UUID válido', async () => {
+      const res = await GET(
+        makeRequest(`date_from=2026-06-04&date_to=2026-06-04&service_ids=${SVC_A},not-a-uuid`),
+      )
+      expect(res.status).toBe(400)
+      const body = await res.json()
+      expect(body.error).toMatch(/inválido/)
+      expect(mockRpc).not.toHaveBeenCalled()
     })
   })
 })

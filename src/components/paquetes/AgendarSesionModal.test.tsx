@@ -196,6 +196,117 @@ describe('AgendarSesionModal', () => {
     })
   })
 
+  describe('Deuda técnica — 201 PARCIAL (creadas < slots enviados)', () => {
+    it('no cierra el modal, avisa cuántas se agendaron y por qué faltaron, y mantiene seleccionados SOLO los slots que quedaron pendientes', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 201,
+        json: async () => ({
+          success: true,
+          creadas: 1,
+          skipped: [{ start_at: '2026-06-16T13:00:00.000Z', reason: 'slot_conflict' }],
+        }),
+      })
+      const onClose = vi.fn()
+      const user = userEvent.setup()
+      render(<AgendarSesionModal {...baseProps} onClose={onClose} />)
+
+      await user.click(screen.getByRole('button', { name: 'slot-1000' }))
+      await user.click(screen.getByRole('button', { name: 'slot-1001' }))
+      await user.click(screen.getByRole('button', { name: /agendar 2 sesiones/i }))
+
+      // El aviso informa cuántas se agendaron y el motivo legible.
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toHaveTextContent(
+          /se agendaron 1 de 2 sesiones\. faltan 1: 1 ese horario ya estaba ocupado/i,
+        )
+      })
+      // El modal NO se cierra — la persona puede reintentar.
+      expect(onClose).not.toHaveBeenCalled()
+      // Invalidó disponibilidad/treatments para refrescar el cupo real.
+      expect(mockInvalidateQueries).toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: ['treatments'], exact: false }),
+      )
+      expect(mockInvalidateQueries).toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: ['availability'], exact: false }),
+      )
+      // Solo queda seleccionado el slot que quedó pendiente (el otro ya se agendó).
+      expect(screen.getByText(/Sesiones elegidas \(1\/8\)/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /agendar sesión/i })).toBeEnabled()
+    })
+
+    it('traduce distintos reasons y los agrupa en el aviso', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 201,
+        json: async () => ({
+          success: true,
+          creadas: 0,
+          skipped: [
+            { start_at: '2026-06-15T13:00:00.000Z', reason: 'no_capacity' },
+            { start_at: '2026-06-16T13:00:00.000Z', reason: 'slot_conflict' },
+          ],
+        }),
+      })
+      const user = userEvent.setup()
+      render(<AgendarSesionModal {...baseProps} onClose={vi.fn()} />)
+
+      await user.click(screen.getByRole('button', { name: 'slot-1000' }))
+      await user.click(screen.getByRole('button', { name: 'slot-1001' }))
+      await user.click(screen.getByRole('button', { name: /agendar 2 sesiones/i }))
+
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toHaveTextContent(/se llenó el cupo del paquete/i)
+        expect(screen.getByRole('status')).toHaveTextContent(/ese horario ya estaba ocupado/i)
+      })
+      // Ninguno se resolvió → ambos slots siguen seleccionados para reintentar.
+      expect(screen.getByText(/Sesiones elegidas \(2\/8\)/)).toBeInTheDocument()
+    })
+
+    it('con skipped vacío (éxito total), SÍ cierra el modal (comportamiento existente intacto)', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 201, json: async () => ({ success: true, creadas: 1, skipped: [] }) })
+      const onClose = vi.fn()
+      const user = userEvent.setup()
+      render(<AgendarSesionModal {...baseProps} onClose={onClose} />)
+
+      await user.click(screen.getByRole('button', { name: 'slot-1000' }))
+      await user.click(screen.getByRole('button', { name: /agendar sesión/i }))
+
+      await waitFor(() => expect(onClose).toHaveBeenCalled())
+      expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    })
+
+    it('notifica al padre vía onScheduled con `creadas`, en éxito total y en parcial', async () => {
+      const onScheduled = vi.fn()
+      const user = userEvent.setup()
+
+      // Éxito total.
+      mockFetch.mockResolvedValue({ ok: true, status: 201, json: async () => ({ success: true, creadas: 1, skipped: [] }) })
+      const { unmount } = render(<AgendarSesionModal {...baseProps} onClose={vi.fn()} onScheduled={onScheduled} />)
+      await user.click(screen.getByRole('button', { name: 'slot-1000' }))
+      await user.click(screen.getByRole('button', { name: /agendar sesión/i }))
+      await waitFor(() => expect(onScheduled).toHaveBeenCalledWith(1))
+      unmount()
+
+      // Parcial.
+      onScheduled.mockClear()
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 201,
+        json: async () => ({
+          success: true,
+          creadas: 1,
+          skipped: [{ start_at: '2026-06-16T13:00:00.000Z', reason: 'slot_conflict' }],
+        }),
+      })
+      render(<AgendarSesionModal {...baseProps} onClose={vi.fn()} onScheduled={onScheduled} />)
+      await user.click(screen.getByRole('button', { name: 'slot-1000' }))
+      await user.click(screen.getByRole('button', { name: 'slot-1001' }))
+      await user.click(screen.getByRole('button', { name: /agendar 2 sesiones/i }))
+      await waitFor(() => expect(onScheduled).toHaveBeenCalledWith(1))
+    })
+  })
+
   describe('Pedido 6 (ISADI 2026-07-14/16) — color único para toda la tanda', () => {
     it('muestra el ColorSwatchPicker (una sola vez, no por sesión)', () => {
       render(<AgendarSesionModal {...baseProps} onClose={vi.fn()} />)

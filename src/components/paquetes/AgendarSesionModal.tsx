@@ -19,6 +19,44 @@ interface AgendarSesionModalProps {
   /** Cupo libre del bono (`por_agendar`). Tope de sesiones a elegir. */
   porAgendar: number
   patientId: string
+  /**
+   * Deuda técnica (parciales) — notifica al padre cuántas sesiones se crearon
+   * en CADA intento de confirmación (incluidos los parciales), para que quien
+   * embebe este modal pueda llevar su propio contador de "ya agendadas" sin
+   * depender de un refetch (p. ej. `NewPaqueteModal` al reabrir este mismo
+   * modal, para que el cupo mostrado descuente lo ya creado).
+   */
+  onScheduled?: (creadas: number) => void
+}
+
+// Motivo por el que el backend (RPC create_package_sessions, 054) saltea un
+// slot — traducido a lenguaje llano para la recepción. `reason` puede además
+// venir como mensaje libre de create_appointment (029, p. ej.
+// "professional_service_mismatch: ..."); en ese caso mostramos el texto tal cual.
+const SKIP_REASON_LABELS: Record<string, string> = {
+  slot_conflict: 'ese horario ya estaba ocupado',
+  no_capacity: 'se llenó el cupo del paquete',
+  missing_professional: 'faltó asignar profesional',
+  create_failed: 'no se pudo crear la sesión',
+  link_error: 'error al vincular la sesión al paquete',
+  treatment_not_found: 'el paquete ya no existe',
+  treatment_not_active: 'el paquete ya no está activo',
+}
+
+function describeSkipReason(reason: string): string {
+  return SKIP_REASON_LABELS[reason] ?? reason
+}
+
+// Agrupa los `skipped` por motivo y arma un resumen legible, p. ej.
+// "1 ese horario ya estaba ocupado, 1 se llenó el cupo del paquete".
+function summarizeSkipped(skipped: { reason: string }[]): string {
+  const counts = new Map<string, number>()
+  for (const item of skipped) {
+    counts.set(item.reason, (counts.get(item.reason) ?? 0) + 1)
+  }
+  return Array.from(counts.entries())
+    .map(([reason, count]) => `${count} ${describeSkipReason(reason)}`)
+    .join(', ')
 }
 
 // Modal "Agendar sesión" de un paquete — MANUAL Y FLEXIBLE (reclamo ISADI).
@@ -48,15 +86,21 @@ export function AgendarSesionModal({
   serviceName,
   porAgendar,
   patientId,
+  onScheduled,
 }: AgendarSesionModalProps) {
   const queryClient = useQueryClient()
   const [selected, setSelected] = useState<SelectedSlot[]>([])
   const [selectedColor, setSelectedColor] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  // 201 PARCIAL (deuda técnica): aviso informativo — no es un error, algunas
+  // sesiones sí se crearon. Separado de `submitError` para poder mostrarlo con
+  // un tono distinto (ámbar, igual que los "pendientes" del propio scheduler).
+  const [partialNotice, setPartialNotice] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const handleSelectionChange = (slots: SelectedSlot[]) => {
     setSubmitError(null)
+    setPartialNotice(null)
     setSelected(slots)
   }
 
@@ -64,6 +108,7 @@ export function AgendarSesionModal({
     setSelected([])
     setSelectedColor(null)
     setSubmitError(null)
+    setPartialNotice(null)
     setIsSubmitting(false)
   }
 
@@ -85,7 +130,9 @@ export function AgendarSesionModal({
   const handleConfirm = async () => {
     if (selected.length === 0) return
     setSubmitError(null)
+    setPartialNotice(null)
     setIsSubmitting(true)
+    const intentadas = selected.length
     try {
       const res = await fetch(
         `/api/treatments/${encodeURIComponent(treatmentId)}/sessions`,
@@ -107,8 +154,9 @@ export function AgendarSesionModal({
       )
 
       if (res.status === 409) {
-        // Alguno (o todos) los horarios ya no están disponibles. Refrescar para
-        // que la disponibilidad se recalcule y la persona reelija.
+        // Ninguna sesión se pudo crear (todos los slots en conflicto o cupo
+        // agotado). Refrescar para que la disponibilidad se recalcule y la
+        // persona reelija.
         invalidateAfter()
         setSubmitError('Alguno de esos horarios ya no está disponible. Revisá la disponibilidad y elegí de nuevo.')
         setSelected([])
@@ -121,9 +169,39 @@ export function AgendarSesionModal({
         return
       }
 
-      await res.json().catch(() => ({}))
+      // 2xx — puede ser PARCIAL: `creadas` < slots enviados cuando `skipped`
+      // trae elementos (deuda técnica corregida acá). Antes se ignoraba el
+      // body y se cerraba el modal como éxito total siempre.
+      const body = (await res.json().catch(() => ({}))) as {
+        creadas?: number
+        skipped?: { start_at?: string; reason: string }[]
+      }
+      const skipped = body.skipped ?? []
+      const creadas = body.creadas ?? intentadas
+      onScheduled?.(creadas)
+
+      if (skipped.length === 0) {
+        invalidateAfter()
+        handleClose()
+        return
+      }
+
+      // Parcial: mantenemos seleccionados SOLO los slots que quedaron en
+      // `skipped` (matcheados por `start_at`, el único identificador que trae
+      // el backend) para que la persona pueda reintentar sin perder el resto
+      // de la elección. Si el backend no pudo identificar el/los slot(s)
+      // puntuales (reasons de nivel-paquete, sin `start_at`), no filtramos —
+      // más seguro mantener toda la elección visible que perderla.
+      const skippedStarts = new Set(
+        skipped.map((s) => s.start_at).filter((v): v is string => Boolean(v)),
+      )
+      const stillPending = selected.filter((s) => skippedStarts.has(s.start_at))
+      setSelected(stillPending.length > 0 ? stillPending : selected)
       invalidateAfter()
-      handleClose()
+      setSubmitError(null)
+      setPartialNotice(
+        `Se agendaron ${creadas} de ${intentadas} sesiones. Faltan ${skipped.length}: ${summarizeSkipped(skipped)}. Revisá y confirmá de nuevo.`,
+      )
     } catch {
       setSubmitError('Error de red. Verificá tu conexión e intentá de nuevo.')
     } finally {
@@ -177,6 +255,13 @@ export function AgendarSesionModal({
               {submitError && (
                 <p role="alert" className="text-sm text-red-600">
                   {submitError}
+                </p>
+              )}
+
+              {/* 201 parcial: aviso informativo (no rojo — sí se agendó algo). */}
+              {partialNotice && (
+                <p role="status" className="text-sm text-amber-700">
+                  {partialNotice}
                 </p>
               )}
             </div>

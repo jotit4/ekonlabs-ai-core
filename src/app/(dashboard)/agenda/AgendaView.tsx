@@ -318,6 +318,34 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
     params.delete('professional_id')
     params.delete('service_id')
     router.push(`/agenda?${params.toString()}`)
+    // Deuda B4 (filtros de recepción intersectados) — "Limpiar" es la acción
+    // de reset TOTAL: si no resetea también el grupo de recepción, el botón
+    // de grupo queda visualmente activo y el filtro cliente
+    // (applyReceptionGroupFilter, ver más arriba) sigue recortando la agenda
+    // después del click, contradiciendo la intención de "limpiar todo". No-op
+    // para admin/doctor (receptionGroup siempre null fuera de recepción).
+    setReceptionGroup(null)
+  }
+
+  // Deuda B4 (filtros de recepción intersectados) — cambiar (o limpiar) el
+  // grupo de recepción es una selección MÁS GRUESA que service_id/
+  // professional_id. Si alguno de los dos quedó seteado en la URL por una
+  // selección previa (p.ej. el dropdown de Profesional en AgendaFilters, tras
+  // abrir "Filtrar"), intersecta con el grupo nuevo y puede dejar la agenda
+  // vacía con un filtro visual engañoso: el grupo dice una cosa (p.ej.
+  // "Fisioterapia") y el service_id/profesional residual restringe a otra
+  // (p.ej. un profesional que no hace fisioterapia). Centralizamos la
+  // transición ACÁ — único lugar que decide qué pasa con service_id/
+  // professional_id cuando cambia el grupo — para que ningún otro punto del
+  // componente tenga que duplicar esta limpieza.
+  function handleReceptionGroupChange(group: string | null) {
+    setReceptionGroup(group)
+    const params = new URLSearchParams(searchParams.toString())
+    if (params.has('service_id') || params.has('professional_id')) {
+      params.delete('service_id')
+      params.delete('professional_id')
+      router.push(`/agenda?${params.toString()}`)
+    }
   }
 
   // Cambiar el foco de área (Rehabilitación ↔ Ver todo). Si había un service_id
@@ -459,7 +487,7 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
             areaFocus={areaFocus}
             isReceptionist={isReceptionist}
             receptionGroup={receptionGroup}
-            onReceptionGroupChange={setReceptionGroup}
+            onReceptionGroupChange={handleReceptionGroupChange}
           />
           <div id="agenda-secondary-controls">
             {secondaryVisible && (
