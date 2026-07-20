@@ -19,6 +19,7 @@ import { NewPaqueteModal } from '@/components/paquetes/NewPaqueteModal'
 import { RescheduleTurnoModal } from '@/components/agenda/RescheduleTurnoModal'
 import { DayStatusModal } from '@/components/agenda/DayStatusModal'
 import { AgendaFilters, AgendaServiceButtons, type AreaFocus } from '@/components/agenda/AgendaFilters'
+import { ColaOrdenLlegada } from '@/components/recepcion/ColaOrdenLlegada'
 import { isRehabService } from '@/lib/agenda/service-visuals'
 import { SyncStatusBanner } from '@/components/agenda/SyncStatusBanner'
 import { GCalDegradationBanner } from '@/components/agenda/GCalDegradationBanner'
@@ -30,6 +31,7 @@ import { useTenantConfig } from '@/hooks/use-tenant-config'
 import { useUserRole } from '@/hooks/use-user-role'
 import { useDayStatusRange } from '@/hooks/use-day-status'
 import { useSetDayStatus } from '@/hooks/use-set-day-status'
+import { useWalkInService } from '@/hooks/use-walk-in-service'
 import type { Appointment } from '@/types/appointments'
 import type { UserRole } from '@/types'
 
@@ -77,31 +79,26 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
   const [filtersOpen, setFiltersOpen] = useState(false)
   const secondaryVisible = isReceptionist ? filtersOpen : true
 
-  // Foco de área (rediseño foco rehabilitación). Estado local (no URL) — es una
-  // preferencia de vista, no un filtro persistible/compartible. Cuando el usuario
-  // elige un servicio puntual (serviceId), ese filtro manda y el foco de área no
-  // recorta nada adicional.
-  //
-  // Default = 'rehab' para TODOS los roles (admin, doctor y — decisión cliente
-  // ISADI 2026-07-14 — también recepción): rehabilitación es el trabajo diario,
-  // el resto de los servicios mete ruido. NO es un candado — un toque en "Ver
-  // todo" (radiogroup de AgendaFilters) lo saca del recorte para todo el resto
-  // de la sesión; el permiso real de recepción para ver/agendar cualquier
-  // servicio no cambia, esto es solo el default de UI.
+  // Foco de área (rediseño foco rehabilitación). Fijo en 'rehab' para TODOS los
+  // roles: la agenda arranca (y se queda) viendo SOLO los servicios de
+  // rehabilitación. El toggle "Rehabilitación | Ver todo" se retiró de la UI
+  // (decisión ISADI dueño 2026-07-16 — la agenda es 100% modo grupos: los 3
+  // botones de GRUPO son el único filtro por servicio, igual que recepción), así
+  // que ya no hay estado ni handler que lo cambie. Se conserva como constante
+  // porque el recorte por defecto (applyRehabFocus, más abajo) sigue vigente.
   //
   // Depende de `isRehabService` (heurística PROVISIONAL por nombre — no existe
   // `services.category` todavía; ver detalle en service-visuals.ts). Cuando
   // exista el campo real, este default sigue funcionando igual — solo cambia
   // qué servicios cuentan como "rehab".
-  const [areaFocus, setAreaFocus] = useState<AreaFocus>('rehab')
+  const areaFocus: AreaFocus = 'rehab'
 
-  // Pedido 2 (ISADI 2026-07-16) — grupo de recepción seleccionado
-  // (Fisioterapia/Pileta/Pilates, ver AgendaServiceButtons). Estado local (no
-  // URL), mismo criterio que `areaFocus`: es una preferencia de vista de
-  // recepción, no un service_id real (los grupos no existen en la tabla
-  // `services`, no se pueden pasar a los hooks server-side como
+  // Grupo seleccionado (Fisioterapia/Pileta/Pilates, ver AgendaServiceButtons).
+  // Estado local (no URL): no es un service_id real (los grupos no existen en la
+  // tabla `services`, no se pueden pasar a los hooks server-side como
   // `service_id=eq.<grupo>`) — se filtra CLIENTE, ver focusedAppointments/
-  // focusedRangeAppointments más abajo. Solo tiene efecto para receptionist.
+  // focusedRangeAppointments más abajo. Aplica a TODOS los roles (admin y
+  // recepción) desde la decisión ISADI 2026-07-16.
   const [receptionGroup, setReceptionGroup] = useState<string | null>(null)
 
   // Determinar vista activa desde query param.
@@ -126,6 +123,10 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
   const rangeTo = vistaActiva === 'mes' ? monthEnd : weekEnd
 
   useAgendaRealtime(isoDate)
+
+  // Story 16.2 — cola de orden de llegada (walk-in). Hook SIEMPRE llamado
+  // (regla de hooks); devuelve null si el tenant no tiene servicio walk-in.
+  const walkIn = useWalkInService()
 
   // Hooks siempre llamados — nunca condicionales
   const { appointments, isLoading, isError, refetch } = useAppointments(isoDate, {
@@ -175,10 +176,11 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
   const applyRehabFocus = areaFocus === 'rehab' && !serviceId && !receptionGroup
   const isRehabAppointment = (apt: Appointment): boolean => isRehabService(apt.services?.name)
 
-  // Pedido 2 (ISADI 2026-07-16) — filtro CLIENTE por grupo de recepción
-  // (Fisioterapia/Pileta/Pilates). Solo activo cuando hay un grupo elegido;
-  // se aplica DESPUÉS del recorte por foco de área (ver applyRehabFocus).
-  const applyReceptionGroupFilter = isReceptionist && !!receptionGroup
+  // Filtro CLIENTE por grupo (Fisioterapia/Pileta/Pilates). Solo activo cuando
+  // hay un grupo elegido; se aplica DESPUÉS del recorte por foco de área (ver
+  // applyRehabFocus). Aplica a TODOS los roles (admin y recepción) — decisión
+  // ISADI 2026-07-16.
+  const applyReceptionGroupFilter = !!receptionGroup
   const isInReceptionGroup = (apt: Appointment): boolean =>
     apt.services?.reception_group === receptionGroup
 
@@ -217,6 +219,25 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
   }
 
   const hoy = isToday(selectedDate)
+
+  // ── Cola de orden de llegada (walk-in) — montaje condicional (Story 16.2) ───
+  // Solo en la vista Día, solo HOY (la cola es intrínsecamente "de hoy":
+  // start_at=now()), y solo cuando el filtro de la URL apunta al servicio
+  // walk-in: por service_id directo, o por un professional_id que atiende ese
+  // servicio. Sin filtro (admin viendo "Todos los profesionales") NO se muestra:
+  // la cola pertenece al día de un profesional concreto.
+  const filterMatchesWalkIn =
+    !!walkIn &&
+    (serviceId === walkIn.serviceId ||
+      (professionalId != null && walkIn.professionalIds.includes(professionalId)))
+
+  // Profesional con el que montar el panel: el de la URL si está, o el
+  // profesional por defecto del servicio walk-in (cuando el filtro fue por
+  // service_id sin professional_id). Si ninguno resuelve → no montar.
+  const resolvedWalkInProfessionalId = professionalId ?? walkIn?.defaultProfessionalId ?? null
+
+  const showWalkInPanel =
+    vistaActiva === 'dia' && hoy && filterMatchesWalkIn && resolvedWalkInProfessionalId != null
 
   // Título del header según vista — capitaliza solo la primera letra
   function getHeaderTitle(): string {
@@ -302,17 +323,6 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
     router.push(`/agenda?${params.toString()}`)
   }
 
-  function handleServiceChange(id: string | null) {
-    const params = new URLSearchParams(searchParams.toString())
-    if (id) {
-      params.set('service_id', id)
-      params.delete('professional_id')
-    } else {
-      params.delete('service_id')
-    }
-    router.push(`/agenda?${params.toString()}`)
-  }
-
   function handleClearFilters() {
     const params = new URLSearchParams(searchParams.toString())
     params.delete('professional_id')
@@ -346,13 +356,6 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
       params.delete('professional_id')
       router.push(`/agenda?${params.toString()}`)
     }
-  }
-
-  // Cambiar el foco de área (Rehabilitación ↔ Ver todo). Si había un service_id
-  // puntual elegido que ya no pertenece al nuevo foco, lo limpiamos para no
-  // mostrar una agenda vacía con un filtro fuera de foco.
-  function handleAreaFocusChange(focus: AreaFocus) {
-    setAreaFocus(focus)
   }
 
   // Atajo "Dar un turno" al hacer click en una celda vacía de la grilla (Día o
@@ -477,15 +480,12 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
           estado se sigue viendo en el detalle del turno (TurnoDetailModal). */}
       {showFilters && (
         <div className="mb-3 space-y-2">
-          {/* Botones de Servicio: SIEMPRE visibles (recepción y admin) — pedido
-              ISADI 2026-07-14. Es la forma principal de filtrar la agenda de un
-              toque, no debe quedar escondida detrás de "Filtrar" como el resto
-              de los controles secundarios. */}
+          {/* Botones de GRUPO (Fisioterapia/Pileta/Pilates): SIEMPRE visibles
+              (recepción y admin) — es la forma principal de filtrar la agenda
+              de un toque, no debe quedar escondida detrás de "Filtrar" como el
+              resto de los controles secundarios. Decisión ISADI 2026-07-16:
+              admin ve los mismos 3 grupos que recepción. */}
           <AgendaServiceButtons
-            serviceId={serviceId}
-            onServiceChange={handleServiceChange}
-            areaFocus={areaFocus}
-            isReceptionist={isReceptionist}
             receptionGroup={receptionGroup}
             onReceptionGroupChange={handleReceptionGroupChange}
           />
@@ -497,8 +497,6 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
                 onProfessionalChange={handleProfessionalChange}
                 onClear={handleClearFilters}
                 showFilters={showFilters}
-                areaFocus={areaFocus}
-                onAreaFocusChange={handleAreaFocusChange}
                 hasReceptionGroup={receptionGroup !== null}
               />
             )}
@@ -509,6 +507,17 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
       <div className="flex-1 min-h-0 overflow-auto">
       {vistaActiva === 'dia' ? (
         <>
+          {/* Story 16.2 — cola de orden de llegada, arriba de la grilla del día.
+              El panel es autosuficiente en realtime (useWalkInQueue) y los
+              walk-ins ya están filtrados fuera de la grilla (16.1 AC5), así que
+              no colisiona con CalendarView/KPIStrip. */}
+          {showWalkInPanel && walkIn && resolvedWalkInProfessionalId && (
+            <ColaOrdenLlegada
+              serviceId={walkIn.serviceId}
+              professionalId={resolvedWalkInProfessionalId}
+              hoyISO={isoDate}
+            />
+          )}
           <KPIStrip appointments={focusedAppointments} isLoading={isLoading} isError={isError} />
           {!tenantConfigPending && !usesNativeCalendar && (
             <>

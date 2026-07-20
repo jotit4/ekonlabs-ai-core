@@ -56,3 +56,15 @@ export const appointmentColorApiSchema = z.object({
 })
 
 export type AppointmentColorApiBody = z.infer<typeof appointmentColorApiSchema>
+
+// ─── Schema para la API Route de walk-in (POST /api/appointments/walk-in) ─────
+// Cola de orden de llegada (Story 16.1). El server pone start_at=now() (hora de
+// llegada), status='confirmed', booked_via='manual' e is_walk_in=true — el body
+// NO trae horario ni duración (se resuelve del servicio) ni tenant (va del JWT).
+export const walkInApiSchema = z.object({
+  patient_id: z.string().uuid({ error: 'patient_id inválido' }),
+  service_id: z.string().uuid({ error: 'service_id inválido' }),
+  professional_id: z.string().uuid({ error: 'professional_id inválido' }),
+})
+
+export type WalkInApiBody = z.infer<typeof walkInApiSchema>

@@ -34,6 +34,9 @@ export function useAppointmentsRange(
     filters: [
       { field: 'start_at', operator: 'gte', value: startISO },
       { field: 'start_at', operator: 'lte', value: endISO },
+      // Higiene (Story 16.1 AC5): excluir walk-ins de la grilla semana/mes.
+      // Columna NOT NULL DEFAULT false → filtro seguro.
+      { field: 'is_walk_in', operator: 'eq', value: false },
       ...(professionalId ? [{ field: 'professional_id', operator: 'eq' as const, value: professionalId }] : []),
       ...(serviceId ? [{ field: 'service_id', operator: 'eq' as const, value: serviceId }] : []),
     ],

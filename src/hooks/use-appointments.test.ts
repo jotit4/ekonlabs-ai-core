@@ -55,6 +55,16 @@ describe('useAppointments', () => {
     expect(call.meta.select).toContain('attendance_confirmed')
   })
 
+  it('siempre incluye el filtro is_walk_in=false (higiene Story 16.1 AC5)', () => {
+    renderHook(() => useAppointments('2026-05-14'))
+    const call = mockUseList.mock.calls[0][0]
+    expect(call.filters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: 'is_walk_in', operator: 'eq', value: false }),
+      ])
+    )
+  })
+
   it('cuando NO hay filtros, el queryKey es ["agenda", "day", isoDate, "", ""]', () => {
     renderHook(() => useAppointments('2026-05-14'))
     const call = mockUseList.mock.calls[0][0]

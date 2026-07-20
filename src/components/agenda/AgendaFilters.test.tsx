@@ -156,182 +156,108 @@ describe('AgendaFilters (Profesional + Área + Limpiar)', () => {
     })
   })
 
-  describe('Foco de área (rehabilitación)', () => {
-    it('NO renderiza el control de área si no se pasa onAreaFocusChange', () => {
+  // El toggle "Área: Rehabilitación | Ver todo" se retiró (decisión ISADI dueño
+  // 2026-07-16 — la agenda es 100% modo grupos para todos los roles). El foco
+  // por defecto a rehabilitación se mantiene en AgendaView (const fija), pero ya
+  // no hay ningún control de UI para cambiarlo.
+  describe('Toggle de área "Rehabilitación | Ver todo" eliminado', () => {
+    it('NO renderiza el radiogroup de área ni sus radios', () => {
       render(<AgendaFilters {...defaultProps} />)
       expect(screen.queryByRole('radiogroup', { name: /área de la agenda/i })).not.toBeInTheDocument()
-    })
-
-    it('renderiza el control "Rehabilitación | Ver todo" cuando se pasa onAreaFocusChange', () => {
-      render(<AgendaFilters {...defaultProps} areaFocus="rehab" onAreaFocusChange={vi.fn()} />)
-      expect(screen.getByRole('radiogroup', { name: /área de la agenda/i })).toBeInTheDocument()
-      expect(screen.getByRole('radio', { name: /rehabilitación/i })).toBeInTheDocument()
-      expect(screen.getByRole('radio', { name: /ver todo/i })).toBeInTheDocument()
-    })
-
-    it('click en "Ver todo" notifica onAreaFocusChange("todos")', () => {
-      const onAreaFocusChange = vi.fn()
-      render(<AgendaFilters {...defaultProps} areaFocus="rehab" onAreaFocusChange={onAreaFocusChange} />)
-      fireEvent.click(screen.getByRole('radio', { name: /ver todo/i }))
-      expect(onAreaFocusChange).toHaveBeenCalledWith('todos')
-    })
-
-    it('el radio activo refleja areaFocus', () => {
-      render(<AgendaFilters {...defaultProps} areaFocus="todos" onAreaFocusChange={vi.fn()} />)
-      expect(screen.getByRole('radio', { name: /ver todo/i })).toHaveAttribute('aria-checked', 'true')
-      expect(screen.getByRole('radio', { name: /rehabilitación/i })).toHaveAttribute('aria-checked', 'false')
+      expect(screen.queryByRole('radio', { name: /rehabilitación/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('radio', { name: /ver todo/i })).not.toBeInTheDocument()
     })
   })
 })
 
-// ─── AgendaServiceButtons (pedido ISADI 2026-07-14) ───────────────────────────
-// Reemplaza el <select> de Servicio por una fila de botones toggle, siempre
-// visible (no gated detrás de "Filtrar" como el resto de los controles).
-describe('AgendaServiceButtons', () => {
+// ─── AgendaServiceButtons — 3 botones de GRUPO (decisión ISADI 2026-07-16) ────
+// La agenda se filtra por 3 botones de GRUPO (Fisioterapia/Pileta/Pilates) —
+// uno por cada `reception_group` no nulo presente en el catálogo. Es el ÚNICO
+// modo para TODOS los roles (admin y recepción): "igual que recepción". Ya no
+// existe el botón por servicio individual ni las props
+// `serviceId`/`onServiceChange`/`areaFocus`/`isReceptionist`.
+describe('AgendaServiceButtons (botones de grupo)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  const buttonProps = {
-    serviceId: null,
-    onServiceChange: vi.fn(),
-  }
-
-  it('renderiza un botón por cada servicio (foco por defecto = rehab)', () => {
-    render(<AgendaServiceButtons {...buttonProps} />)
-    expect(screen.getByRole('button', { name: 'Kinesiología' })).toBeInTheDocument()
-    // Pediatría no es un servicio de rehab → no aparece con el foco default.
-    expect(screen.queryByRole('button', { name: 'Pediatría' })).not.toBeInTheDocument()
-  })
-
-  it('con areaFocus="todos" lista todos los servicios', () => {
-    render(<AgendaServiceButtons {...buttonProps} areaFocus="todos" />)
-    expect(screen.getByRole('button', { name: 'Kinesiología' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Pediatría' })).toBeInTheDocument()
-  })
-
-  it('el botón min-height cumple el mínimo táctil de 44px', () => {
-    render(<AgendaServiceButtons {...buttonProps} areaFocus="todos" />)
-    expect(screen.getByRole('button', { name: 'Kinesiología' }).className).toContain('min-h-[44px]')
-  })
-
-  it('el contenedor tiene role="group" con aria-label "Filtrar por servicio"', () => {
-    render(<AgendaServiceButtons {...buttonProps} areaFocus="todos" />)
-    expect(screen.getByRole('group', { name: /filtrar por servicio/i })).toBeInTheDocument()
-  })
-
-  it('un servicio sin seleccionar tiene aria-pressed="false"', () => {
-    render(<AgendaServiceButtons {...buttonProps} areaFocus="todos" />)
-    expect(screen.getByRole('button', { name: 'Kinesiología' })).toHaveAttribute('aria-pressed', 'false')
-  })
-
-  it('click en un servicio no seleccionado llama onServiceChange con su id', () => {
-    const onServiceChange = vi.fn()
-    render(<AgendaServiceButtons {...buttonProps} areaFocus="todos" onServiceChange={onServiceChange} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Kinesiología' }))
-    expect(onServiceChange).toHaveBeenCalledWith('svc-1')
-  })
-
-  it('el servicio activo tiene aria-pressed="true"', () => {
-    render(<AgendaServiceButtons {...buttonProps} areaFocus="todos" serviceId="svc-1" />)
-    expect(screen.getByRole('button', { name: 'Kinesiología' })).toHaveAttribute('aria-pressed', 'true')
-  })
-
-  it('click en el servicio YA activo lo deselecciona (llama onServiceChange con null)', () => {
-    const onServiceChange = vi.fn()
-    render(
-      <AgendaServiceButtons
-        {...buttonProps}
-        areaFocus="todos"
-        serviceId="svc-1"
-        onServiceChange={onServiceChange}
-      />,
-    )
-    fireEvent.click(screen.getByRole('button', { name: 'Kinesiología' }))
-    expect(onServiceChange).toHaveBeenCalledWith(null)
-  })
-
-  it('click en un servicio distinto al activo cambia la selección (no la limpia)', () => {
-    const onServiceChange = vi.fn()
-    render(
-      <AgendaServiceButtons
-        {...buttonProps}
-        areaFocus="todos"
-        serviceId="svc-1"
-        onServiceChange={onServiceChange}
-      />,
-    )
-    fireEvent.click(screen.getByRole('button', { name: 'Pediatría' }))
-    expect(onServiceChange).toHaveBeenCalledWith('svc-2')
-  })
-})
-
-// ─── Botones de GRUPO para recepción (Pedido 2 ISADI 2026-07-16) ─────────────
-// isReceptionist=true reemplaza los botones por servicio por 3 botones de
-// GRUPO (Fisioterapia/Pileta/Pilates) — uno por cada `reception_group` no
-// nulo presente en el catálogo.
-describe('AgendaServiceButtons — modo recepción (isReceptionist)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
-
-  const receptionProps = {
-    serviceId: null,
-    onServiceChange: vi.fn(),
-    isReceptionist: true,
+  const groupProps = {
     receptionGroup: null,
     onReceptionGroupChange: vi.fn(),
   }
 
   it('renderiza un botón por cada reception_group presente (Fisioterapia/Pileta/Pilates)', () => {
-    render(<AgendaServiceButtons {...receptionProps} />)
+    render(<AgendaServiceButtons {...groupProps} />)
     expect(screen.getByRole('button', { name: /^fisioterapia$/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^pileta$/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /pilates/i })).toBeInTheDocument()
-    // NO aparece un botón por servicio individual (Kinesiología es del grupo
-    // Fisioterapia, no debe verse suelta).
+  })
+
+  it('NO renderiza botones por servicio individual (Kinesiología/Aquagym/Pediatría)', () => {
+    render(<AgendaServiceButtons {...groupProps} />)
+    // Kinesiología/Aquagym pertenecen a grupos → no se ven sueltas.
     expect(screen.queryByRole('button', { name: 'Kinesiología' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Aquagym' })).not.toBeInTheDocument()
     // Pediatría (reception_group null) tampoco genera ningún botón.
     expect(screen.queryByRole('button', { name: /pediatría/i })).not.toBeInTheDocument()
   })
 
   it('el botón de Pilates dice solo "Pilates" (sin hint de cupos)', () => {
-    render(<AgendaServiceButtons {...receptionProps} />)
+    render(<AgendaServiceButtons {...groupProps} />)
     expect(screen.getByRole('button', { name: 'Pilates' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /lugares\/hora/i })).not.toBeInTheDocument()
   })
 
   it('el contenedor tiene role="group" con aria-label "Filtrar por grupo"', () => {
-    render(<AgendaServiceButtons {...receptionProps} />)
+    render(<AgendaServiceButtons {...groupProps} />)
     expect(screen.getByRole('group', { name: /filtrar por grupo/i })).toBeInTheDocument()
+  })
+
+  it('el botón min-height cumple el mínimo táctil de 44px', () => {
+    render(<AgendaServiceButtons {...groupProps} />)
+    expect(screen.getByRole('button', { name: /^fisioterapia$/i }).className).toContain('min-h-[44px]')
+  })
+
+  it('un grupo sin seleccionar tiene aria-pressed="false"', () => {
+    render(<AgendaServiceButtons {...groupProps} />)
+    expect(screen.getByRole('button', { name: /^fisioterapia$/i })).toHaveAttribute('aria-pressed', 'false')
   })
 
   it('click en un grupo no seleccionado llama onReceptionGroupChange con su value', () => {
     const onReceptionGroupChange = vi.fn()
-    render(<AgendaServiceButtons {...receptionProps} onReceptionGroupChange={onReceptionGroupChange} />)
+    render(<AgendaServiceButtons {...groupProps} onReceptionGroupChange={onReceptionGroupChange} />)
     fireEvent.click(screen.getByRole('button', { name: /^fisioterapia$/i }))
     expect(onReceptionGroupChange).toHaveBeenCalledWith('fisioterapia')
   })
 
-  it('el grupo activo tiene aria-pressed="true"; click de nuevo lo deselecciona (null)', () => {
+  it('el grupo activo tiene aria-pressed="true"', () => {
+    render(<AgendaServiceButtons {...groupProps} receptionGroup="fisioterapia" />)
+    expect(screen.getByRole('button', { name: /^fisioterapia$/i })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('click en el grupo YA activo lo deselecciona (llama onReceptionGroupChange con null)', () => {
     const onReceptionGroupChange = vi.fn()
     render(
       <AgendaServiceButtons
-        {...receptionProps}
+        {...groupProps}
         receptionGroup="fisioterapia"
         onReceptionGroupChange={onReceptionGroupChange}
       />,
     )
-    const btn = screen.getByRole('button', { name: /^fisioterapia$/i })
-    expect(btn).toHaveAttribute('aria-pressed', 'true')
-    fireEvent.click(btn)
+    fireEvent.click(screen.getByRole('button', { name: /^fisioterapia$/i }))
     expect(onReceptionGroupChange).toHaveBeenCalledWith(null)
   })
 
-  it('no llama a onServiceChange (los botones de grupo no tocan el service_id real)', () => {
-    const onServiceChange = vi.fn()
-    render(<AgendaServiceButtons {...receptionProps} onServiceChange={onServiceChange} />)
+  it('click en un grupo distinto al activo cambia la selección (no la limpia)', () => {
+    const onReceptionGroupChange = vi.fn()
+    render(
+      <AgendaServiceButtons
+        {...groupProps}
+        receptionGroup="fisioterapia"
+        onReceptionGroupChange={onReceptionGroupChange}
+      />,
+    )
     fireEvent.click(screen.getByRole('button', { name: /^pileta$/i }))
-    expect(onServiceChange).not.toHaveBeenCalled()
+    expect(onReceptionGroupChange).toHaveBeenCalledWith('pileta')
   })
 })

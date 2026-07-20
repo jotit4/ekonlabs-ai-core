@@ -43,6 +43,8 @@ export type AuditAction =
   // Feriados + estado del día (migración 052 — pedido ISADI 2026-07-14): la
   // clínica decide "abre"/"no abre" para una fecha (feriado nacional u otra).
   | 'clinic_day_status_updated'
+  // Story 16.1 — registro de una llegada en la cola de orden de llegada (walk-in).
+  | 'walk_in_registered'
 
 export type AuditEntityType =
   | 'patient'

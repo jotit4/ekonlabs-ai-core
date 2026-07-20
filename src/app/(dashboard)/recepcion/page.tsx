@@ -18,6 +18,7 @@ import {
 import { NewTurnoModal } from '@/components/agenda/NewTurnoModal'
 import { AgendaDayView } from '@/components/agenda/AgendaDayView'
 import { ProximosTurnos } from '@/components/recepcion/ProximosTurnos'
+import { WalkInQueuePanel } from '@/components/recepcion/WalkInQueuePanel'
 import { useAppointments } from '@/hooks/use-appointments'
 import { useCurrentUser } from '@/hooks/use-current-user'
 import type { ConversationSummary } from '@/types/conversations'
@@ -345,6 +346,12 @@ export default function RecepcionPage() {
           </span>
         </button>
       </div>
+
+      {/* ── Cola de orden de llegada (walk-in) ─────────────────────────────
+          Story 16.1 — se muestra SOLO si el tenant tiene un servicio con
+          allow_walk_in=true (WalkInQueuePanel resuelve servicio+profesional y,
+          si no hay, no renderiza nada: la home queda igual que antes). */}
+      <WalkInQueuePanel hoyISO={hoyISO} />
 
       {/* ── Quién viene ahora (próximos turnos + asistencia de un toque) ───── */}
       <ProximosTurnos

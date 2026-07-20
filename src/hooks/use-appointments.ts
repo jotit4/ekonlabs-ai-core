@@ -36,6 +36,10 @@ export function useAppointments(
     filters: [
       { field: 'start_at', operator: 'gte', value: startISO },
       { field: 'start_at', operator: 'lte', value: endISO },
+      // Higiene (Story 16.1 AC5): los walk-ins (cola de orden de llegada) NO
+      // ocupan la grilla horaria — se muestran solo en el panel de cola. La
+      // columna es NOT NULL DEFAULT false, así que el filtro es seguro.
+      { field: 'is_walk_in', operator: 'eq', value: false },
       ...(professionalId ? [{ field: 'professional_id', operator: 'eq' as const, value: professionalId }] : []),
       ...(serviceId ? [{ field: 'service_id', operator: 'eq' as const, value: serviceId }] : []),
     ],

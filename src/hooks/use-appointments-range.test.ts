@@ -55,6 +55,16 @@ describe('useAppointmentsRange', () => {
     expect(call.meta.select).toContain('attendance_confirmed')
   })
 
+  it('siempre incluye el filtro is_walk_in=false (higiene Story 16.1 AC5)', () => {
+    renderHook(() => useAppointmentsRange('2026-05-12', '2026-05-18'))
+    const call = mockUseList.mock.calls[0][0]
+    expect(call.filters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: 'is_walk_in', operator: 'eq', value: false }),
+      ])
+    )
+  })
+
   it('queryKey es ["agenda", "range", dateFrom, dateTo, "", ""] sin filtros', () => {
     renderHook(() => useAppointmentsRange('2026-05-12', '2026-05-18'))
     const call = mockUseList.mock.calls[0][0]

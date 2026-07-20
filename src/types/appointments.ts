@@ -26,6 +26,11 @@ export interface Appointment {
   // `status` ya NO se representa por color en el calendario (se mantiene como
   // dato y se muestra en TurnoDetailModal).
   color?: string | null
+  // Cola de orden de llegada (Story 16.1 — migración 055). true = walk-in:
+  // start_at es la hora de llegada, NO ocupa un slot horario y NO se muestra en
+  // la grilla (agenda/próximos), solo en el panel de cola. NOT NULL DEFAULT false
+  // en la DB; opcional en el tipo porque no todos los select lo piden.
+  is_walk_in?: boolean
   // Recordatorios (Story 12.4) — los pobla el agente (12.1 / 12.3); null por defecto
   reminder_sent_at: string | null
   attendance_confirmed: boolean | null

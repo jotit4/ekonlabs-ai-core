@@ -77,13 +77,41 @@ vi.mock('@/hooks/use-user-role', () => ({
   useUserRole: vi.fn(() => null),
 }))
 
+// Story 16.2 — cola de orden de llegada. Mockeamos el hook resolver y el panel
+// (stub con data-testid) para aislar el GATING de montaje en AgendaView, sin
+// arrastrar el árbol real del panel (que trae su propio realtime + Refine).
+vi.mock('@/hooks/use-walk-in-service', () => ({
+  useWalkInService: vi.fn(() => null),
+}))
+
+vi.mock('@/components/recepcion/ColaOrdenLlegada', () => ({
+  ColaOrdenLlegada: ({
+    serviceId,
+    professionalId,
+    hoyISO,
+  }: {
+    serviceId: string
+    professionalId: string
+    hoyISO: string
+  }) => (
+    <div
+      data-testid="cola-orden-llegada"
+      data-service-id={serviceId}
+      data-professional-id={professionalId}
+      data-hoy-iso={hoyISO}
+    />
+  ),
+}))
+
 vi.mock('@/components/agenda/CalendarView', () => ({
   CalendarView: ({
+    appointments,
     onEmptyCellClick,
   }: {
+    appointments?: { appointment_id?: string }[]
     onEmptyCellClick?: (date: string, timeHHmm: string, professionalId?: string) => void
   }) => (
-    <div data-testid="calendar-view">
+    <div data-testid="calendar-view" data-appt-count={appointments?.length ?? 0}>
       <button onClick={() => onEmptyCellClick?.('2026-07-14', '10:00', 'prof-9')}>
         mock-empty-cell-dia
       </button>
@@ -174,54 +202,40 @@ vi.mock('@/components/agenda/AgendaFilters', () => ({
     showFilters,
     onProfessionalChange,
     onClear,
-    areaFocus,
-    onAreaFocusChange,
     hasReceptionGroup,
   }: {
     showFilters: boolean
     onProfessionalChange: (id: string | null) => void
     onClear: () => void
-    areaFocus?: string
-    onAreaFocusChange?: (focus: string) => void
     hasReceptionGroup?: boolean
   }) =>
     showFilters ? (
       <div
         data-testid="agenda-filters"
-        data-area-focus={areaFocus}
         data-has-reception-group={String(!!hasReceptionGroup)}
       >
         {/* Botón stub para ejercitar la exclusión mutua desde AgendaView */}
         <button onClick={() => onProfessionalChange('prof-1')}>mock-pick-prof</button>
-        {/* Botón stub del radiogroup real "Rehabilitación | Ver todo" */}
-        <button onClick={() => onAreaFocusChange?.('todos')}>mock-ver-todo</button>
         {/* Botón stub de "Limpiar" — ejercita handleClearFilters desde AgendaView */}
         <button onClick={() => onClear()}>mock-limpiar</button>
       </div>
     ) : null,
-  // Los botones de Servicio viven en un componente aparte, siempre visible
-  // (pedido ISADI 2026-07-14) — no gated por showFilters/secondaryVisible.
+  // Los botones de GRUPO viven en un componente aparte, siempre visible (para
+  // todos los roles) — no gated por showFilters/secondaryVisible. Decisión
+  // ISADI 2026-07-16: admin ve los mismos 3 grupos que recepción. La prop
+  // pública quedó reducida a receptionGroup/onReceptionGroupChange.
   AgendaServiceButtons: ({
-    onServiceChange,
-    areaFocus,
-    isReceptionist,
     receptionGroup,
     onReceptionGroupChange,
   }: {
-    onServiceChange: (id: string | null) => void
-    areaFocus?: string
-    isReceptionist?: boolean
     receptionGroup?: string | null
     onReceptionGroupChange?: (group: string | null) => void
   }) => (
     <div
       data-testid="agenda-service-buttons"
-      data-area-focus={areaFocus}
-      data-is-receptionist={String(!!isReceptionist)}
       data-reception-group={receptionGroup ?? ''}
     >
-      <button onClick={() => onServiceChange('svc-1')}>mock-pick-svc</button>
-      {/* Botón stub de los 3 botones de grupo (Pedido 2 ISADI 2026-07-16) */}
+      {/* Botones stub de los 3 botones de grupo (Fisioterapia/Pileta/Pilates) */}
       <button onClick={() => onReceptionGroupChange?.('fisioterapia')}>mock-pick-grupo-fisio</button>
       <button onClick={() => onReceptionGroupChange?.(null)}>mock-clear-grupo</button>
     </div>
@@ -234,6 +248,7 @@ import { useAppointments } from '@/hooks/use-appointments'
 import { useAppointmentsRange } from '@/hooks/use-appointments-range'
 import { useTenantConfig } from '@/hooks/use-tenant-config'
 import { useGCalChannelStatus } from '@/hooks/use-gcal-channel-status'
+import { useWalkInService } from '@/hooks/use-walk-in-service'
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -256,6 +271,7 @@ describe('AgendaPage', () => {
       refetch: vi.fn(),
     })
     vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, isPending: false })
+    vi.mocked(useWalkInService).mockReturnValue(null)
   })
 
   it('sin ?vista en URL → renderiza vista Semana (default, AC6)', () => {
@@ -433,43 +449,14 @@ describe('AgendaPage', () => {
     })
   })
 
-  // ── Default de foco de área "Rehabilitación" por rol (decisión ISADI + usuario,
-  //    2026-07-14) ────────────────────────────────────────────────────────────
-  // Recepción abre el calendario YA filtrado en Rehabilitación (su trabajo
-  // diario) — pero no es un candado: un toque en "Ver todo" lo saca del recorte
-  // para el resto de la sesión. Admin/doctor no cambian: ya arrancaban en
-  // 'rehab'. El recorte depende de `isRehabService` (heurística PROVISIONAL por
-  // nombre — ver service-visuals.ts).
-  describe('Default de foco de área (Rehabilitación) por rol', () => {
-    it('receptionist: entra con el foco en Rehabilitación por defecto', () => {
-      vi.mocked(useUserRole).mockReturnValue('receptionist')
-      render(<AgendaPage />)
-      // Los botones de Servicio son visibles directo para recepción (no
-      // gated por "Filtrar") — ahí se ve el foco aplicado de entrada.
-      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute('data-area-focus', 'rehab')
-    })
-
-    it('receptionist: puede cambiar a "Ver todo" (no es un candado)', () => {
-      vi.mocked(useUserRole).mockReturnValue('receptionist')
-      render(<AgendaPage />)
-      // El radiogroup de área vive en AgendaFilters, detrás de "Filtrar" en
-      // modo turnero.
-      fireEvent.click(screen.getByRole('button', { name: /^filtrar$/i }))
-      fireEvent.click(screen.getByRole('button', { name: 'mock-ver-todo' }))
-      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute('data-area-focus', 'todos')
-      expect(screen.getByTestId('agenda-filters')).toHaveAttribute('data-area-focus', 'todos')
-    })
-
-    it('admin: mantiene el foco en Rehabilitación por defecto (sin cambios)', () => {
-      vi.mocked(useUserRole).mockReturnValue('admin')
-      render(<AgendaPage />)
-      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute('data-area-focus', 'rehab')
-    })
-
-    it('doctor: sin cambios respecto de hoy (no ve filtros de agenda, igual que antes)', () => {
-      // El rol 'doctor' ya no mostraba AgendaFilters/AgendaServiceButtons antes
-      // de este cambio (showFilters = admin || receptionist) — el default de
-      // área nuevo no le agrega ni le saca nada.
+  // ── Foco de área por defecto (Rehabilitación) ──────────────────────────────
+  // El toggle "Rehabilitación | Ver todo" se retiró (decisión ISADI dueño
+  // 2026-07-16 — la agenda es 100% modo grupos). El foco por defecto a
+  // rehabilitación sigue vigente como constante interna de AgendaView, pero ya
+  // no hay control de UI para cambiarlo. Solo verificamos que el rol 'doctor'
+  // sigue sin ver filtros de agenda (igual que antes).
+  describe('Foco de área (Rehabilitación) — sin toggle', () => {
+    it('doctor: no ve filtros de agenda (showFilters = admin || receptionist)', () => {
       vi.mocked(useUserRole).mockReturnValue('doctor')
       render(<AgendaPage />)
       expect(screen.queryByTestId('agenda-service-buttons')).not.toBeInTheDocument()
@@ -507,6 +494,10 @@ describe('AgendaPage', () => {
   })
 
   // ── Exclusión mutua professional_id ⊕ service_id ───────────────────────────
+  // El control de servicio individual se retiró (la agenda es 100% modo grupos,
+  // decisión ISADI 2026-07-16), así que ya no hay UI que setee service_id. El
+  // handler de profesional conserva la exclusión: elegir profesional limpia
+  // cualquier service_id residual en la URL.
   describe('Exclusión mutua profesional/servicio', () => {
     it('elegir profesional (con service_id en URL) limpia el servicio en un solo push', () => {
       vi.mocked(useUserRole).mockReturnValue('admin')
@@ -516,16 +507,6 @@ describe('AgendaPage', () => {
       const url = mockRouterPush.mock.calls.at(-1)![0] as string
       expect(url).toContain('professional_id=prof-1')
       expect(url).not.toContain('service_id')
-    })
-
-    it('elegir servicio (con professional_id en URL) limpia el profesional en un solo push', () => {
-      vi.mocked(useUserRole).mockReturnValue('admin')
-      mockSearchParamsData = { professional_id: 'prof-1' }
-      render(<AgendaPage />)
-      fireEvent.click(screen.getByRole('button', { name: 'mock-pick-svc' }))
-      const url = mockRouterPush.mock.calls.at(-1)![0] as string
-      expect(url).toContain('service_id=svc-1')
-      expect(url).not.toContain('professional_id')
     })
   })
 
@@ -603,20 +584,21 @@ describe('AgendaPage', () => {
     })
   })
 
-  // ── Pedido 2 (ISADI 2026-07-16) — 3 botones de grupo para recepción ────────
-  describe('Pedido 2 — grupo de recepción (Fisioterapia/Pileta/Pilates)', () => {
-    it('receptionist: AgendaServiceButtons recibe isReceptionist=true y receptionGroup=null por defecto', () => {
+  // ── Grupo (Fisioterapia/Pileta/Pilates) — TODOS los roles (ISADI 2026-07-16) ─
+  // La agenda muestra los 3 botones de GRUPO para admin Y recepción ("igual que
+  // recepción"). El grupo es estado local (no URL) y filtra los turnos
+  // client-side para todos los roles (antes solo aplicaba a receptionist).
+  describe('Grupo (Fisioterapia/Pileta/Pilates) — todos los roles', () => {
+    it('receptionist: AgendaServiceButtons visible con receptionGroup=null por defecto', () => {
       vi.mocked(useUserRole).mockReturnValue('receptionist')
       render(<AgendaPage />)
-      const el = screen.getByTestId('agenda-service-buttons')
-      expect(el).toHaveAttribute('data-is-receptionist', 'true')
-      expect(el).toHaveAttribute('data-reception-group', '')
+      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute('data-reception-group', '')
     })
 
-    it('admin: AgendaServiceButtons recibe isReceptionist=false (sin cambios de comportamiento)', () => {
+    it('admin: AgendaServiceButtons visible con receptionGroup=null por defecto (mismos 3 grupos que recepción)', () => {
       vi.mocked(useUserRole).mockReturnValue('admin')
       render(<AgendaPage />)
-      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute('data-is-receptionist', 'false')
+      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute('data-reception-group', '')
     })
 
     it('receptionist: click en un botón de grupo actualiza receptionGroup (estado local, no URL)', () => {
@@ -631,11 +613,55 @@ describe('AgendaPage', () => {
       expect(mockRouterPush).not.toHaveBeenCalled()
     })
 
+    it('admin: click en un botón de grupo actualiza receptionGroup (estado local, no URL)', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'mock-pick-grupo-fisio' }))
+      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute(
+        'data-reception-group',
+        'fisioterapia',
+      )
+      expect(mockRouterPush).not.toHaveBeenCalled()
+    })
+
     it('receptionist: click de nuevo limpia el grupo (vuelve a null)', () => {
       vi.mocked(useUserRole).mockReturnValue('receptionist')
       render(<AgendaPage />)
       fireEvent.click(screen.getByRole('button', { name: 'mock-pick-grupo-fisio' }))
       fireEvent.click(screen.getByRole('button', { name: 'mock-clear-grupo' }))
+      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute('data-reception-group', '')
+    })
+
+    it('admin: seleccionar un grupo filtra la agenda CLIENT-SIDE (los turnos de otro grupo se ocultan)', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      mockSearchParamsData = { vista: 'dia' }
+      vi.mocked(useAppointments).mockReturnValue({
+        appointments: [
+          { appointment_id: 'a1', services: { name: 'Kinesiología', reception_group: 'fisioterapia' } },
+          { appointment_id: 'a2', services: { name: 'Pilates', reception_group: 'pilates' } },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+        overtime: {},
+      } as unknown as ReturnType<typeof useAppointments>)
+      render(<AgendaPage />)
+      // Con un grupo elegido, applyReceptionGroupFilter=true (y el recorte por
+      // nombre 'rehab' se apaga porque hay grupo): quedan solo los turnos del
+      // grupo. ANTES del cambio, este filtro NO aplicaba a admin.
+      fireEvent.click(screen.getByRole('button', { name: 'mock-pick-grupo-fisio' }))
+      expect(screen.getByTestId('calendar-view')).toHaveAttribute('data-appt-count', '1')
+    })
+
+    it('admin: "Limpiar" resetea el grupo elegido', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'mock-pick-grupo-fisio' }))
+      expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute(
+        'data-reception-group',
+        'fisioterapia',
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'mock-limpiar' }))
       expect(screen.getByTestId('agenda-service-buttons')).toHaveAttribute('data-reception-group', '')
     })
   })
@@ -783,6 +809,95 @@ describe('AgendaPage', () => {
       render(<AgendaPage />)
       fireEvent.click(screen.getByText('mock-day-status-click'))
       expect(screen.getByTestId('day-status-modal')).toBeInTheDocument()
+    })
+  })
+
+  // ── Story 16.2 — cola de orden de llegada montada en la vista Día ───────────
+  // El objetivo de estos tests es el GATING de montaje del panel (no el panel en
+  // sí, que se testea en ColaOrdenLlegada.test.tsx). Se mockea useWalkInService
+  // (resolver) y ColaOrdenLlegada (stub). Ojo: sin `fecha` en la URL,
+  // selectedDate = hoy → `hoy` es true por defecto.
+  describe('Story 16.2 — panel ColaOrdenLlegada (gating en vista Día)', () => {
+    const walkInResolved = {
+      serviceId: 'svc-walkin',
+      professionalIds: ['prof-walkin'],
+      defaultProfessionalId: 'prof-walkin',
+    }
+
+    it('vista Día + HOY + professional_id que atiende walk-in → monta el panel', () => {
+      vi.mocked(useWalkInService).mockReturnValue(walkInResolved)
+      mockSearchParamsData = { vista: 'dia', professional_id: 'prof-walkin' }
+      render(<AgendaPage />)
+      const panel = screen.getByTestId('cola-orden-llegada')
+      expect(panel).toBeInTheDocument()
+      expect(panel).toHaveAttribute('data-service-id', 'svc-walkin')
+      expect(panel).toHaveAttribute('data-professional-id', 'prof-walkin')
+    })
+
+    it('vista Día + service_id del walk-in (sin professional_id) → monta con el profesional por defecto', () => {
+      vi.mocked(useWalkInService).mockReturnValue({
+        serviceId: 'svc-walkin',
+        professionalIds: ['prof-a', 'prof-b'],
+        defaultProfessionalId: 'prof-a',
+      })
+      mockSearchParamsData = { vista: 'dia', service_id: 'svc-walkin' }
+      render(<AgendaPage />)
+      const panel = screen.getByTestId('cola-orden-llegada')
+      expect(panel).toBeInTheDocument()
+      expect(panel).toHaveAttribute('data-professional-id', 'prof-a')
+    })
+
+    it('(a) fecha ≠ hoy → NO monta el panel', () => {
+      vi.mocked(useWalkInService).mockReturnValue(walkInResolved)
+      mockSearchParamsData = { vista: 'dia', professional_id: 'prof-walkin', fecha: '2020-01-01' }
+      render(<AgendaPage />)
+      expect(screen.queryByTestId('cola-orden-llegada')).not.toBeInTheDocument()
+    })
+
+    it('(b) professional_id que NO atiende walk-in → NO monta el panel', () => {
+      vi.mocked(useWalkInService).mockReturnValue(walkInResolved)
+      mockSearchParamsData = { vista: 'dia', professional_id: 'prof-otro' }
+      render(<AgendaPage />)
+      expect(screen.queryByTestId('cola-orden-llegada')).not.toBeInTheDocument()
+    })
+
+    it('(c) useWalkInService() = null (tenant sin cola) → NO monta el panel', () => {
+      vi.mocked(useWalkInService).mockReturnValue(null)
+      mockSearchParamsData = { vista: 'dia', professional_id: 'prof-walkin' }
+      render(<AgendaPage />)
+      expect(screen.queryByTestId('cola-orden-llegada')).not.toBeInTheDocument()
+    })
+
+    it('(d) vista Semana → NO monta el panel (la cola es de un día puntual)', () => {
+      vi.mocked(useWalkInService).mockReturnValue(walkInResolved)
+      mockSearchParamsData = { vista: 'semana', professional_id: 'prof-walkin' }
+      render(<AgendaPage />)
+      expect(screen.queryByTestId('cola-orden-llegada')).not.toBeInTheDocument()
+    })
+
+    it('(d) vista Mes → NO monta el panel', () => {
+      vi.mocked(useWalkInService).mockReturnValue(walkInResolved)
+      mockSearchParamsData = { vista: 'mes', professional_id: 'prof-walkin' }
+      render(<AgendaPage />)
+      expect(screen.queryByTestId('cola-orden-llegada')).not.toBeInTheDocument()
+    })
+
+    it('(e) sin filtro (todos los profesionales) → NO monta el panel', () => {
+      vi.mocked(useWalkInService).mockReturnValue(walkInResolved)
+      mockSearchParamsData = { vista: 'dia' }
+      render(<AgendaPage />)
+      expect(screen.queryByTestId('cola-orden-llegada')).not.toBeInTheDocument()
+    })
+
+    it('el panel recibe hoyISO = fecha ISO local de la vista (hoy)', () => {
+      vi.mocked(useWalkInService).mockReturnValue(walkInResolved)
+      // Fecha LOCAL (igual que formatISO(..., { representation: 'date' }) en
+      // AgendaView) — no UTC, para no desfasar el día por timezone.
+      const now = new Date()
+      const hoyISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+      mockSearchParamsData = { vista: 'dia', professional_id: 'prof-walkin' }
+      render(<AgendaPage />)
+      expect(screen.getByTestId('cola-orden-llegada')).toHaveAttribute('data-hoy-iso', hoyISO)
     })
   })
 })
