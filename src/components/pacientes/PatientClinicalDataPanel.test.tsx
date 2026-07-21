@@ -197,7 +197,8 @@ describe('PatientClinicalDataPanel — readOnly (eliminación pendiente)', () =>
     expect(screen.getByLabelText('Alergias')).toBeDisabled()
     expect(screen.getByLabelText('Medicación actual')).toBeDisabled()
     expect(screen.getByLabelText('Cirugías')).toBeDisabled()
-    // Sin indicador de autosave en readOnly
+    // Sin botón de guardado en readOnly: no se puede persistir nada
+    expect(screen.queryByRole('button', { name: /guardar contexto clínico/i })).not.toBeInTheDocument()
     expect(screen.queryByText(/se guarda automáticamente/i)).not.toBeInTheDocument()
 
     // Aunque se fuerce un change, no hay PUT
@@ -212,7 +213,7 @@ describe('PatientClinicalDataPanel — readOnly (eliminación pendiente)', () =>
   })
 })
 
-describe('PatientClinicalDataPanel — autosave con debounce 1200ms (fake timers)', () => {
+describe('PatientClinicalDataPanel — guardado explícito por botón (sin autosave)', () => {
   async function setupExpanded(clinicalData: unknown = makeClinicalData()) {
     mockGetClinicalData(clinicalData)
     renderPanel()
@@ -221,20 +222,50 @@ describe('PatientClinicalDataPanel — autosave con debounce 1200ms (fake timers
     return screen.getByLabelText('Antecedentes')
   }
 
-  it('NO llama PUT antes de 1200ms', async () => {
+  function guardarBtn() {
+    return screen.getByRole('button', { name: /guardar contexto clínico/i })
+  }
+
+  async function clickGuardar() {
+    await act(async () => {
+      fireEvent.click(guardarBtn())
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+  }
+
+  it('escribir y esperar NO dispara ningún PUT (sin autosave)', async () => {
     vi.useFakeTimers()
     const antecedentes = await setupExpanded()
 
     act(() => {
       fireEvent.change(antecedentes, { target: { value: 'HTA y DBT2' } })
     })
-    act(() => {
-      vi.advanceTimersByTime(1199)
+    // Muy por encima del viejo debounce de 1200ms
+    await act(async () => {
+      vi.advanceTimersByTime(10_000)
+      await Promise.resolve()
     })
     expect(putCalls()).toHaveLength(0)
   })
 
-  it('dispara UN PUT con los 4 campos tras 1200ms de pausa', async () => {
+  it('tipeo incremental con pausas no dispara un PUT por pausa', async () => {
+    vi.useFakeTimers()
+    const antecedentes = await setupExpanded()
+
+    for (const parcial of ['H', 'HTA', 'HTA y DBT2']) {
+      act(() => {
+        fireEvent.change(antecedentes, { target: { value: parcial } })
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+        await Promise.resolve()
+      })
+    }
+    expect(putCalls()).toHaveLength(0)
+  })
+
+  it('el botón dispara UN PUT con los 4 campos', async () => {
     vi.useFakeTimers()
     const antecedentes = await setupExpanded()
     const alergias = screen.getByLabelText('Alergias')
@@ -246,10 +277,7 @@ describe('PatientClinicalDataPanel — autosave con debounce 1200ms (fake timers
       fireEvent.change(alergias, { target: { value: 'Ibuprofeno' } })
     })
 
-    await act(async () => {
-      vi.advanceTimersByTime(1200)
-      await Promise.resolve()
-    })
+    await clickGuardar()
 
     expect(putCalls()).toHaveLength(1)
     const [url, init] = putCalls()[0]
@@ -262,34 +290,11 @@ describe('PatientClinicalDataPanel — autosave con debounce 1200ms (fake timers
     })
   })
 
-  it('cada tipeo resetea el debounce (un solo PUT por pausa)', async () => {
-    vi.useFakeTimers()
-    const antecedentes = await setupExpanded()
-
-    act(() => {
-      fireEvent.change(antecedentes, { target: { value: 'A' } })
-    })
-    act(() => {
-      vi.advanceTimersByTime(800)
-    })
-    act(() => {
-      fireEvent.change(antecedentes, { target: { value: 'AB' } })
-    })
-    act(() => {
-      vi.advanceTimersByTime(800) // 1600ms desde el primer tipeo, 800 desde el último
-    })
-    expect(putCalls()).toHaveLength(0)
-
-    await act(async () => {
-      vi.advanceTimersByTime(400) // completa los 1200 del último tipeo
-      await Promise.resolve()
-    })
-    expect(putCalls()).toHaveLength(1)
-  })
-
-  it('sin cambios respecto a lo cargado → no hay PUT', async () => {
+  it('sin cambios respecto a lo cargado → el botón está deshabilitado', async () => {
     vi.useFakeTimers()
     await setupExpanded()
+
+    expect(guardarBtn()).toBeDisabled()
 
     await act(async () => {
       vi.advanceTimersByTime(5000)
@@ -298,7 +303,19 @@ describe('PatientClinicalDataPanel — autosave con debounce 1200ms (fake timers
     expect(putCalls()).toHaveLength(0)
   })
 
-  it('muestra "Guardado ✓" tras el PUT exitoso y vuelve a idle a los 2s', async () => {
+  it('al escribir se habilita el botón y aparece "Cambios sin guardar"', async () => {
+    vi.useFakeTimers()
+    const antecedentes = await setupExpanded()
+
+    act(() => {
+      fireEvent.change(antecedentes, { target: { value: 'Otra cosa' } })
+    })
+
+    expect(guardarBtn()).not.toBeDisabled()
+    expect(screen.getByText('Cambios sin guardar')).toBeInTheDocument()
+  })
+
+  it('doble click rápido en el botón hace un solo PUT', async () => {
     vi.useFakeTimers()
     const antecedentes = await setupExpanded()
 
@@ -306,20 +323,36 @@ describe('PatientClinicalDataPanel — autosave con debounce 1200ms (fake timers
       fireEvent.change(antecedentes, { target: { value: 'Texto' } })
     })
     await act(async () => {
-      vi.advanceTimersByTime(1200)
+      const btn = guardarBtn()
+      fireEvent.click(btn)
+      fireEvent.click(btn)
       await Promise.resolve()
       await Promise.resolve()
     })
+
+    expect(putCalls()).toHaveLength(1)
+  })
+
+  it('muestra "Guardado ✓" tras el PUT exitoso y limpia el cartel a los 2s', async () => {
+    vi.useFakeTimers()
+    const antecedentes = await setupExpanded()
+
+    act(() => {
+      fireEvent.change(antecedentes, { target: { value: 'Texto' } })
+    })
+    await clickGuardar()
 
     expect(screen.getByText('Guardado ✓')).toBeInTheDocument()
 
     act(() => {
       vi.advanceTimersByTime(2000)
     })
-    expect(screen.getByText('Se guarda automáticamente')).toBeInTheDocument()
+    expect(screen.queryByText('Guardado ✓')).not.toBeInTheDocument()
+    // Ya no existe el cartel de autosave
+    expect(screen.queryByText(/se guarda autom/i)).not.toBeInTheDocument()
   })
 
-  it('PUT con error (p.ej. 042 sin aplicar) → mensaje de error; seguir tipeando reintenta', async () => {
+  it('PUT con error (p.ej. 042 sin aplicar) → mensaje de error; volver a tocar el botón reintenta', async () => {
     vi.useFakeTimers()
     let failPut = true
     mockFetch.mockImplementation((_url: string, init?: RequestInit) => {
@@ -354,53 +387,39 @@ describe('PatientClinicalDataPanel — autosave con debounce 1200ms (fake timers
     act(() => {
       fireEvent.change(antecedentes, { target: { value: 'Texto' } })
     })
-    await act(async () => {
-      vi.advanceTimersByTime(1200)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
+    await clickGuardar()
     expect(screen.getByText(/no se pudieron guardar los datos clínicos/i)).toBeInTheDocument()
 
-    // Reintento al seguir tipeando: nuevo debounce → nuevo PUT que ahora funciona
+    // El texto sigue sin guardarse → el botón queda habilitado para reintentar
     failPut = false
-    act(() => {
-      fireEvent.change(antecedentes, { target: { value: 'Texto corregido' } })
-    })
-    await act(async () => {
-      vi.advanceTimersByTime(1200)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
+    expect(guardarBtn()).not.toBeDisabled()
+    await clickGuardar()
+
     expect(putCalls()).toHaveLength(2)
     expect(screen.getByText('Guardado ✓')).toBeInTheDocument()
   })
 
-  it('revertir el texto al valor original DESPUÉS de un guardado también se persiste (patch a — lastSavedRef)', async () => {
+  it('revertir el texto al valor original DESPUÉS de un guardado también se persiste (patch a — lastSaved)', async () => {
     vi.useFakeTimers()
     const antecedentes = await setupExpanded(makeClinicalData())
 
-    // Editar → autosave 1 (lastSaved pasa a 'X')
+    // Editar y guardar → lastSaved pasa a 'X'
     act(() => {
       fireEvent.change(antecedentes, { target: { value: 'X' } })
     })
-    await act(async () => {
-      vi.advanceTimersByTime(1200)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
+    await clickGuardar()
     expect(putCalls()).toHaveLength(1)
 
-    // Revertir EXACTAMENTE al valor cargado por el GET → debe disparar autosave 2
-    // (si la referencia quedara fija en los valores de montaje, este revert
-    // nunca llegaría al server → divergencia silenciosa en HCE).
+    // Revertir EXACTAMENTE al valor cargado por el GET: debe contar como cambio
+    // (si "último guardado" quedara fijo en los valores de montaje, el botón se
+    // vería deshabilitado y el revert nunca llegaría al server → divergencia
+    // silenciosa en HCE).
     act(() => {
       fireEvent.change(antecedentes, { target: { value: 'HTA' } })
     })
-    await act(async () => {
-      vi.advanceTimersByTime(1200)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
+    expect(guardarBtn()).not.toBeDisabled()
+    await clickGuardar()
+
     expect(putCalls()).toHaveLength(2)
     expect(JSON.parse((putCalls()[1][1] as RequestInit).body as string)).toMatchObject({
       antecedentes: 'HTA',
@@ -420,11 +439,7 @@ describe('PatientClinicalDataPanel — autosave con debounce 1200ms (fake timers
         target: { value: 'Texto nuevo' },
       })
     })
-    await act(async () => {
-      vi.advanceTimersByTime(1200)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
+    await clickGuardar()
 
     // Colapsar y re-expandir: el editor debe remontar con los datos REALES guardados
     // (setQueryData del PUT), NO con los null viejos del GET inicial.
@@ -440,9 +455,12 @@ describe('PatientClinicalDataPanel — autosave con debounce 1200ms (fake timers
     expect(getCalls).toHaveLength(1)
   })
 
-  it('respuesta de un PUT viejo que llega DESPUÉS de uno nuevo se descarta (patch c — saveSeqRef)', async () => {
+  // Con guardado explícito NO puede haber dos PUTs en vuelo (el botón se bloquea
+  // mientras dura el guardado + guard inFlightRef), así que la carrera que el patch
+  // (c) toleraba ahora se previene de raíz. saveSeqRef queda como defensa en
+  // profundidad. Este test cubre la garantía observable: serialización.
+  it('mientras un PUT está en vuelo el botón se bloquea y no se encadena otro (serialización — sustituye la carrera del patch c)', async () => {
     vi.useFakeTimers()
-    // PUT 1: queda colgado hasta que lo resolvamos a mano. PUT 2: resuelve al toque.
     let resolveFirstPut: ((value: unknown) => void) | null = null
     let putCount = 0
     mockFetch.mockImplementation((_url: string, init?: RequestInit) => {
@@ -476,44 +494,40 @@ describe('PatientClinicalDataPanel — autosave con debounce 1200ms (fake timers
     await flushMicrotasks()
     const antecedentes = screen.getByLabelText('Antecedentes')
 
-    // Tipeo 1 → PUT 1 (queda en vuelo)
+    // Guardado 1 → PUT 1 queda en vuelo (nunca resuelve todavía)
     act(() => {
       fireEvent.change(antecedentes, { target: { value: 'VERSIÓN VIEJA' } })
     })
-    await act(async () => {
-      vi.advanceTimersByTime(1200)
-      await Promise.resolve()
-    })
+    await clickGuardar()
     expect(putCalls()).toHaveLength(1)
 
-    // Tipeo 2 → PUT 2 (resuelve ok con "VERSIÓN NUEVA")
+    // Durante el vuelo: "Guardando…" y botón bloqueado, incluso si el usuario
+    // sigue escribiendo (antes esto disparaba un segundo PUT concurrente).
+    expect(screen.getByText('Guardando…')).toBeInTheDocument()
     act(() => {
       fireEvent.change(antecedentes, { target: { value: 'VERSIÓN NUEVA' } })
     })
+    expect(guardarBtn()).toBeDisabled()
     await act(async () => {
-      vi.advanceTimersByTime(1200)
-      await Promise.resolve()
+      fireEvent.click(guardarBtn())
       await Promise.resolve()
     })
-    expect(putCalls()).toHaveLength(2)
-    expect(screen.getByText('Guardado ✓')).toBeInTheDocument()
+    expect(putCalls()).toHaveLength(1) // sigue habiendo UN solo PUT
 
-    // Ahora resuelve el PUT 1 (obsoleto) con datos viejos y status de error:
-    // NO debe pisar ni el status ni la cache (seq !== saveSeqRef.current → return).
+    // Al resolver el PUT 1, el panel se destraba y el texto nuevo puede guardarse
     await act(async () => {
       resolveFirstPut!({
-        ok: false,
-        status: 500,
-        json: () => Promise.resolve({ error: 'obsoleto' }),
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ clinical_data: makeClinicalData({ antecedentes: 'VERSIÓN VIEJA' }) }),
       })
       await Promise.resolve()
       await Promise.resolve()
     })
 
-    // El status sigue siendo el del PUT 2 ("Guardado ✓"), no error del PUT 1
-    expect(screen.getByText('Guardado ✓')).toBeInTheDocument()
-    expect(screen.queryByText(/no se pudieron guardar/i)).not.toBeInTheDocument()
-    // La cache conserva la respuesta del PUT 2
+    expect(guardarBtn()).not.toBeDisabled()
+    await clickGuardar()
+    expect(putCalls()).toHaveLength(2)
     const cached = queryClient.getQueryData<{ clinical_data: { antecedentes: string | null } }>([
       'patient-clinical-data',
       PATIENT_ID,
@@ -521,7 +535,7 @@ describe('PatientClinicalDataPanel — autosave con debounce 1200ms (fake timers
     expect(cached?.clinical_data.antecedentes).toBe('VERSIÓN NUEVA')
   })
 
-  it('cleanup correcto — desmonta sin errores con un debounce pendiente', async () => {
+  it('cleanup correcto — desmonta con texto sin guardar sin errores ni PUT tardío', async () => {
     vi.useFakeTimers()
     mockGetClinicalData(makeClinicalData({ antecedentes: null, alergias: null, medicacion: null }))
     const { unmount } = renderPanel()
@@ -532,7 +546,6 @@ describe('PatientClinicalDataPanel — autosave con debounce 1200ms (fake timers
       fireEvent.change(screen.getByLabelText('Antecedentes'), { target: { value: 'X' } })
     })
     expect(() => unmount()).not.toThrow()
-    // El timer pendiente quedó cancelado: avanzar no dispara PUT
     act(() => {
       vi.advanceTimersByTime(5000)
     })

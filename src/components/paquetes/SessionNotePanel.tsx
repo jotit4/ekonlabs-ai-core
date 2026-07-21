@@ -42,9 +42,11 @@ function fmtSignatureDate(iso: string | null | undefined): string {
  *
  * Colapsado por defecto; al expandir carga la evolución vía
  * GET /api/appointments/[id]/session-note (API Route — el guard 403 vive en el
- * server; la RLS 041 es la segunda capa). Autosave con debounce 1200ms (patrón
- * ClinicalNoteEditor, SIN react-hook-form): PUT = upsert idempotente → seguro.
- * NO se invalida la query en cada autosave (pisaría el tipeo): el GET alimenta
+ * server; la RLS 041 es la segunda capa). Guardado EXPLÍCITO por botón (mismo
+ * criterio que ClinicalNoteEditor, SIN react-hook-form): el autosave se sacó
+ * porque guardar sin que el usuario lo pida es opaco en una HCE — nadie sabe
+ * qué versión quedó asentada. El PUT sigue siendo upsert idempotente.
+ * NO se invalida la query tras guardar (pisaría el tipeo): el GET alimenta
  * el estado inicial al expandir; los guardados solo actualizan el status.
  *
  * Muestra "Sesión X/N" reusando SesionSerieBadge (turno suelto sin sessionIndex
@@ -130,10 +132,10 @@ function SessionNotePanelContent({
   )
 }
 
-type SaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error'
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
 const GENERIC_SAVE_ERROR =
-  'No se pudo guardar la evolución. Seguí escribiendo para reintentar.'
+  'No se pudo guardar la evolución. Volvé a tocar "Guardar evolución" para reintentar.'
 
 interface SessionNoteEditorProps {
   appointmentId: string
@@ -166,23 +168,31 @@ function SessionNoteEditor({ appointmentId, note, authorName }: SessionNoteEdito
   const [signature, setSignature] = useState<Signature | null>(signatureFromNote(note, authorName))
 
   // Último contenido PERSISTIDO (al montar = lo que trajo el GET; tras cada PUT
-  // exitoso se actualiza a lo enviado). Mientras el texto coincida con esto, no
-  // se dispara el autosave. ⚠️ Debe actualizarse tras cada guardado: si quedara
-  // fijo en los valores de montaje, revertir el texto al valor original después
-  // de un guardado NUNCA se persistiría (divergencia silenciosa UI/server en HCE).
-  const lastSavedRef = useRef({ workedOn: note?.worked_on ?? '', progress: note?.progress ?? '' })
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // exitoso se actualiza a lo enviado). Es ESTADO y no ref porque de él se deriva
+  // `isDirty`, que habilita el botón — un ref no re-renderiza. ⚠️ Debe
+  // actualizarse tras cada guardado: si quedara fijo en los valores de montaje,
+  // revertir el texto al valor original después de un guardado quedaría marcado
+  // como "sin cambios" y no se podría persistir (divergencia UI/server en HCE).
+  const [lastSaved, setLastSaved] = useState({
+    workedOn: note?.worked_on ?? '',
+    progress: note?.progress ?? '',
+  })
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Guard anti doble-envío: el `disabled` del botón no cubre dos clicks emitidos
+  // antes del re-render.
+  const inFlightRef = useRef(false)
   // Secuencia de guardados: descarta respuestas de PUTs viejos que resuelvan
   // DESPUÉS de uno más nuevo (no pisar status/cache/lastSaved con datos obsoletos).
   // Nota: el reordenamiento server-side de dos PUTs en vuelo no es resoluble
   // client-side sin versionado — mismo límite aceptado que ClinicalNoteEditor.
   const saveSeqRef = useRef(0)
 
+  const isDirty = workedOn !== lastSaved.workedOn || progress !== lastSaved.progress
+
   const triggerSave = useCallback(async () => {
-    // Cancelar debounce pendiente
-    if (debounceRef.current) clearTimeout(debounceRef.current)
+    if (inFlightRef.current) return
     if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
+    inFlightRef.current = true
 
     const seq = ++saveSeqRef.current
     setSaveStatus('saving')
@@ -210,9 +220,9 @@ function SessionNoteEditor({ appointmentId, note, authorName }: SessionNoteEdito
       const data = (await res.json().catch(() => null)) as SessionNoteResponse | null
       if (seq !== saveSeqRef.current) return
 
-      // Lo enviado quedó persistido: actualizar la referencia de "último guardado"
-      // para que un revert al texto original también dispare autosave.
-      lastSavedRef.current = { workedOn, progress }
+      // Lo enviado quedó persistido: actualizar "último guardado" para que un
+      // revert al texto original vuelva a contar como cambio guardable.
+      setLastSaved({ workedOn, progress })
       // Sincronizar la cache de la query SIN invalidar (no refetch → no pisa el
       // tipeo): si el panel se colapsa y re-expande dentro del staleTime, el
       // editor remonta con la nota REAL del server y no con la versión pre-edición
@@ -237,55 +247,42 @@ function SessionNoteEditor({ appointmentId, note, authorName }: SessionNoteEdito
       if (seq !== saveSeqRef.current) return
       setErrorMessage(GENERIC_SAVE_ERROR)
       setSaveStatus('error')
+    } finally {
+      inFlightRef.current = false
     }
   }, [appointmentId, workedOn, progress, queryClient])
-
-  // Autosave con debounce 1200ms (patrón ClinicalNoteEditor). El cleanup del
-  // efecto cancela el timer anterior en cada tipeo → un solo PUT por pausa.
-  useEffect(() => {
-    if (
-      workedOn === lastSavedRef.current.workedOn &&
-      progress === lastSavedRef.current.progress
-    ) {
-      return // Sin cambios respecto a lo último persistido — no guardar
-    }
-    debounceRef.current = setTimeout(() => {
-      void triggerSave()
-    }, 1200)
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workedOn, progress])
 
   // Cleanup al desmontar
   useEffect(() => {
     return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current)
       if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
     }
   }, [])
 
-  const statusLabel = {
-    idle: 'Se guarda automáticamente',
-    pending: 'Se guarda automáticamente',
-    saving: 'Guardando…',
-    saved: 'Guardado ✓',
-    error: errorMessage ?? GENERIC_SAVE_ERROR,
-  }[saveStatus]
+  // El estado visible se DERIVA de isDirty en vez de un status 'pending' propio:
+  // así revertir el texto a mano al valor guardado limpia el cartel solo, y seguir
+  // escribiendo después de guardar no deja un "Guardado ✓" mintiendo.
+  const statusLabel =
+    saveStatus === 'saving'
+      ? 'Guardando…'
+      : saveStatus === 'error'
+        ? (errorMessage ?? GENERIC_SAVE_ERROR)
+        : isDirty
+          ? 'Cambios sin guardar'
+          : saveStatus === 'saved'
+            ? 'Guardado ✓'
+            : ''
 
-  const statusColor = {
-    idle: 'var(--color-text-secondary)',
-    pending: 'var(--color-text-secondary)',
-    saving: 'var(--color-text-secondary)',
-    saved: 'var(--color-success, #34c759)',
-    error: 'var(--color-error, #ff3b30)',
-  }[saveStatus]
+  const statusColor =
+    saveStatus === 'error'
+      ? 'var(--color-error, #ff3b30)'
+      : !isDirty && saveStatus === 'saved'
+        ? 'var(--color-success, #34c759)'
+        : 'var(--color-text-secondary)'
 
   const handleChange =
     (setter: (v: string) => void) => (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       setter(e.target.value)
-      setSaveStatus('pending')
     }
 
   const textareaClass =
@@ -325,15 +322,28 @@ function SessionNoteEditor({ appointmentId, note, authorName }: SessionNoteEdito
         />
       </div>
 
-      {/* Indicador de estado — inline, NUNCA toast */}
-      <span
-        aria-live="polite"
-        role={saveStatus === 'error' ? 'alert' : 'status'}
-        className="block text-xs"
-        style={{ color: statusColor }}
-      >
-        {statusLabel}
-      </span>
+      <div className="flex items-center gap-3">
+        {/* Indicador de estado — inline, NUNCA toast */}
+        <span
+          aria-live="polite"
+          role={saveStatus === 'error' ? 'alert' : 'status'}
+          className="block flex-1 text-xs"
+          style={{ color: statusColor }}
+        >
+          {statusLabel}
+        </span>
+
+        {/* Guardado explícito: sin cambios pendientes el botón no hace nada útil,
+            y durante el PUT se bloquea para no encadenar guardados. */}
+        <button
+          type="button"
+          onClick={() => void triggerSave()}
+          disabled={!isDirty || saveStatus === 'saving'}
+          className="min-h-[44px] rounded-[6px] bg-[var(--color-interactive)] px-3 py-1.5 text-xs text-white disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Guardar evolución
+        </button>
+      </div>
 
       {/* Firma (Fase 2): quien guardó/editó último la evolución + cuándo. Es el
           autor real de la carga en el sistema (puede ser recepción) — NO el

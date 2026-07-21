@@ -60,7 +60,11 @@ describe('ClinicalNoteEditor', () => {
     expect(guardar).not.toBeDisabled()
   })
 
-  it('autosave NO llama fetch antes de 1200ms', () => {
+  // ── Sin autosave: el guardado es SOLO por botón ────────────────────────────
+  // El autosave con debounce creaba una nota nueva (POST) por cada pausa al
+  // escribir. Estos tests son la red que impide que vuelva a introducirse.
+
+  it('NO guarda solo: escribir y esperar no dispara ningún fetch', async () => {
     vi.useFakeTimers()
 
     render(<ClinicalNoteEditor patientId="p1" />)
@@ -70,23 +74,59 @@ describe('ClinicalNoteEditor', () => {
       fireEvent.change(textarea, { target: { value: 'Texto de prueba' } })
     })
 
-    // Solo avanzar 1199ms — no debe haber llamado fetch aún
-    act(() => { vi.advanceTimersByTime(1199) })
+    // Muy por encima del viejo debounce de 1200ms
+    await act(async () => {
+      vi.advanceTimersByTime(10_000)
+      await Promise.resolve()
+    })
+
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('autosave dispara fetch después de 1200ms de debounce', async () => {
+  it('NO guarda solo: tipeo incremental con pausas no crea una nota por pausa', async () => {
     vi.useFakeTimers()
 
     render(<ClinicalNoteEditor patientId="p1" />)
     const textarea = screen.getByLabelText('Nota clínica')
 
-    act(() => {
-      fireEvent.change(textarea, { target: { value: 'Texto de prueba' } })
+    // Reproduce el bug reportado: "disco" → "discopatia" → "discopatia lumbar"
+    for (const parcial of ['disco', 'discopatia', 'discopatia lumbar']) {
+      act(() => {
+        fireEvent.change(textarea, { target: { value: parcial } })
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+        await Promise.resolve()
+      })
+    }
+
+    expect(fetch).not.toHaveBeenCalled()
+
+    // Recién el click guarda, y guarda UNA sola vez con el texto completo
+    const guardar = screen.getByRole('button', { name: /guardar nota/i })
+    await act(async () => {
+      fireEvent.click(guardar)
+      await Promise.resolve()
     })
 
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/patients/p1/clinical-notes',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ content: 'discopatia lumbar' }),
+      })
+    )
+  })
+
+  it('botón "Guardar nota" hace POST cuando no hay noteId', async () => {
+    render(<ClinicalNoteEditor patientId="p1" />)
+    const textarea = screen.getByLabelText('Nota clínica')
+
+    fireEvent.change(textarea, { target: { value: 'Nota urgente' } })
+
     await act(async () => {
-      vi.advanceTimersByTime(1200)
+      fireEvent.click(screen.getByRole('button', { name: /guardar nota/i }))
       await Promise.resolve()
     })
 
@@ -97,43 +137,63 @@ describe('ClinicalNoteEditor', () => {
     )
   })
 
-  it('autosave con contenido solo espacios NO llama fetch', async () => {
-    vi.useFakeTimers()
-
+  it('tras guardar una nota nueva, vacía el textarea (no permite re-POST del mismo texto)', async () => {
     render(<ClinicalNoteEditor patientId="p1" />)
     const textarea = screen.getByLabelText('Nota clínica')
 
-    act(() => {
-      fireEvent.change(textarea, { target: { value: '   ' } })
-    })
+    fireEvent.change(textarea, { target: { value: 'Nota de consulta' } })
 
     await act(async () => {
-      vi.advanceTimersByTime(1200)
+      fireEvent.click(screen.getByRole('button', { name: /guardar nota/i }))
       await Promise.resolve()
     })
 
-    expect(fetch).not.toHaveBeenCalled()
+    expect((textarea as HTMLTextAreaElement).value).toBe('')
+    // Y el botón vuelve a estar deshabilitado: un segundo click no duplica
+    expect(screen.getByRole('button', { name: /guardar nota/i })).toBeDisabled()
+    expect(fetch).toHaveBeenCalledOnce()
   })
 
-  it('botón "Guardar nota" llama fetch inmediatamente (sin esperar debounce)', async () => {
-    vi.useFakeTimers()
+  it('al editar una nota existente NO vacía el textarea', async () => {
+    render(<ClinicalNoteEditor patientId="p1" noteId="n1" initialContent="Original" />)
+    const textarea = screen.getByLabelText('Nota clínica')
 
+    fireEvent.change(textarea, { target: { value: 'Editado' } })
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /guardar nota/i }))
+      await Promise.resolve()
+    })
+
+    expect((textarea as HTMLTextAreaElement).value).toBe('Editado')
+  })
+
+  it('doble click rápido en "Guardar nota" hace un solo POST', async () => {
     render(<ClinicalNoteEditor patientId="p1" />)
     const textarea = screen.getByLabelText('Nota clínica')
 
-    act(() => {
-      fireEvent.change(textarea, { target: { value: 'Nota urgente' } })
-    })
+    fireEvent.change(textarea, { target: { value: 'Nota con doble click' } })
 
     const guardar = screen.getByRole('button', { name: /guardar nota/i })
 
     await act(async () => {
       fireEvent.click(guardar)
+      fireEvent.click(guardar)
       await Promise.resolve()
     })
 
-    // fetch debe haber sido llamado sin esperar los 1200ms
     expect(fetch).toHaveBeenCalledOnce()
+  })
+
+  it('no muestra el texto "Se guarda automáticamente"', () => {
+    render(<ClinicalNoteEditor patientId="p1" />)
+    expect(screen.queryByText(/se guarda autom/i)).not.toBeInTheDocument()
+  })
+
+  it('al escribir muestra "Cambios sin guardar"', () => {
+    render(<ClinicalNoteEditor patientId="p1" />)
+    fireEvent.change(screen.getByLabelText('Nota clínica'), { target: { value: 'algo' } })
+    expect(screen.getByText('Cambios sin guardar')).toBeInTheDocument()
   })
 
   it('en éxito → muestra "Guardado ✓"', async () => {

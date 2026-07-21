@@ -26,15 +26,19 @@ interface PatientClinicalDataPanelProps {
  * dedicado + este gate + sellado de read paths por select explícito).
  *
  * Colapsado por defecto; al expandir carga vía GET /api/patients/[id]/clinical-data.
- * Autosave con debounce 1200ms (molde SessionNotePanel POST-patches del review 14.3,
- * SIN react-hook-form) portando desde el día 1 los 3 patrones:
- *  (a) lastSavedRef actualizado tras cada PUT exitoso (el revert al texto guardado
- *      también se persiste),
+ * Guardado EXPLÍCITO por botón (molde SessionNotePanel POST-patches del review 14.3,
+ * SIN react-hook-form) conservando los 3 patrones:
+ *  (a) lastSaved actualizado tras cada PUT exitoso (el revert al texto guardado
+ *      también se puede persistir),
  *  (b) setQueryData con la respuesta del PUT — NUNCA invalidate/refetch que pise
  *      el tipeo,
  *  (c) saveSeqRef para descartar respuestas de PUTs fuera de orden.
  *
- * readOnly (eliminación pendiente del paciente): textareas disabled, sin autosave —
+ * El autosave se sacó junto con el de ClinicalNoteEditor/SessionNotePanel: guardar
+ * sin que el usuario lo pida es opaco en una HCE, y las tres cajas conviven en la
+ * misma pantalla — dos comportamientos distintos confundían a quien carga.
+ *
+ * readOnly (eliminación pendiente del paciente): textareas disabled, sin botón —
  * el médico puede CONSULTAR alergias de un paciente en gracia de eliminación.
  *
  * ⚠️ DEPENDENCIA DE RUNTIME: requiere la migración 042 APLICADA (la aplica el
@@ -104,10 +108,10 @@ function PatientClinicalDataPanelContent({ patientId, readOnly }: PatientClinica
   )
 }
 
-type SaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error'
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
 const GENERIC_SAVE_ERROR =
-  'No se pudieron guardar los datos clínicos. Seguí escribiendo para reintentar.'
+  'No se pudieron guardar los datos clínicos. Volvé a tocar "Guardar contexto clínico" para reintentar.'
 
 interface PatientClinicalDataEditorProps {
   patientId: string
@@ -129,26 +133,36 @@ function PatientClinicalDataEditor({
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   // Último contenido PERSISTIDO (al montar = lo que trajo el GET; tras cada PUT
-  // exitoso se actualiza a lo enviado). Mientras el texto coincida con esto, no
-  // se dispara el autosave. ⚠️ Patch (a) del review 14.3: si quedara fijo en los
-  // valores de montaje, revertir el texto al valor original después de un guardado
-  // NUNCA se persistiría (divergencia silenciosa UI/server en HCE).
-  const lastSavedRef = useRef({
+  // exitoso se actualiza a lo enviado). Es ESTADO y no ref porque de él se deriva
+  // `isDirty`, que habilita el botón — un ref no re-renderiza. ⚠️ Patch (a) del
+  // review 14.3: si quedara fijo en los valores de montaje, revertir el texto al
+  // valor original después de un guardado quedaría marcado como "sin cambios" y no
+  // se podría persistir (divergencia silenciosa UI/server en HCE).
+  const [lastSaved, setLastSaved] = useState({
     antecedentes: clinicalData.antecedentes ?? '',
     alergias: clinicalData.alergias ?? '',
     medicacion: clinicalData.medicacion ?? '',
     cirugias: clinicalData.cirugias ?? '',
   })
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Guard anti doble-envío: el `disabled` del botón no cubre dos clicks emitidos
+  // antes del re-render.
+  const inFlightRef = useRef(false)
   // Patch (c) del review 14.3 — secuencia de guardados: descarta respuestas de
   // PUTs viejos que resuelvan DESPUÉS de uno más nuevo (no pisar status/cache/
   // lastSaved con datos obsoletos).
   const saveSeqRef = useRef(0)
 
+  const isDirty =
+    antecedentes !== lastSaved.antecedentes ||
+    alergias !== lastSaved.alergias ||
+    medicacion !== lastSaved.medicacion ||
+    cirugias !== lastSaved.cirugias
+
   const triggerSave = useCallback(async () => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
+    if (inFlightRef.current) return
     if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
+    inFlightRef.current = true
 
     const seq = ++saveSeqRef.current
     setSaveStatus('saving')
@@ -174,9 +188,9 @@ function PatientClinicalDataEditor({
         | null
       if (seq !== saveSeqRef.current) return
 
-      // Patch (a): lo enviado quedó persistido → actualizar la referencia de
-      // "último guardado" para que un revert al texto original también dispare autosave.
-      lastSavedRef.current = { antecedentes, alergias, medicacion, cirugias }
+      // Patch (a): lo enviado quedó persistido → actualizar "último guardado" para
+      // que un revert al texto original vuelva a contar como cambio guardable.
+      setLastSaved({ antecedentes, alergias, medicacion, cirugias })
       // Patch (b): sincronizar la cache SIN invalidar (no refetch → no pisa el
       // tipeo): si el panel se colapsa y re-expande dentro del staleTime, el
       // editor remonta con los datos REALES del server.
@@ -194,58 +208,42 @@ function PatientClinicalDataEditor({
       if (seq !== saveSeqRef.current) return
       setErrorMessage(GENERIC_SAVE_ERROR)
       setSaveStatus('error')
+    } finally {
+      inFlightRef.current = false
     }
   }, [patientId, antecedentes, alergias, medicacion, cirugias, queryClient])
-
-  // Autosave con debounce 1200ms (molde SessionNotePanel). El cleanup del efecto
-  // cancela el timer anterior en cada tipeo → un solo PUT por pausa.
-  useEffect(() => {
-    if (readOnly) return // sin autosave en solo lectura
-    if (
-      antecedentes === lastSavedRef.current.antecedentes &&
-      alergias === lastSavedRef.current.alergias &&
-      medicacion === lastSavedRef.current.medicacion &&
-      cirugias === lastSavedRef.current.cirugias
-    ) {
-      return // Sin cambios respecto a lo último persistido — no guardar
-    }
-    debounceRef.current = setTimeout(() => {
-      void triggerSave()
-    }, 1200)
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [antecedentes, alergias, medicacion, cirugias, readOnly])
 
   // Cleanup al desmontar
   useEffect(() => {
     return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current)
       if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
     }
   }, [])
 
-  const statusLabel = {
-    idle: 'Se guarda automáticamente',
-    pending: 'Se guarda automáticamente',
-    saving: 'Guardando…',
-    saved: 'Guardado ✓',
-    error: errorMessage ?? GENERIC_SAVE_ERROR,
-  }[saveStatus]
+  // El estado visible se DERIVA de isDirty en vez de un status 'pending' propio:
+  // así revertir el texto a mano al valor guardado limpia el cartel solo, y seguir
+  // escribiendo después de guardar no deja un "Guardado ✓" mintiendo.
+  const statusLabel =
+    saveStatus === 'saving'
+      ? 'Guardando…'
+      : saveStatus === 'error'
+        ? (errorMessage ?? GENERIC_SAVE_ERROR)
+        : isDirty
+          ? 'Cambios sin guardar'
+          : saveStatus === 'saved'
+            ? 'Guardado ✓'
+            : ''
 
-  const statusColor = {
-    idle: 'var(--color-text-secondary)',
-    pending: 'var(--color-text-secondary)',
-    saving: 'var(--color-text-secondary)',
-    saved: 'var(--color-success, #34c759)',
-    error: 'var(--color-error, #ff3b30)',
-  }[saveStatus]
+  const statusColor =
+    saveStatus === 'error'
+      ? 'var(--color-error, #ff3b30)'
+      : !isDirty && saveStatus === 'saved'
+        ? 'var(--color-success, #34c759)'
+        : 'var(--color-text-secondary)'
 
   const handleChange =
     (setter: (v: string) => void) => (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       setter(e.target.value)
-      setSaveStatus('pending')
     }
 
   const textareaClass =
@@ -284,16 +282,29 @@ function PatientClinicalDataEditor({
         </div>
       ))}
 
-      {/* Indicador de estado — inline, NUNCA toast. En readOnly no hay autosave. */}
+      {/* Estado + guardado explícito. En readOnly no se puede guardar: ni cartel
+          ni botón (los textareas ya están disabled). */}
       {!readOnly && (
-        <span
-          aria-live="polite"
-          role={saveStatus === 'error' ? 'alert' : 'status'}
-          className="block text-xs"
-          style={{ color: statusColor }}
-        >
-          {statusLabel}
-        </span>
+        <div className="flex items-center gap-3">
+          {/* Indicador de estado — inline, NUNCA toast */}
+          <span
+            aria-live="polite"
+            role={saveStatus === 'error' ? 'alert' : 'status'}
+            className="block flex-1 text-xs"
+            style={{ color: statusColor }}
+          >
+            {statusLabel}
+          </span>
+
+          <button
+            type="button"
+            onClick={() => void triggerSave()}
+            disabled={!isDirty || saveStatus === 'saving'}
+            className="min-h-[44px] rounded-[6px] bg-[var(--color-interactive)] px-3 py-1.5 text-xs text-white disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Guardar contexto clínico
+          </button>
+        </div>
       )}
     </div>
   )

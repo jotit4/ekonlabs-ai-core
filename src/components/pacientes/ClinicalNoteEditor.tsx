@@ -20,13 +20,18 @@ export function ClinicalNoteEditor({
 }: ClinicalNoteEditorProps) {
   const [content, setContent] = useState(initialContent)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Guard anti doble-envío: el `disabled` del botón no protege del doble click
+  // rápido (dos eventos antes del re-render) ni de Reintentar + Guardar juntos.
+  const inFlightRef = useRef(false)
 
+  // Guardado explícito: SOLO por botón "Guardar nota". Sin autosave — el autosave
+  // con debounce creaba una nota nueva por cada pausa al escribir (POST) y dejaba
+  // el textarea con el texto, así que el click final duplicaba la nota otra vez.
   const triggerSave = useCallback(async () => {
     if (!content.trim()) return
-    // Cancelar debounce pendiente
-    if (debounceRef.current) clearTimeout(debounceRef.current)
+    if (inFlightRef.current) return
+    inFlightRef.current = true
 
     setSaveStatus('saving')
     try {
@@ -45,38 +50,30 @@ export function ClinicalNoteEditor({
 
       const data = (await res.json()) as { note: ClinicalNote }
       setSaveStatus('saved')
+      // Nota nueva (sin noteId): vaciar el editor. Si el texto quedara, un segundo
+      // click volvería a hacer POST y crearía un duplicado.
+      if (!noteId) setContent('')
       onSaved?.(data.note)
 
       // "Guardado ✓" desaparece en 2s
       savedTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2000)
     } catch {
       setSaveStatus('error')
+    } finally {
+      inFlightRef.current = false
     }
   }, [content, patientId, noteId, onSaved])
-
-  // Autosave con debounce 1200ms — no llamar setState directamente en el efecto
-  useEffect(() => {
-    if (content === initialContent) return // No guardar si no hubo cambio
-    debounceRef.current = setTimeout(() => {
-      void triggerSave()
-    }, 1200)
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content])
 
   // Cleanup al desmontar
   useEffect(() => {
     return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current)
       if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
     }
   }, [])
 
   const statusLabel = {
-    idle: 'Se guarda automáticamente',
-    pending: 'Se guarda automáticamente',
+    idle: '',
+    pending: 'Cambios sin guardar',
     saving: 'Guardando...',
     saved: 'Guardado ✓',
     error: 'Error al guardar',

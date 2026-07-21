@@ -205,7 +205,7 @@ describe('SessionNotePanel — carga al expandir', () => {
   })
 })
 
-describe('SessionNotePanel — autosave con debounce 1200ms (fake timers)', () => {
+describe('SessionNotePanel — guardado explícito por botón (sin autosave)', () => {
   // Expande el panel y resuelve el GET con fake timers activos.
   async function setupExpanded(note: unknown = null) {
     mockGetNote(note)
@@ -219,20 +219,53 @@ describe('SessionNotePanel — autosave con debounce 1200ms (fake timers)', () =
     return mockFetch.mock.calls.filter(([, init]) => (init as RequestInit)?.method === 'PUT')
   }
 
-  it('NO llama PUT antes de 1200ms', async () => {
+  function guardarBtn() {
+    return screen.getByRole('button', { name: /guardar evolución/i })
+  }
+
+  // Click + flush del PUT (los fake timers están activos en todo el bloque).
+  async function clickGuardar() {
+    await act(async () => {
+      fireEvent.click(guardarBtn())
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+  }
+
+  it('escribir y esperar NO dispara ningún PUT (sin autosave)', async () => {
     vi.useFakeTimers()
     const workedOn = await setupExpanded()
 
     act(() => {
       fireEvent.change(workedOn, { target: { value: 'Ejercicios isométricos' } })
     })
-    act(() => {
-      vi.advanceTimersByTime(1199)
+    // Muy por encima del viejo debounce de 1200ms
+    await act(async () => {
+      vi.advanceTimersByTime(10_000)
+      await Promise.resolve()
     })
+
     expect(putCalls()).toHaveLength(0)
   })
 
-  it('dispara UN PUT con el body correcto tras 1200ms de pausa', async () => {
+  it('tipeo incremental con pausas no dispara un PUT por pausa', async () => {
+    vi.useFakeTimers()
+    const workedOn = await setupExpanded()
+
+    for (const parcial of ['Ejer', 'Ejercicios', 'Ejercicios isométricos']) {
+      act(() => {
+        fireEvent.change(workedOn, { target: { value: parcial } })
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+        await Promise.resolve()
+      })
+    }
+
+    expect(putCalls()).toHaveLength(0)
+  })
+
+  it('el botón dispara UN PUT con el body correcto', async () => {
     vi.useFakeTimers()
     const workedOn = await setupExpanded()
     const progress = screen.getByLabelText(/progreso observado/i)
@@ -244,10 +277,7 @@ describe('SessionNotePanel — autosave con debounce 1200ms (fake timers)', () =
       fireEvent.change(progress, { target: { value: 'Tolera carga' } })
     })
 
-    await act(async () => {
-      vi.advanceTimersByTime(1200)
-      await Promise.resolve()
-    })
+    await clickGuardar()
 
     expect(putCalls()).toHaveLength(1)
     const [url, init] = putCalls()[0]
@@ -258,34 +288,11 @@ describe('SessionNotePanel — autosave con debounce 1200ms (fake timers)', () =
     })
   })
 
-  it('cada tipeo resetea el debounce (un solo PUT por pausa)', async () => {
-    vi.useFakeTimers()
-    const workedOn = await setupExpanded()
-
-    act(() => {
-      fireEvent.change(workedOn, { target: { value: 'A' } })
-    })
-    act(() => {
-      vi.advanceTimersByTime(800)
-    })
-    act(() => {
-      fireEvent.change(workedOn, { target: { value: 'AB' } })
-    })
-    act(() => {
-      vi.advanceTimersByTime(800) // 1600ms desde el primer tipeo, 800 desde el último
-    })
-    expect(putCalls()).toHaveLength(0)
-
-    await act(async () => {
-      vi.advanceTimersByTime(400) // completa los 1200 del último tipeo
-      await Promise.resolve()
-    })
-    expect(putCalls()).toHaveLength(1)
-  })
-
-  it('sin cambios respecto a lo cargado → no hay PUT', async () => {
+  it('sin cambios respecto a lo cargado → el botón está deshabilitado', async () => {
     vi.useFakeTimers()
     await setupExpanded(makeNote())
+
+    expect(guardarBtn()).toBeDisabled()
 
     await act(async () => {
       vi.advanceTimersByTime(5000)
@@ -294,7 +301,19 @@ describe('SessionNotePanel — autosave con debounce 1200ms (fake timers)', () =
     expect(putCalls()).toHaveLength(0)
   })
 
-  it('muestra "Guardado ✓" tras el PUT exitoso y vuelve a idle a los 2s', async () => {
+  it('al escribir se habilita el botón y aparece "Cambios sin guardar"', async () => {
+    vi.useFakeTimers()
+    const workedOn = await setupExpanded(makeNote())
+
+    act(() => {
+      fireEvent.change(workedOn, { target: { value: 'Otra cosa' } })
+    })
+
+    expect(guardarBtn()).not.toBeDisabled()
+    expect(screen.getByText('Cambios sin guardar')).toBeInTheDocument()
+  })
+
+  it('doble click rápido en el botón hace un solo PUT', async () => {
     vi.useFakeTimers()
     const workedOn = await setupExpanded()
 
@@ -302,17 +321,33 @@ describe('SessionNotePanel — autosave con debounce 1200ms (fake timers)', () =
       fireEvent.change(workedOn, { target: { value: 'Texto' } })
     })
     await act(async () => {
-      vi.advanceTimersByTime(1200)
+      const btn = guardarBtn()
+      fireEvent.click(btn)
+      fireEvent.click(btn)
       await Promise.resolve()
       await Promise.resolve()
     })
+
+    expect(putCalls()).toHaveLength(1)
+  })
+
+  it('muestra "Guardado ✓" tras el PUT exitoso y limpia el cartel a los 2s', async () => {
+    vi.useFakeTimers()
+    const workedOn = await setupExpanded()
+
+    act(() => {
+      fireEvent.change(workedOn, { target: { value: 'Texto' } })
+    })
+    await clickGuardar()
 
     expect(screen.getByText('Guardado ✓')).toBeInTheDocument()
 
     act(() => {
       vi.advanceTimersByTime(2000)
     })
-    expect(screen.getByText('Se guarda automáticamente')).toBeInTheDocument()
+    expect(screen.queryByText('Guardado ✓')).not.toBeInTheDocument()
+    // Ya no existe el cartel de autosave
+    expect(screen.queryByText(/se guarda autom/i)).not.toBeInTheDocument()
   })
 
   it('PUT 422 (turno sin paciente) → muestra el mensaje del server sin romper', async () => {
@@ -338,16 +373,12 @@ describe('SessionNotePanel — autosave con debounce 1200ms (fake timers)', () =
     act(() => {
       fireEvent.change(screen.getByLabelText(/qué se trabajó/i), { target: { value: 'Texto' } })
     })
-    await act(async () => {
-      vi.advanceTimersByTime(1200)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
+    await clickGuardar()
 
     expect(screen.getByRole('alert')).toHaveTextContent(/no tiene un paciente asociado/i)
   })
 
-  it('PUT con error genérico → mensaje de error; seguir tipeando reintenta', async () => {
+  it('PUT con error genérico → mensaje de error; volver a tocar el botón reintenta', async () => {
     vi.useFakeTimers()
     let failPut = true
     mockFetch.mockImplementation((_url: string, init?: RequestInit) => {
@@ -375,23 +406,14 @@ describe('SessionNotePanel — autosave con debounce 1200ms (fake timers)', () =
     act(() => {
       fireEvent.change(workedOn, { target: { value: 'Texto' } })
     })
-    await act(async () => {
-      vi.advanceTimersByTime(1200)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
+    await clickGuardar()
     expect(screen.getByText(/no se pudo guardar la evolución/i)).toBeInTheDocument()
 
-    // Reintento al seguir tipeando: nuevo debounce → nuevo PUT que ahora funciona
+    // El texto sigue sin guardarse → el botón queda habilitado para reintentar
     failPut = false
-    act(() => {
-      fireEvent.change(workedOn, { target: { value: 'Texto corregido' } })
-    })
-    await act(async () => {
-      vi.advanceTimersByTime(1200)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
+    expect(guardarBtn()).not.toBeDisabled()
+    await clickGuardar()
+
     expect(putCalls()).toHaveLength(2)
     expect(screen.getByText('Guardado ✓')).toBeInTheDocument()
   })
@@ -400,28 +422,23 @@ describe('SessionNotePanel — autosave con debounce 1200ms (fake timers)', () =
     vi.useFakeTimers()
     const workedOn = await setupExpanded(makeNote())
 
-    // Editar → autosave 1 (lastSaved pasa a 'X')
+    // Editar y guardar → lastSaved pasa a 'X'
     act(() => {
       fireEvent.change(workedOn, { target: { value: 'X' } })
     })
-    await act(async () => {
-      vi.advanceTimersByTime(1200)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
+    await clickGuardar()
     expect(putCalls()).toHaveLength(1)
 
-    // Revertir EXACTAMENTE al valor cargado por el GET → debe disparar autosave 2
-    // (si la referencia quedara fija en los valores de montaje, este revert
-    // nunca llegaría al server → divergencia silenciosa en HCE).
+    // Revertir EXACTAMENTE al valor cargado por el GET: debe contar como cambio
+    // (si "último guardado" quedara fijo en los valores de montaje, el botón se
+    // vería deshabilitado y el revert nunca llegaría al server → divergencia
+    // silenciosa en HCE).
     act(() => {
       fireEvent.change(workedOn, { target: { value: 'Movilidad de hombro' } })
     })
-    await act(async () => {
-      vi.advanceTimersByTime(1200)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
+    expect(guardarBtn()).not.toBeDisabled()
+    await clickGuardar()
+
     expect(putCalls()).toHaveLength(2)
     expect(JSON.parse((putCalls()[1][1] as RequestInit).body as string)).toMatchObject({
       worked_on: 'Movilidad de hombro',
@@ -454,11 +471,7 @@ describe('SessionNotePanel — autosave con debounce 1200ms (fake timers)', () =
         target: { value: 'Texto nuevo' },
       })
     })
-    await act(async () => {
-      vi.advanceTimersByTime(1200)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
+    await clickGuardar()
 
     // Colapsar y re-expandir: el editor debe remontar con la nota REAL guardada
     // (setQueryData del PUT), NO con el note: null viejo del GET inicial.
@@ -474,7 +487,7 @@ describe('SessionNotePanel — autosave con debounce 1200ms (fake timers)', () =
     expect(getCalls).toHaveLength(1)
   })
 
-  it('cleanup correcto — desmonta sin errores con un debounce pendiente', async () => {
+  it('cleanup correcto — desmonta con texto sin guardar sin errores ni PUT tardío', async () => {
     vi.useFakeTimers()
     mockGetNote(null)
     const { unmount } = renderPanel()
@@ -485,7 +498,6 @@ describe('SessionNotePanel — autosave con debounce 1200ms (fake timers)', () =
       fireEvent.change(screen.getByLabelText(/qué se trabajó/i), { target: { value: 'X' } })
     })
     expect(() => unmount()).not.toThrow()
-    // El timer pendiente quedó cancelado: avanzar no dispara PUT
     act(() => {
       vi.advanceTimersByTime(5000)
     })
@@ -539,7 +551,7 @@ describe('SessionNotePanel — firma (Fase 2: nombre del autor + fecha)', () => 
       fireEvent.change(screen.getByLabelText(/qué se trabajó/i), { target: { value: 'Primer registro' } })
     })
     await act(async () => {
-      vi.advanceTimersByTime(1200)
+      fireEvent.click(screen.getByRole('button', { name: /guardar evolución/i }))
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -562,7 +574,7 @@ describe('SessionNotePanel — firma (Fase 2: nombre del autor + fecha)', () => 
       fireEvent.change(screen.getByLabelText(/qué se trabajó/i), { target: { value: 'Editado ahora' } })
     })
     await act(async () => {
-      vi.advanceTimersByTime(1200)
+      fireEvent.click(screen.getByRole('button', { name: /guardar evolución/i }))
       await Promise.resolve()
       await Promise.resolve()
     })
