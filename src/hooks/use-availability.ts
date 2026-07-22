@@ -43,10 +43,12 @@ export interface UseAvailabilityResult {
   refetch: () => void
   /** Helper para vista Día: huecos libres de una fecha (modo shifts). */
   shiftsForDate: (isoDate: string) => AvailabilityShift[]
+  diagnostic?: { code: string; message: string } | null
 }
 
 export interface AvailabilityResponse {
   days: Record<string, DayShifts> | Record<string, DaySummary>
+  diagnostic?: { code: string; message: string } | null
 }
 
 export interface FetchAvailabilityDaysParams {
@@ -131,5 +133,6 @@ export function useAvailability({
     isError: query.isError,
     refetch: query.refetch,
     shiftsForDate: (isoDate: string) => daysShifts[isoDate]?.shifts ?? [],
+    diagnostic: query.data?.diagnostic ?? null,
   }
 }

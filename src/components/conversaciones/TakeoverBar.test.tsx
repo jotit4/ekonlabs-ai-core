@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 
 // Mock useTakeover
@@ -499,5 +499,108 @@ describe('TakeoverBar', () => {
     fireEvent.click(screen.getByLabelText('Enviar mensaje'))
 
     expect(mockSendMessage).toHaveBeenCalledWith('Mirá esta imagen', [file])
+  })
+
+  describe('Inactividad y auto-release', () => {
+    let mockNow = 1718971200000
+    let intervalCallback: (() => void) | null = null
+    const mockIntervalId = 999
+
+    beforeEach(() => {
+      mockNow = 1718971200000
+      intervalCallback = null
+      vi.spyOn(Date, 'now').mockImplementation(() => mockNow)
+      
+      vi.spyOn(window, 'setInterval').mockImplementation((cb) => {
+        if (typeof cb === 'function') {
+          intervalCallback = cb
+        }
+        return mockIntervalId as unknown as NodeJS.Timeout
+      })
+
+      vi.spyOn(window, 'clearInterval').mockImplementation(() => {})
+    })
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    async function tickInterval(ms: number) {
+      mockNow += ms
+      if (intervalCallback) {
+        await act(async () => {
+          intervalCallback!()
+        })
+      }
+    }
+
+    it('inicia la cuenta regresiva de 60 segundos tras 15 minutos de inactividad', async () => {
+      render(
+        <TakeoverBar
+          phone="+5491111111111"
+          conversationStatus="human_takeover"
+          inactivityLimit={5000}
+          countdownLimit={5000}
+        />
+      )
+
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+      // Avanzar 5 segundos para iniciar cuenta regresiva
+      await tickInterval(5000)
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toBeInTheDocument()
+      })
+      expect(screen.getByText(/El asistente automático se activará en \d+ segundos/)).toBeInTheDocument()
+    })
+
+    it('botón "Seguir en control" reinicia el temporizador de inactividad', async () => {
+      render(
+        <TakeoverBar
+          phone="+5491111111111"
+          conversationStatus="human_takeover"
+          inactivityLimit={5000}
+          countdownLimit={5000}
+        />
+      )
+
+      // Avanzar 5 segundos para iniciar cuenta regresiva
+      await tickInterval(5000)
+      
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toBeInTheDocument()
+      })
+
+      const keepBtn = screen.getByText('[ Seguir en control ]')
+      await act(async () => {
+        fireEvent.click(keepBtn)
+      })
+
+      // Tick del intervalo para confirmar que el banner desaparece
+      await tickInterval(0)
+
+      await waitFor(() => {
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      })
+    })
+
+    it('llama a release() automáticamente al completarse los 60 segundos de la cuenta regresiva', async () => {
+      render(
+        <TakeoverBar
+          phone="+5491111111111"
+          conversationStatus="human_takeover"
+          inactivityLimit={5000}
+          countdownLimit={5000}
+        />
+      )
+
+      // Avanzar 10 segundos totales (5s inactividad + 5s countdown)
+      await tickInterval(10000)
+
+      await waitFor(() => {
+        expect(mockRelease).toHaveBeenCalledTimes(1)
+      })
+    })
   })
 })

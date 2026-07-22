@@ -86,6 +86,8 @@ export default function RecepcionPage() {
 
   // ── Modal de "Dar un turno" ─────────────────────────────────────────────────
   const [modalTurnoAbierto, setModalTurnoAbierto] = useState(false)
+  const [initialPatient, setInitialPatient] = useState<any>(undefined)
+  const [initialPatientPhone, setInitialPatientPhone] = useState<string | undefined>(undefined)
 
   // ── Mostrar / ocultar la agenda de hoy embebida ─────────────────────────────
   const [mostrarAgenda, setMostrarAgenda] = useState(false)
@@ -397,8 +399,14 @@ export default function RecepcionPage() {
           que /agenda para el rol receptionist. */}
       <NewTurnoModal
         open={modalTurnoAbierto}
-        onClose={() => setModalTurnoAbierto(false)}
+        onClose={() => {
+          setModalTurnoAbierto(false)
+          setInitialPatient(undefined)
+          setInitialPatientPhone(undefined)
+        }}
         date={hoyISO}
+        initialPatient={initialPatient}
+        initialPatientPhone={initialPatientPhone}
         isReceptionist
       />
 

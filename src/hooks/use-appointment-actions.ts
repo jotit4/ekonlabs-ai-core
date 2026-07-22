@@ -1,9 +1,70 @@
 'use client'
 
-import { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import type { Appointment } from '@/types/appointments'
 import type { AbsenceDecision } from '@/lib/schemas/absence-decision.schema'
+
+// Componente para Toast de Sonner con temporizador de cuenta regresiva
+function ToastWithCountdown({
+  patientName,
+  onUndo,
+  closeToast,
+}: {
+  patientName: string
+  onUndo: () => void
+  closeToast: () => void
+}) {
+  const [seconds, setSeconds] = useState(10)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setSeconds((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval)
+          closeToast()
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [closeToast])
+
+  return React.createElement(
+    'div',
+    { style: { display: 'flex', flexDirection: 'column', gap: 4, width: '100%' } },
+    React.createElement(
+      'div',
+      { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', gap: 8 } },
+      React.createElement(
+        'span',
+        { style: { fontSize: 13, fontWeight: 500 } },
+        `Se marcó la inasistencia de ${patientName} (${seconds}s)`
+      ),
+      React.createElement(
+        'button',
+        {
+          onClick: () => {
+            onUndo()
+            closeToast()
+          },
+          style: {
+            fontSize: 12,
+            fontWeight: 600,
+            padding: '4px 8px',
+            backgroundColor: 'var(--color-surface, #f3f4f6)',
+            color: 'var(--color-interactive, #0071e3)',
+            border: '1px solid var(--color-border, #d1d5db)',
+            borderRadius: 6,
+            cursor: 'pointer',
+          },
+        },
+        '↩ Deshacer Acción'
+      )
+    )
+  )
+}
 
 // ─── Hook compartido de acciones sobre turnos ─────────────────────────────────
 // Centraliza la lógica de updateStatus / cancel / no_show / completed para
@@ -92,6 +153,36 @@ export function useAppointmentActions(date: string): AppointmentActionsState {
     }
   }
 
+  function showUndoToast(appointmentId: string, patientName: string) {
+    const handleUndo = async () => {
+      try {
+        const response = await fetch(`/api/appointments/${appointmentId}/status`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ is_undo: true }),
+        })
+        if (!response.ok) {
+          throw new Error('No se pudo deshacer la acción')
+        }
+        toast.success('Acción deshecha correctamente.')
+        queryClient.invalidateQueries({ queryKey: ['agenda'] })
+        queryClient.invalidateQueries({ queryKey: ['treatments'] })
+      } catch (err) {
+        toast.error('Error al deshacer la acción.')
+      }
+    }
+
+    const toastId = toast(
+      () =>
+        React.createElement(ToastWithCountdown, {
+          patientName,
+          onUndo: handleUndo,
+          closeToast: () => toast.dismiss(toastId),
+        }),
+      { duration: 10000 }
+    )
+  }
+
   async function handleCancelConfirm() {
     if (!cancelTarget) return
     // Turno de serie → abrir el diálogo de decisión en lugar de cancelar directo.
@@ -130,6 +221,9 @@ export function useAppointmentActions(date: string): AppointmentActionsState {
     try {
       await updateStatus(appointment.appointment_id, status)
       queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
+      if (status === 'no_show') {
+        showUndoToast(appointment.appointment_id, appointment.patients?.full_name || 'Paciente')
+      }
     } catch {
       // silently — error puede mejorarse en siguiente iteración
     } finally {
@@ -141,13 +235,19 @@ export function useAppointmentActions(date: string): AppointmentActionsState {
     if (!absenceTarget) return
     setAbsenceLoading(true)
     setAbsenceError(null)
+    const apptId = absenceTarget.appointment.appointment_id
+    const action = absenceTarget.action
+    const patientName = absenceTarget.appointment.patients?.full_name || 'Paciente'
     try {
-      await updateStatus(absenceTarget.appointment.appointment_id, absenceTarget.action, {
+      await updateStatus(apptId, action, {
         decision,
         note,
       })
       invalidateTrackingQueries(absenceTarget.appointment.patient_id)
       setAbsenceTarget(null)
+      if (action === 'no_show') {
+        showUndoToast(apptId, patientName)
+      }
     } catch (err) {
       setAbsenceError(err instanceof Error ? err.message : 'Error al aplicar la decisión')
     } finally {

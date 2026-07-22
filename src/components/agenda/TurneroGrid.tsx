@@ -63,6 +63,15 @@ const MAX_CHIPS_PER_CELL = 2
 
 // ─── Chip de turno ocupado ────────────────────────────────────────────────────
 
+const STATUS_COLORS: Record<string, string> = {
+  confirmed: '#34c759',
+  completed: '#34c759',
+  pending: '#ff9f0a',
+  rescheduled: '#ff9f0a',
+  cancelled: 'rgba(0,0,0,0.2)',
+  no_show: '#ff3b30',
+}
+
 function professionalNameOf(apt: Appointment): string | null {
   return apt.professionals?.name ?? apt.services?.professional_name ?? null
 }
@@ -122,13 +131,17 @@ function TurnoChip({
         width: '100%',
         textAlign: 'left',
         background: manualColor ?? 'var(--color-surface)',
-        border: manualColor ? '1px solid transparent' : '1px solid var(--color-border)',
+        borderTop: manualColor ? '1px solid transparent' : '1px solid var(--color-border)',
+        borderRight: manualColor ? '1px solid transparent' : '1px solid var(--color-border)',
+        borderBottom: manualColor ? '1px solid transparent' : '1px solid var(--color-border)',
+        borderLeft: `6px solid ${STATUS_COLORS[status] || 'rgba(0,0,0,0.2)'}`,
         borderRadius: 6,
-        padding: '4px 6px',
+        padding: '4px 6px 4px 8px',
         cursor: onClick ? 'pointer' : 'default',
         opacity: isCancelled ? 0.55 : 1,
         boxShadow: 'none',
         transition: 'box-shadow 0.12s',
+        overflow: 'hidden',
       }}
       onMouseEnter={(e) => { e.currentTarget.style.boxShadow = 'inset 0 0 0 100px rgba(0,0,0,0.06)' }}
       onMouseLeave={(e) => { e.currentTarget.style.boxShadow = 'none' }}

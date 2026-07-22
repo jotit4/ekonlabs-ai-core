@@ -4,7 +4,7 @@ import { useRef, useEffect, useState, type CSSProperties } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Dialog } from '@base-ui/react/dialog'
-import { format } from 'date-fns'
+import { format, formatISO } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { createSupabaseBrowserClient } from '@/lib/supabase/client'
 import { useSoftSync } from '@/hooks/use-soft-sync'
@@ -21,6 +21,7 @@ import { PatientDocuments } from '@/components/pacientes/PatientDocuments'
 import { PatientDeletionRequest } from '@/components/pacientes/PatientDeletionRequest'
 import { PaquetesTracking } from '@/components/paquetes/PaquetesTracking'
 import { NewPaqueteModal } from '@/components/paquetes/NewPaqueteModal'
+import { NewTurnoModal } from '@/components/agenda/NewTurnoModal'
 import type { Patient } from '@/types/patients'
 
 // ─── Tipos locales ────────────────────────────────────────────────────────────
@@ -111,6 +112,7 @@ export default function PacienteFichaPage() {
   const backButtonRef = useRef<HTMLButtonElement>(null)
   const [editOpen, setEditOpen] = useState(false)
   const [paqueteOpen, setPaqueteOpen] = useState(false)
+  const [showNewTurnoModal, setShowNewTurnoModal] = useState(false)
 
   const { role } = useCurrentTenant()
   const supabase = createSupabaseBrowserClient()
@@ -149,7 +151,7 @@ export default function PacienteFichaPage() {
       const { data, error } = await supabase
         .from('patients')
         .select(
-          'patient_id, tenant_id, phone_number, full_name, dni, date_of_birth, email, obra_social, obra_social_number, notes, reason_for_visit, alternative_phone, address, lugar, ocupacion, derivacion, actividad_fisica, primary_professional_id, created_at, updated_at, deletion_requested_at, deletion_effective_at, appointments(appointment_id, start_at, end_at, status, reminder_sent_at, attendance_confirmed, services(name, professional_name)), professionals!patients_primary_professional_id_fkey(name)'
+          'patient_id, tenant_id, phone_number, full_name, dni, date_of_birth, email, obra_social, obra_social_number, notes, reason_for_visit, alternative_phone, address, lugar, ocupacion, derivacion, actividad_fisica, primary_professional_id, created_at, updated_at, deletion_requested_at, deletion_effective_at, appointments(appointment_id, start_at, end_at, status, reminder_sent_at, attendance_confirmed, services(service_id, name, professional_name)), professionals!patients_primary_professional_id_fkey(name)'
         )
         .eq('patient_id', patientId)
         .maybeSingle()
@@ -264,6 +266,17 @@ export default function PacienteFichaPage() {
 
   const threadState = threadStateData ?? null
 
+  const canBookAppointment = (role === 'admin' || role === 'receptionist') && !hasDeletionPending
+
+  // Derived service from last appointment for next quick appointment (Puente 4)
+  const sortedApts = patient?.appointments
+    ? [...patient.appointments].sort(
+        (a, b) => new Date(b.start_at).getTime() - new Date(a.start_at).getTime()
+      )
+    : []
+  const lastApt = sortedApts[0]
+  const derivedServiceId = lastApt?.services?.service_id ?? undefined
+
   return (
     <main className="mx-auto w-full max-w-6xl px-6 py-8">
       {/* Botón de retorno — UX-DR16, UX-DR22 */}
@@ -295,25 +308,43 @@ export default function PacienteFichaPage() {
         <h1 style={{ fontSize: 28, fontWeight: 600 }}>{patient.full_name}</h1>
         <PatientStatusBadge threadState={threadState} />
 
-        {/* Ficha kinesiológica imprimible (Fase 3) — réplica del papel de ISADI.
-            Visible para los 3 roles (todos la cargan en ISADI); solo lectura,
-            por eso queda disponible incluso con eliminación pendiente. */}
-        <button
-          type="button"
-          onClick={() => router.push(`/pacientes/${patientId}/ficha`)}
-          style={{
-            marginLeft: 'auto',
-            color: '#0071e3',
-            fontSize: 15,
-            fontWeight: 400,
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            padding: '4px 0',
-          }}
-        >
-          Imprimir ficha
-        </button>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 16, alignItems: 'center' }}>
+          {canBookAppointment && (
+            <button
+              type="button"
+              onClick={() => {
+                setShowNewTurnoModal(true)
+              }}
+              style={{
+                color: '#fff',
+                fontSize: 14,
+                fontWeight: 500,
+                backgroundColor: '#0071e3',
+                border: 'none',
+                borderRadius: 8,
+                padding: '8px 16px',
+                cursor: 'pointer',
+              }}
+            >
+              Próxima Cita Express
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => router.push(`/pacientes/${patientId}/ficha`)}
+            style={{
+              color: '#0071e3',
+              fontSize: 15,
+              fontWeight: 400,
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: '4px 0',
+            }}
+          >
+            Imprimir ficha
+          </button>
+        </div>
       </header>
 
       {/* Banner de eliminación programada */}
@@ -652,6 +683,24 @@ export default function PacienteFichaPage() {
             obra_social: patient.obra_social,
             deletion_requested_at: patient.deletion_requested_at,
           }}
+        />
+      )}
+
+      {showNewTurnoModal && patient && (
+        <NewTurnoModal
+          open={showNewTurnoModal}
+          onClose={() => setShowNewTurnoModal(false)}
+          date={formatISO(new Date(), { representation: 'date' })}
+          initialPatient={{
+            patient_id: patient.patient_id,
+            full_name: patient.full_name,
+            phone_number: patient.phone_number,
+            obra_social: patient.obra_social,
+            deletion_requested_at: patient.deletion_requested_at,
+          }}
+          initialServiceId={derivedServiceId}
+          initialProfessionalId={patient.primary_professional_id ?? undefined}
+          isReceptionist={role === 'receptionist'}
         />
       )}
     </main>

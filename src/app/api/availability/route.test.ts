@@ -357,4 +357,61 @@ describe('GET /api/availability', () => {
       expect(mockRpc).not.toHaveBeenCalled()
     })
   })
+
+  describe('diagnósticos de availability', () => {
+    beforeEach(() => {
+      mockRpc.mockResolvedValue({ data: [{ available: false, shifts: [] }], error: null })
+    })
+
+    it('devuelve no_schedule si no existen filas en service_hours ni professional_schedules', async () => {
+      mockFrom.mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        in: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+      })
+
+      const res = await GET(makeRequest('date_from=2026-06-04&date_to=2026-06-04&service_id=11111111-1111-1111-1111-111111111111&professional_id=22222222-2222-2222-2222-222222222222'))
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.diagnostic).toEqual({
+        code: 'no_schedule',
+        message: 'El profesional no tiene horarios configurados para este día de la semana.',
+      })
+    })
+
+    it('devuelve professional_blocked si existen horarios pero hay bloqueos en blocked_times', async () => {
+      mockFrom.mockImplementation((table: string) => {
+        if (table === 'service_hours' || table === 'professional_schedules') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockResolvedValue({ data: [{ id: 'some-id' }], error: null }),
+          }
+        }
+        if (table === 'blocked_times') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            lte: vi.fn().mockReturnThis(),
+            gte: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockResolvedValue({ data: [{ block_id: 'some-block-id' }], error: null }),
+          }
+        }
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+        }
+      })
+
+      const res = await GET(makeRequest('date_from=2026-06-04&date_to=2026-06-04&service_id=11111111-1111-1111-1111-111111111111&professional_id=22222222-2222-2222-2222-222222222222'))
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.diagnostic).toEqual({
+        code: 'professional_blocked',
+        message: 'El profesional se encuentra de vacaciones o bloqueado.',
+      })
+    })
+  })
 })

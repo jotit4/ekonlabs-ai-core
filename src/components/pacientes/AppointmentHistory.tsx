@@ -17,6 +17,7 @@ export interface AppointmentForHistory {
   reminder_sent_at: string | null
   attendance_confirmed: boolean | null
   services: {
+    service_id: string
     name: string
     professional_name: string | null
   } | null

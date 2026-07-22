@@ -7,6 +7,22 @@ vi.mock('@/hooks/use-agent-context', () => ({
   useAgentContext: (phone: string) => mockUseAgentContext(phone),
 }))
 
+// Mock Supabase Browser Client
+vi.mock('@/lib/supabase/client', () => {
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: () => Promise.resolve({ data: { patient_id: 'patient-1' }, error: null })
+        })
+      })
+    })
+  }
+  return {
+    createSupabaseBrowserClient: () => mockSupabase,
+  }
+})
+
 import { PatientContextPanel } from './PatientContextPanel'
 
 describe('PatientContextPanel', () => {

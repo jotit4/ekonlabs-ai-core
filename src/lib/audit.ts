@@ -11,6 +11,7 @@ export type AuditAction =
   | 'appointment_cancelled'
   | 'appointment_completed'
   | 'appointment_no_show'
+  | 'appointment_undo_absence'
   // Color manual del turno (migración 051 — paleta muda del turnero, pedido ISADI).
   | 'appointment_color_changed'
   | 'config_system_prompt_updated'

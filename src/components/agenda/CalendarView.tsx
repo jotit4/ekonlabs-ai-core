@@ -177,6 +177,27 @@ export function CalendarView({
         nowLine={nowLine}
         ariaLabel="Grilla de turnos por profesional"
       />
+
+      {/* Leyenda de estados fija */}
+      <div className="flex flex-wrap gap-4 items-center justify-start text-xs border-t border-[var(--color-border)] pt-4 mt-2">
+        <span className="font-semibold text-[var(--color-text-secondary)]">Estados:</span>
+        <div className="flex items-center gap-1.5">
+          <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#34c759' }} />
+          <span className="text-[var(--color-text-primary)]">Confirmado / Completado</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#ff9f0a' }} />
+          <span className="text-[var(--color-text-primary)]">Pendiente / Reprogramado</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: '#ff3b30' }} />
+          <span className="text-[var(--color-text-primary)]">Ausencia (No Show)</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: 'rgba(0,0,0,0.2)' }} />
+          <span className="text-[var(--color-text-primary)]">Cancelado</span>
+        </div>
+      </div>
     </div>
   )
 }

@@ -15,6 +15,8 @@ interface TakeoverBarProps {
   confidenceLevel?: ConfidenceLevel
   controlledBy?: string
   currentUserName?: string
+  inactivityLimit?: number
+  countdownLimit?: number
 }
 
 const confidenceLabels: Record<ConfidenceLevel, string> = {
@@ -29,6 +31,8 @@ export function TakeoverBar({
   confidenceLevel = 'medium',
   controlledBy,
   currentUserName,
+  inactivityLimit = 15 * 60 * 1000,
+  countdownLimit = 60 * 1000,
 }: TakeoverBarProps) {
   // Nombre a mostrar en "[Nombre] · En control": prioriza quién tomó el control
   // (derivado del hilo), luego el usuario actual, luego un genérico.
@@ -43,6 +47,62 @@ export function TakeoverBar({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [attachedFile, setAttachedFile] = useState<File | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
+
+  // Inactivity and countdown timer
+  const lastActivityRef = useRef(0)
+  const [countdownRemaining, setCountdownRemaining] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (conversationStatus !== 'human_takeover') {
+      setTimeout(() => setCountdownRemaining(null), 0)
+      return
+    }
+
+    const TOTAL_LIMIT = inactivityLimit + countdownLimit
+
+    lastActivityRef.current = Date.now()
+    setCountdownRemaining(null)
+
+    const handleActivity = () => {
+      lastActivityRef.current = Date.now()
+      setCountdownRemaining(null)
+    }
+
+    window.addEventListener('mousemove', handleActivity)
+    window.addEventListener('keydown', handleActivity)
+    window.addEventListener('click', handleActivity)
+    window.addEventListener('scroll', handleActivity)
+    window.addEventListener('touchstart', handleActivity)
+
+    const interval = setInterval(() => {
+      const now = Date.now()
+      const diff = now - lastActivityRef.current
+
+      if (diff >= TOTAL_LIMIT) {
+        clearInterval(interval)
+        release()
+      } else if (diff >= inactivityLimit) {
+        const remaining = Math.max(0, Math.ceil((TOTAL_LIMIT - diff) / 1000))
+        setCountdownRemaining(remaining)
+      } else {
+        setCountdownRemaining(null)
+      }
+    }, 1000)
+
+    return () => {
+      window.removeEventListener('mousemove', handleActivity)
+      window.removeEventListener('keydown', handleActivity)
+      window.removeEventListener('click', handleActivity)
+      window.removeEventListener('scroll', handleActivity)
+      window.removeEventListener('touchstart', handleActivity)
+      clearInterval(interval)
+    }
+  }, [conversationStatus, release, inactivityLimit, countdownLimit])
+
+  const handleKeepControl = () => {
+    lastActivityRef.current = Date.now()
+    setCountdownRemaining(null)
+  }
 
   // Foco automático al textarea cuando se toma control (UX-DR22)
   useEffect(() => {
@@ -158,9 +218,47 @@ export function TakeoverBar({
               padding: '4px 8px',
             }}
           >
-            {isPendingRelease ? 'Liberando...' : 'Liberar al agente'}
+            {isPendingRelease ? 'Liberando...' : '[ Activar Asistente Automático 🤖 ]'}
           </button>
         </div>
+
+        {/* Countdown Banner */}
+        {countdownRemaining !== null && (
+          <div
+            role="alert"
+            style={{
+              padding: '8px 16px',
+              backgroundColor: '#fef3c7',
+              color: '#92400e',
+              borderBottom: '1px solid var(--color-border)',
+              fontSize: 13,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <span>
+              El asistente automático se activará en {countdownRemaining} segundos.{' '}
+              <button
+                type="button"
+                onClick={handleKeepControl}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#0071e3',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                  padding: 0,
+                  marginLeft: 4,
+                  fontFamily: 'inherit',
+                  textDecoration: 'underline',
+                }}
+              >
+                [ Seguir en control ]
+              </button>
+            </span>
+          </div>
+        )}
 
         {/* Compose area (Story 4.6 activa el envío) */}
         <div style={{ padding: '10px 16px', display: 'flex', flexDirection: 'column', gap: 4 }}>

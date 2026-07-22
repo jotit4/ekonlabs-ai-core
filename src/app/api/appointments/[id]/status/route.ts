@@ -57,7 +57,90 @@ export async function PATCH(
     )
   }
 
-  const { status, decision, note } = parsed.data
+  const { status, decision, note, is_undo } = parsed.data
+
+  // ── Undo Flow ──
+  if (is_undo) {
+    const { data: apt, error: aptError } = await supabase
+      .from('appointments')
+      .select('package_id, status')
+      .eq('appointment_id', id)
+      .maybeSingle()
+
+    if (aptError) {
+      console.error('[appointments/[id]/status/PATCH] undo read error:', aptError)
+      return Response.json({ error: 'Error al deshacer el turno' }, { status: 500 })
+    }
+    if (!apt) {
+      return Response.json({ error: 'Turno no encontrado' }, { status: 404 })
+    }
+
+    if (apt.status !== 'cancelled' && apt.status !== 'no_show') {
+      return Response.json({ error: 'El turno no está cancelado ni es inasistencia' }, { status: 400 })
+    }
+
+    const { error: updateError, count } = await supabase
+      .from('appointments')
+      .update({ status: 'confirmed', cancellation_reason: null }, { count: 'exact' })
+      .eq('appointment_id', id)
+
+    if (updateError) {
+      console.error('[appointments/[id]/status/PATCH] undo update error:', updateError)
+      return Response.json({ error: 'Error al deshacer el estado del turno' }, { status: 500 })
+    }
+    if (count === 0) {
+      return Response.json({ error: 'Turno no encontrado' }, { status: 404 })
+    }
+
+    if (apt.package_id) {
+      const { data: lastLog } = await supabase
+        .from('audit_logs')
+        .select('action')
+        .eq('entity_type', 'appointment')
+        .eq('entity_id', id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (lastLog?.action === 'treatment_session_consumed') {
+        const { data: trt, error: trtReadError } = await supabase
+          .from('treatments')
+          .select('sessions_remaining, total_sessions')
+          .eq('treatment_id', apt.package_id)
+          .maybeSingle()
+
+        if (trtReadError) {
+          console.error('[appointments/[id]/status/PATCH] undo trt read error:', trtReadError)
+        } else if (trt) {
+          const currentRemaining = trt.sessions_remaining ?? 0
+          const total = trt.total_sessions
+          const nextRemaining = Math.min(currentRemaining + 1, total)
+
+          const { error: trtUpdateError } = await supabase
+            .from('treatments')
+            .update({ sessions_remaining: nextRemaining })
+            .eq('treatment_id', apt.package_id)
+
+          if (trtUpdateError) {
+            console.error('[appointments/[id]/status/PATCH] undo trt update error:', trtUpdateError)
+          }
+        }
+      }
+    }
+
+    await logAudit({
+      action: 'appointment_undo_absence',
+      entity_type: 'appointment',
+      entity_id: id,
+      supabase,
+    })
+
+    return Response.json({ success: true }, { status: 200 })
+  }
+
+  if (!status) {
+    return Response.json({ error: 'status es requerido' }, { status: 400 })
+  }
 
   // ── Story 13.6 — flujo de DECISIÓN MANUAL (turnos de serie) ────────────────
   // Sólo si la UI envió `decision`. Sin `decision`, el comportamiento es el legacy

@@ -1,8 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { Appointment } from '@/types/appointments'
 import type { AbsenceDecision } from '@/lib/schemas/absence-decision.schema'
+import { createSupabaseBrowserClient } from '@/lib/supabase/client'
+import { startOfMonth, endOfMonth } from 'date-fns'
 
 // ─── Diálogo de decisión manual al ausentarse una sesión de serie (Story 13.6) ───
 //
@@ -64,10 +66,58 @@ export function AbsenceDecisionDialog({
   // NINGUNA opción pre-seleccionada (AC1): null hasta que la recepcionista elige.
   const [decision, setDecision] = useState<AbsenceDecision | null>(null)
   const [note, setNote] = useState('')
+  const [absenceStats, setAbsenceStats] = useState<{ currentMonth: number; total: number } | null>(null)
+  const [isLoadingStats, setIsLoadingStats] = useState(false)
 
   const patientName = appointment.patients?.full_name ?? 'Paciente'
   const totalSessions = appointment.treatments?.total_sessions
   const sessionIndex = appointment.session_index ?? undefined
+
+  useEffect(() => {
+    let isMounted = true
+    if (!appointment.patient_id) return
+
+    const fetchAbsenceStats = async () => {
+      setIsLoadingStats(true)
+      try {
+        const supabase = createSupabaseBrowserClient()
+        const { data, error } = await supabase
+          .from('appointments')
+          .select('start_at, status')
+          .eq('patient_id', appointment.patient_id)
+          .eq('status', 'no_show')
+
+        if (error) {
+          console.error('[AbsenceDecisionDialog] Error fetching absence stats:', error)
+          return
+        }
+
+        if (isMounted && data) {
+          const now = new Date()
+          const startMonth = startOfMonth(now)
+          const endMonth = endOfMonth(now)
+
+          const total = data.length
+          const currentMonth = data.filter((appt: any) => {
+            const date = new Date(appt.start_at)
+            return date >= startMonth && date <= endMonth
+          }).length
+
+          setAbsenceStats({ currentMonth, total })
+        }
+      } catch (err) {
+        console.error('[AbsenceDecisionDialog] Error in fetchAbsenceStats:', err)
+      } finally {
+        if (isMounted) setIsLoadingStats(false)
+      }
+    }
+
+    void fetchAbsenceStats()
+
+    return () => {
+      isMounted = false
+    }
+  }, [appointment.patient_id])
 
   const justifyEmpty = decision === 'justify' && note.trim() === ''
   const confirmDisabled = isLoading || decision === null || justifyEmpty
@@ -137,6 +187,28 @@ export function AbsenceDecisionDialog({
           Vas a {ACTION_LABELS[action]} el turno de <strong>{patientName}</strong>.
           Elegí qué hacer con la sesión del paquete.
         </p>
+
+        {/* Historial de ausencias */}
+        {absenceStats !== null && (
+          <div
+            style={{
+              borderRadius: 8,
+              border: '1px solid #fca5a5',
+              backgroundColor: 'rgba(254, 226, 226, 0.4)',
+              padding: 12,
+              marginBottom: 16,
+              fontSize: 12,
+              color: '#991b1b',
+            }}
+          >
+            <strong style={{ display: 'block', marginBottom: 2 }}>Inasistencias de {patientName}:</strong>
+            <span>
+              Este mes: <strong>{absenceStats.currentMonth}</strong>{absenceStats.currentMonth === 1 ? ' ausencia' : ' ausencias'}
+              {' · '}
+              Total histórico: <strong>{absenceStats.total}</strong>{absenceStats.total === 1 ? ' ausencia' : ' ausencias'}
+            </span>
+          </div>
+        )}
 
         {/* Contador del paquete (si está disponible) */}
         {totalSessions != null && (

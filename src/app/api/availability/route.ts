@@ -261,6 +261,7 @@ export async function GET(request: Request): Promise<Response> {
       available = row?.available ?? false
     }
 
+
     if (summary) {
       daysSummary[isoDay] = { free_count: shifts.length }
     } else {
@@ -268,5 +269,100 @@ export async function GET(request: Request): Promise<Response> {
     }
   }
 
-  return Response.json({ days: summary ? daysSummary : daysShifts })
+  let totalShifts = 0
+  if (summary) {
+    totalShifts = Object.values(daysSummary).reduce((acc, d) => acc + d.free_count, 0)
+  } else {
+    totalShifts = Object.values(daysShifts).reduce((acc, d) => acc + d.shifts.length, 0)
+  }
+
+  let diagnostic: { code: string; message: string } | null = null
+
+  if (totalShifts === 0) {
+    const dateObj = new Date(dateFrom + 'T00:00:00')
+    const serviceDow = dateObj.getDay()
+    const profDow = (serviceDow + 6) % 7
+
+    const sIds = serviceIdList || (serviceId ? [serviceId] : [])
+    let hasServiceHours = false
+    if (sIds.length > 0) {
+      const { data: shRows } = await supabase
+        .from('service_hours')
+        .select('id')
+        .in('service_id', sIds)
+        .eq('day_of_week', serviceDow)
+        .eq('active', true)
+        .limit(1)
+      if (shRows && shRows.length > 0) {
+        hasServiceHours = true
+      }
+    }
+
+    const pIds: string[] = []
+    if (professionalId) {
+      pIds.push(professionalId)
+    } else if (serviceProfessionalIds) {
+      pIds.push(...serviceProfessionalIds)
+    } else if (groupServiceProfessionals) {
+      Object.values(groupServiceProfessionals).forEach((ids) => {
+        pIds.push(...ids)
+      })
+    }
+
+    if (pIds.length === 0 && sIds.length > 0) {
+      const { data: spRows } = await supabase
+        .from('service_professionals')
+        .select('professional_id')
+        .in('service_id', sIds)
+      if (spRows) {
+        pIds.push(...spRows.map((r) => r.professional_id))
+      }
+    }
+
+    let hasProfSchedules = false
+    if (pIds.length > 0) {
+      const { data: psRows } = await supabase
+        .from('professional_schedules')
+        .select('id')
+        .in('professional_id', pIds)
+        .eq('day_of_week', profDow)
+        .limit(1)
+      if (psRows && psRows.length > 0) {
+        hasProfSchedules = true
+      }
+    }
+
+    if (!hasServiceHours && !hasProfSchedules) {
+      diagnostic = {
+        code: 'no_schedule',
+        message: 'El profesional no tiene horarios configurados para este día de la semana.',
+      }
+    } else {
+      let isBlocked = false
+      if (pIds.length > 0) {
+        const { data: blockRows } = await supabase
+          .from('blocked_times')
+          .select('block_id')
+          .in('professional_id', pIds)
+          .lte('date_from', dateFrom)
+          .gte('date_to', dateFrom)
+          .limit(1)
+        if (blockRows && blockRows.length > 0) {
+          isBlocked = true
+        }
+      }
+
+      if (isBlocked) {
+        diagnostic = {
+          code: 'professional_blocked',
+          message: 'El profesional se encuentra de vacaciones o bloqueado.',
+        }
+      }
+    }
+  }
+
+  return Response.json({
+    days: summary ? daysSummary : daysShifts,
+    diagnostic,
+  })
 }

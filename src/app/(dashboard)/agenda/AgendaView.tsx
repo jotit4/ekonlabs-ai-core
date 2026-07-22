@@ -268,6 +268,8 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
   }
 
   const [showNewTurnoModal, setShowNewTurnoModal] = useState(false)
+  const [initialPatient, setInitialPatient] = useState<any>(undefined)
+  const [initialPatientPhone, setInitialPatientPhone] = useState<string | undefined>(undefined)
   // CTA secundario "Nuevo paquete" (Story 13.5) — abre el modal SIN initialPatient.
   const [showNewPaqueteModal, setShowNewPaqueteModal] = useState(false)
   // Prefill del NewTurnoModal al agendar desde una celda vacía de la grilla
@@ -372,6 +374,8 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
   function handleCloseNewTurno() {
     setShowNewTurnoModal(false)
     setNewTurnoPrefill(null)
+    setInitialPatient(undefined)
+    setInitialPatientPhone(undefined)
   }
 
   // La recepcionista es la usuaria principal del módulo → tiene acceso a los
@@ -577,6 +581,8 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
         initialProfessionalId={newTurnoPrefill?.professionalId}
         initialDate={newTurnoPrefill?.date}
         initialTimeHHmm={newTurnoPrefill?.timeHHmm}
+        initialPatient={initialPatient}
+        initialPatientPhone={initialPatientPhone}
         isReceptionist={isReceptionist}
       />
       <RescheduleTurnoModal

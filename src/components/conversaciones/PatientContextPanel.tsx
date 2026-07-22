@@ -1,7 +1,10 @@
 'use client'
 
+import { useState, useEffect } from 'react'
+import { createSupabaseBrowserClient } from '@/lib/supabase/client'
 import { useAgentContext } from '@/hooks/use-agent-context'
 import type { ConversationStatus } from '@/types/conversations'
+import { PatientQuickDrawer } from './PatientQuickDrawer'
 
 // ─── Subcomponentes internos ─────────────────────────────────────────────────
 
@@ -96,6 +99,28 @@ interface PatientContextPanelProps {
 
 export function PatientContextPanel({ phone, conversationStatus }: PatientContextPanelProps) {
   const { context, isLoading, isError } = useAgentContext(phone)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [patientId, setPatientId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!phone) {
+      setPatientId(null)
+      return
+    }
+    const supabase = createSupabaseBrowserClient()
+    supabase
+      .from('patients')
+      .select('patient_id')
+      .eq('phone_number', phone)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (!error && data?.patient_id) {
+          setPatientId(data.patient_id)
+        } else {
+          setPatientId(null)
+        }
+      })
+  }, [phone])
 
   if (isLoading) {
     return (
@@ -168,11 +193,18 @@ export function PatientContextPanel({ phone, conversationStatus }: PatientContex
           {(context.patient_name ?? context.phone_number) && (
             <div style={{ marginBottom: 16 }}>
               <p
+                onClick={() => {
+                  if (patientId) {
+                    setDrawerOpen(true)
+                  }
+                }}
                 style={{
                   fontSize: 13,
                   fontWeight: 500,
                   color: 'var(--color-text-primary)',
                   margin: 0,
+                  cursor: patientId ? 'pointer' : 'default',
+                  textDecoration: patientId ? 'underline' : 'none',
                 }}
               >
                 {context.patient_name ?? context.phone_number}
@@ -205,6 +237,15 @@ export function PatientContextPanel({ phone, conversationStatus }: PatientContex
             <ContextField label="Bloqueo actual" value={context.current_block} />
           )}
         </>
+      )}
+
+      {/* Ficha Rápida Drawer */}
+      {patientId && (
+        <PatientQuickDrawer
+          patientId={patientId}
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+        />
       )}
     </aside>
   )

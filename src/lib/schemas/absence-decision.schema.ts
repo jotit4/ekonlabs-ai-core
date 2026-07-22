@@ -38,10 +38,16 @@ export const statusPatchBodySchema = z
   .object({
     status: z.enum(['cancelled', 'completed', 'no_show'], {
       error: 'status debe ser "cancelled", "completed" o "no_show"',
-    }),
+    }).optional(),
     decision: z.enum(ABSENCE_DECISIONS).optional(),
     note: z.string().optional(),
+    is_undo: z.boolean().optional(),
   })
+  .refine(
+    // Si no es undo, status es obligatorio.
+    (data) => data.is_undo === true || data.status !== undefined,
+    { error: 'status es requerido', path: ['status'] }
+  )
   .refine(
     // 'completed' (confirmar asistencia) NO admite decisión de ausentismo.
     (data) => !(data.decision !== undefined && data.status === 'completed'),

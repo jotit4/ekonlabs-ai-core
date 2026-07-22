@@ -1,7 +1,9 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
 import { Dialog } from '@base-ui/react/dialog'
+import { PatientQuickDrawer } from '@/components/conversaciones/PatientQuickDrawer'
 import { format, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { type Appointment, STATUS_LABELS } from '@/types/appointments'
@@ -35,6 +37,7 @@ export function TurnoDetailModal({
   onReschedule,
   date,
 }: TurnoDetailModalProps) {
+  const [drawerOpen, setDrawerOpen] = useState(false)
   // Fecha para invalidar queries: prop `date` tiene prioridad; sino, se deriva
   // de start_at del turno (formato YYYY-MM-DD); sino, cadena vacía (no invalida).
   const effectiveDate =
@@ -149,11 +152,18 @@ export function TurnoDetailModal({
               {/* ── Título: nombre del paciente ── */}
               <Dialog.Title
                 id="turno-detail-title"
+                onClick={() => {
+                  if (appointment?.patient_id) {
+                    setDrawerOpen(true)
+                  }
+                }}
                 style={{
                   fontSize: 20,
                   fontWeight: 600,
                   color: 'var(--color-text-primary)',
                   margin: 0,
+                  cursor: appointment?.patient_id ? 'pointer' : 'default',
+                  textDecoration: appointment?.patient_id ? 'underline' : 'none',
                 }}
               >
                 {patientName}
@@ -423,6 +433,14 @@ export function TurnoDetailModal({
           onClose={actions.clearAbsenceTarget}
           isLoading={actions.absenceLoading}
           error={actions.absenceError}
+        />
+      )}
+
+      {appointment?.patient_id && (
+        <PatientQuickDrawer
+          patientId={appointment.patient_id}
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
         />
       )}
     </>
