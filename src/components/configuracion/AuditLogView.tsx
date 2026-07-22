@@ -105,6 +105,11 @@ const ACTION_BADGE_STYLES: Record<string, { bg: string; color: string; label: st
     color: 'var(--color-status-ok)',
     label: 'Usuario activado',
   },
+  user_updated: {
+    bg: 'rgba(0,113,227,0.12)',
+    color: 'var(--color-interactive)',
+    label: 'Usuario actualizado',
+  },
 }
 
 function ActionBadge({ action }: { action: string }) {

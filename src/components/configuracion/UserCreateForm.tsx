@@ -1,12 +1,25 @@
 'use client'
 
 import { useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
+import { useQuery } from '@tanstack/react-query'
 import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
-import { createUserSchema, type CreateUserFormValues } from '@/lib/schemas/users'
+import {
+  createUserSchema,
+  ATTENTION_MODE_LABELS,
+  type CreateUserFormValues,
+} from '@/lib/schemas/users'
 
 interface UserCreateFormProps {
   onSuccess?: () => void
+}
+
+/** Profesional disponible para vincular (subset de GET /api/profesionales). */
+interface ProfessionalOption {
+  professional_id: string
+  name: string
+  active: boolean
+  linked_user_email: string | null
 }
 
 export function UserCreateForm({ onSuccess }: UserCreateFormProps) {
@@ -17,6 +30,7 @@ export function UserCreateForm({ onSuccess }: UserCreateFormProps) {
     register,
     handleSubmit,
     reset,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<CreateUserFormValues>({
     resolver: standardSchemaResolver(createUserSchema),
@@ -26,6 +40,30 @@ export function UserCreateForm({ onSuccess }: UserCreateFormProps) {
       role: 'receptionist',
     },
   })
+
+  // El vínculo con un profesional y el tipo de atención solo aplican a médicos:
+  // recepción no atiende pacientes.
+  const selectedRole = useWatch({ control, name: 'role' })
+  const isDoctor = selectedRole === 'doctor'
+
+  // Solo se piden los profesionales cuando hacen falta (rol médico).
+  const { data: professionals = [], isPending: isLoadingProfessionals } = useQuery<
+    ProfessionalOption[]
+  >({
+    queryKey: ['profesionales', 'para-vincular'],
+    queryFn: async () => {
+      const res = await fetch('/api/profesionales')
+      if (!res.ok) throw new Error('Error al cargar profesionales')
+      const body = (await res.json()) as { professionals?: ProfessionalOption[] }
+      return body.professionals ?? []
+    },
+    enabled: isDoctor,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  // Un profesional ya vinculado a otra cuenta no se ofrece: el vínculo es 1:1
+  // (la agenda propia se resuelve por professional_id) y el server lo rechaza.
+  const selectableProfessionals = professionals.filter((p) => p.active && !p.linked_user_email)
 
   const onSubmit = async (data: CreateUserFormValues) => {
     setServerError(null)
@@ -154,6 +192,89 @@ export function UserCreateForm({ onSuccess }: UserCreateFormProps) {
           </p>
         )}
       </div>
+
+      {/* Vínculo con el profesional + tipo de atención — solo para médicos.
+          Juntos definen la navegación por defecto del usuario (migración 056). */}
+      {isDoctor && (
+        <>
+          <div>
+            <label
+              htmlFor="professional_id"
+              className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
+            >
+              Profesional vinculado
+            </label>
+            <select
+              id="professional_id"
+              {...register('professional_id')}
+              disabled={isLoadingProfessionals}
+              className={[
+                'w-full px-3 py-2 rounded-[8px] border text-sm',
+                'bg-[var(--color-bg)] text-[var(--color-text-primary)]',
+                'focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]',
+                errors.professional_id ? 'border-red-400' : 'border-[var(--color-border)]',
+              ].join(' ')}
+              aria-invalid={!!errors.professional_id}
+              aria-describedby={errors.professional_id ? 'professional-error' : undefined}
+            >
+              <option value="">
+                {isLoadingProfessionals
+                  ? 'Cargando profesionales...'
+                  : selectableProfessionals.length === 0
+                    ? 'No hay profesionales libres para vincular'
+                    : 'Seleccioná un profesional'}
+              </option>
+              {selectableProfessionals.map((p) => (
+                <option key={p.professional_id} value={p.professional_id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+              Es la ficha de agenda del médico. Sin vínculo no puede ver su agenda propia.
+            </p>
+            {errors.professional_id && (
+              <p id="professional-error" role="alert" className="mt-1 text-xs text-red-600">
+                {errors.professional_id.message}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label
+              htmlFor="attention_mode"
+              className="block text-sm font-medium text-[var(--color-text-primary)] mb-1"
+            >
+              Tipo de atención
+            </label>
+            <select
+              id="attention_mode"
+              {...register('attention_mode')}
+              className={[
+                'w-full px-3 py-2 rounded-[8px] border text-sm',
+                'bg-[var(--color-bg)] text-[var(--color-text-primary)]',
+                'focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]',
+                errors.attention_mode ? 'border-red-400' : 'border-[var(--color-border)]',
+              ].join(' ')}
+              aria-invalid={!!errors.attention_mode}
+              aria-describedby="attention-mode-help"
+            >
+              <option value="">Seleccioná cómo atiende</option>
+              <option value="appointment">{ATTENTION_MODE_LABELS.appointment}</option>
+              <option value="walk_in">{ATTENTION_MODE_LABELS.walk_in}</option>
+            </select>
+            <p id="attention-mode-help" className="mt-1 text-xs text-[var(--color-text-secondary)]">
+              Define a dónde entra al iniciar sesión: por orden de llegada abre su día en
+              el Calendario; por turnos abre Mi jornada.
+            </p>
+            {errors.attention_mode && (
+              <p role="alert" className="mt-1 text-xs text-red-600">
+                {errors.attention_mode.message}
+              </p>
+            )}
+          </div>
+        </>
+      )}
 
       {/* Mensaje de éxito */}
       {successMessage && (

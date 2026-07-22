@@ -2,6 +2,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { getAuthClaims } from '@/lib/auth/claims'
 import { parseJwtPayload } from '@/lib/utils/jwt'
 import { logAudit } from '@/lib/audit'
+import { updateUserSchema } from '@/lib/schemas/users'
 
 export async function PATCH(
   request: Request,
@@ -33,16 +34,39 @@ export async function PATCH(
     return Response.json({ error: 'Body inválido' }, { status: 400 })
   }
 
-  const { is_active } = body as { is_active?: unknown }
+  const parsed = updateUserSchema.safeParse(body)
+  if (!parsed.success) {
+    return Response.json({ error: 'Datos inválidos', details: parsed.error.issues }, { status: 400 })
+  }
+  const { is_active, attention_mode } = parsed.data
 
-  if (typeof is_active !== 'boolean') {
-    return Response.json({ error: 'is_active debe ser boolean' }, { status: 400 })
+  // Solo se mandan a la DB los campos presentes: un PATCH que cambia el subtipo
+  // no debe tocar is_active (ni al revés).
+  const patch: { is_active?: boolean; attention_mode?: string | null } = {}
+  if (is_active !== undefined) patch.is_active = is_active
+  if (attention_mode !== undefined) patch.attention_mode = attention_mode
+
+  // Cambiar el subtipo solo tiene sentido si el usuario atiende: sin
+  // professional_id, 'walk_in' no puede resolver "su día" y la landing caería a
+  // la del rol — un estado configurado que no hace nada.
+  if (patch.attention_mode) {
+    const { data: target } = await supabase
+      .from('dashboard_users')
+      .select('professional_id')
+      .eq('user_id', userId)
+      .single()
+    if (!target?.professional_id) {
+      return Response.json(
+        { error: 'Ese usuario no está vinculado a un profesional: no puede tener tipo de atención' },
+        { status: 400 },
+      )
+    }
   }
 
   // 3. Actualizar con cliente autenticado — RLS garantiza solo usuarios del mismo tenant
   const { data, error } = await supabase
     .from('dashboard_users')
-    .update({ is_active })
+    .update(patch)
     .eq('user_id', userId)
     .select()
     .single()
@@ -51,9 +75,10 @@ export async function PATCH(
     return Response.json({ error: 'Usuario no encontrado o sin permiso' }, { status: 404 })
   }
 
-  // 4. Audit log
+  // 4. Audit log — el alta/baja es el evento relevante; si el PATCH solo cambió
+  // el subtipo se registra como actualización.
   await logAudit({
-    action: is_active ? 'user_activated' : 'user_deactivated',
+    action: is_active === undefined ? 'user_updated' : is_active ? 'user_activated' : 'user_deactivated',
     entity_type: 'user',
     entity_id: userId,
     supabase,

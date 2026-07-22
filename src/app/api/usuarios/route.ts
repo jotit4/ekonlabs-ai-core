@@ -71,7 +71,40 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Datos inválidos', details: parsed.error.issues }, { status: 400 })
   }
 
-  const { email, full_name, role } = parsed.data
+  const { email, full_name, role, professional_id, attention_mode } = parsed.data
+
+  // El profesional a vincular tiene que ser del MISMO tenant y estar activo. Se
+  // valida con el cliente autenticado (RLS filtra por tenant) ANTES de invitar:
+  // si no, un professional_id ajeno crearía el usuario de auth y recién fallaría
+  // al insertar, dejando basura que limpiar.
+  if (professional_id) {
+    const { data: prof } = await supabase
+      .from('professionals')
+      .select('professional_id, active')
+      .eq('professional_id', professional_id)
+      .single()
+    if (!prof) {
+      return Response.json({ error: 'El profesional seleccionado no existe' }, { status: 400 })
+    }
+    if (!prof.active) {
+      return Response.json({ error: 'El profesional seleccionado está inactivo' }, { status: 400 })
+    }
+
+    // Un profesional no puede quedar vinculado a dos usuarios: "su día" y "Mi
+    // agenda" resuelven por professional_id, así que el vínculo duplicado haría
+    // que dos cuentas compartan la misma agenda.
+    const { data: taken } = await supabase
+      .from('dashboard_users')
+      .select('email')
+      .eq('professional_id', professional_id)
+      .maybeSingle()
+    if (taken) {
+      return Response.json(
+        { error: `Ese profesional ya está vinculado al usuario ${taken.email}` },
+        { status: 409 },
+      )
+    }
+  }
 
   // 3. Invitar usuario con service role (Admin API)
   const supabaseAdmin = createServiceRoleClient()
@@ -106,6 +139,11 @@ export async function POST(request: Request) {
       full_name,
       email,
       is_active: true,
+      // Vínculo con el profesional + subtipo de atención (056). Determinan la
+      // navegación por defecto del usuario: 'walk_in' entra a su día en el
+      // Calendario, 'appointment' a la landing de su rol.
+      professional_id: professional_id ?? null,
+      attention_mode: attention_mode ?? null,
     })
     .select()
     .single()

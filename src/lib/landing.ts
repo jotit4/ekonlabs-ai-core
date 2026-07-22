@@ -26,6 +26,54 @@ export function landingForRole(role: UserRole | undefined | null): string {
 }
 
 /**
+ * "Su día" en el Calendario: vista Día ya filtrada por ese profesional.
+ *
+ * ÚNICA FUENTE DE VERDAD del formato de esa URL. La usan:
+ *  - src/app/page.tsx                    → landing post-login del Doctor-fila
+ *  - src/app/(dashboard)/agenda/page.tsx → atajo al abrir la agenda "en frío"
+ *
+ * Ambos resuelven el MISMO destino; si cambia el formato de los query params,
+ * se toca solo acá.
+ */
+export function miDiaHref(professionalId: string): string {
+  return `/agenda?vista=dia&professional_id=${professionalId}`
+}
+
+/**
+ * Subtipo de atención (migración 056) — ORTOGONAL al rol:
+ *  - 'walk_in'     → "Doctor-fila": atiende por orden de llegada.
+ *  - 'appointment' → "Doctor-turno": atiende por turnos.
+ *  - null          → no atiende pacientes (recepción, admin puro).
+ */
+export type AttentionMode = 'walk_in' | 'appointment'
+
+export interface LandingContext {
+  role: UserRole | undefined | null
+  /** Vínculo con `professionals` (dashboard_users.professional_id). */
+  professionalId?: string | null
+  attentionMode?: AttentionMode | null
+}
+
+/**
+ * Landing efectiva de un usuario — ÚNICA FUENTE DE VERDAD del post-login.
+ *
+ * Un "Doctor-fila" entra a SU día en el Calendario: trabaja contra la fila de
+ * pacientes del día, no contra una lista de turnos agendados. Se decide por el
+ * par (professional_id, attention_mode) y NO por el rol, a propósito: el
+ * director de la clínica es admin y atiende por orden de llegada — atarlo al rol
+ * lo obligaría a resignar permisos de administración.
+ *
+ * Sin profesional vinculado no hay "su día" posible, así que cae a la landing
+ * del rol: un walk_in a medio configurar nunca deja al usuario en una pantalla rota.
+ */
+export function landingFor({ role, professionalId, attentionMode }: LandingContext): string {
+  if (attentionMode === 'walk_in' && professionalId) {
+    return miDiaHref(professionalId)
+  }
+  return landingForRole(role)
+}
+
+/**
  * Ruta "padre" de una ruta, para el botón "Volver" de AppTopbar.
  * Deriva por ESTRUCTURA DE PATHNAME ("subir un nivel"), no por history —
  * evita que módulos que empujan estado al historial (ej. Agenda con

@@ -20,6 +20,8 @@ export type AuditAction =
   | 'user_created'
   | 'user_deactivated'
   | 'user_activated'
+  // Migración 056 — cambio del subtipo de atención (Doctor-fila / Doctor-turno).
+  | 'user_updated'
   | 'patient_document_uploaded'
   | 'patient_document_accessed'
   | 'kb_topic_reindexed'

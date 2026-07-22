@@ -19,6 +19,7 @@ const ACTION_LABELS: Record<string, string> = {
   user_created: 'Usuario creado',
   user_deactivated: 'Usuario desactivado',
   user_activated: 'Usuario activado',
+  user_updated: 'Usuario actualizado',
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
