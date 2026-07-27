@@ -122,6 +122,17 @@ describe('AbsenceDecisionDialog', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Algo falló')
   })
 
+  // Regresión (ISADI 2026-07-27): con zIndex 50 quedaba EMPATADO con el
+  // Dialog.Popup de TurnoDetailModal (`fixed inset-0 z-50`), que además se
+  // renderiza en un portal al final del <body> — a igual z-index gana el que
+  // va después en el DOM. El diálogo se montaba debajo de una capa a pantalla
+  // completa: cancelar un turno de serie parecía no hacer nada.
+  it('se apila POR ENCIMA del modal de detalle que lo abre (z-index > 50)', () => {
+    renderDialog()
+    const overlay = screen.getByRole('dialog')
+    expect(Number(overlay.style.zIndex)).toBeGreaterThan(50)
+  })
+
   it('botón Confirmar deshabilitado mientras isLoading', async () => {
     const user = userEvent.setup()
     const { rerender } = renderDialog()

@@ -135,7 +135,14 @@ export function AbsenceDecisionDialog({
       style={{
         position: 'fixed',
         inset: 0,
-        zIndex: 50,
+        // 60, NO 50: este diálogo es un SEGUNDO nivel de modal — se abre desde
+        // TurnoDetailModal, cuyo Dialog.Popup es `fixed inset-0 z-50` y además
+        // vive en un portal al final del <body>. Con el mismo z-index gana el
+        // que va después en el DOM (el portal), así que este diálogo quedaba
+        // debajo de una capa a pantalla completa: invisible y sin poder
+        // clickearse. Síntoma reportado por ISADI el 2026-07-27: cancelar un
+        // turno de serie "no hacía nada" — el diálogo estaba ahí, tapado.
+        zIndex: 60,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
