@@ -81,13 +81,15 @@ export function TurnoDetailModal({
   // Handler de asistencia: completed o no_show
   async function handleAttendanceClick(s: 'completed' | 'no_show') {
     if (!appointment) return
-    await actions.handleAttendanceSelect(appointment, s)
-    // Para turnos de serie con no_show, el hook activa absenceTarget en vez de
-    // completar la acción directa — el AbsenceDecisionDialog se superpone
-    // sobre el modal sin cerrar el modal principal.
-    // Para cualquier otro caso (completed, o no_show suelto) cerramos el modal
-    // porque la acción se completó (el hook no lanza errores, los silencia).
-    if (!(s === 'no_show' && appointment.package_id)) {
+    // El modal se cierra SOLO si el estado se aplicó de verdad. El hook
+    // devuelve false en los dos casos en que cerrar sería mentir:
+    //   · no_show de un turno de serie → se derivó al AbsenceDecisionDialog,
+    //     que se superpone a este modal y todavía espera una decisión;
+    //   · el PATCH falló → antes se cerraba igual y la recepcionista creía
+    //     haber confirmado la asistencia (bug ISADI 2026-07-24). Ahora queda
+    //     abierto y el toast de error explica qué pasó.
+    const aplicado = await actions.handleAttendanceSelect(appointment, s)
+    if (aplicado) {
       handleClose()
     }
   }
@@ -105,16 +107,18 @@ export function TurnoDetailModal({
     handleClose()
   }
 
-  // Tras confirmar cancelación inline: el hook cancela (o abre absenceTarget
-  // para turnos de serie) y maneja errores internamente. No cerramos acá:
-  // el CancelConfirmInline muestra el error si lo hay. Si era de serie,
-  // cancelTarget se limpiará y absenceTarget se activará → AbsenceDecisionDialog.
+  // Tras confirmar cancelación inline. Igual que en asistencia, el booleano
+  // distingue "cancelado de verdad" de los dos casos en que hay que quedarse:
+  //   · falló el PATCH → CancelConfirmInline muestra el error para reintentar;
+  //   · turno de serie → cancelTarget se limpia y absenceTarget se activa, así
+  //     que el AbsenceDecisionDialog aparece sobre este modal.
+  // Cuando la cancelación entró, el modal ya no tiene nada que mostrar: seguiría
+  // exhibiendo el turno como si estuviera vigente.
   async function handleCancelConfirm() {
-    await actions.handleCancelConfirm()
-    // Tras una cancelación directa exitosa, cancelTarget queda null en el hook,
-    // así que el CancelConfirmInline desaparece automáticamente.
-    // Para series, absenceTarget se activa → AbsenceDecisionDialog aparece.
-    // No necesitamos cerrar el modal principal aquí.
+    const cancelado = await actions.handleCancelConfirm()
+    if (cancelado) {
+      handleClose()
+    }
   }
 
   // Botón Reprogramar

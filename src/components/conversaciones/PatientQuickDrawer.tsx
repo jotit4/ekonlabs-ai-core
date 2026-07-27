@@ -202,8 +202,11 @@ export function PatientQuickDrawer({ patientId, open, onClose }: PatientQuickDra
   const actions = useAppointmentActions(new Date().toISOString().slice(0, 10))
 
   const handleAbsenceClick = async (appt: Appointment) => {
-    await actions.handleAttendanceSelect(appt, 'no_show')
-    if (!appt.package_id) {
+    // Solo recargar si la inasistencia se aplicó. Con `false` el hook o derivó
+    // al AbsenceDecisionDialog (turno de serie, la decisión sigue pendiente) o
+    // el PATCH falló — en ambos casos no hay nada nuevo que traer.
+    const aplicado = await actions.handleAttendanceSelect(appt, 'no_show')
+    if (aplicado) {
       loadData()
     }
   }

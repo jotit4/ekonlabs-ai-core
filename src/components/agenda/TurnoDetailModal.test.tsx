@@ -43,10 +43,16 @@ vi.mock('@/components/paquetes/SessionNotePanel', () => ({
   SessionNotePanel: () => null,
 }))
 
-// AbsenceDecisionDialog se mockea para aislar el modal de sus dependencias.
-vi.mock('@/components/agenda/AbsenceDecisionDialog', () => ({
-  AbsenceDecisionDialog: () => null,
-}))
+// AbsenceDecisionDialog se mockea para aislar el modal de sus dependencias
+// (su lógica se prueba en AbsenceDecisionDialog.test.tsx). Renderiza un marcador
+// para poder afirmar que el flujo de turnos de SERIE llega a abrirlo.
+vi.mock('@/components/agenda/AbsenceDecisionDialog', async () => {
+  const React = await import('react')
+  return {
+    AbsenceDecisionDialog: () =>
+      React.createElement('div', { 'data-testid': 'absence-decision-dialog' }),
+  }
+})
 
 // next/link — mockear para evitar errores de router context
 vi.mock('next/link', async () => {
@@ -61,6 +67,11 @@ vi.mock('next/link', async () => {
 const mockInvalidateQueries = vi.fn()
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries }),
+}))
+
+// sonner — el hook avisa por toast cuando una acción falla o se cancela.
+vi.mock('sonner', () => ({
+  toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn(), dismiss: vi.fn() }),
 }))
 
 const mockFetch = vi.fn()
@@ -298,6 +309,100 @@ describe('TurnoDetailModal', () => {
 
       await waitFor(() => {
         expect(screen.getByRole('alert')).toBeInTheDocument()
+      })
+      expect(mockOnClose).not.toHaveBeenCalled()
+    })
+  })
+
+  // El modal se cierra según el booleano que devuelve useAppointmentActions:
+  // cerrar cuando la acción NO se aplicó le hacía creer a la recepcionista que
+  // había confirmado la asistencia o cancelado el turno (bug ISADI 2026-07-24).
+  describe('asistencia y cancelación — el cierre sigue al resultado real', () => {
+    function renderModal() {
+      return render(
+        <TurnoDetailModal
+          open={true}
+          appointment={BASE_APPOINTMENT}
+          onClose={mockOnClose}
+          onReschedule={mockOnReschedule}
+        />,
+      )
+    }
+
+    it('cierra el modal cuando la asistencia se confirma', async () => {
+      const user = userEvent.setup()
+      renderModal()
+
+      await user.click(screen.getByRole('button', { name: /Confirmar asistencia/ }))
+
+      await waitFor(() => {
+        expect(mockOnClose).toHaveBeenCalled()
+      })
+    })
+
+    it('NO cierra el modal si el PATCH de asistencia falla', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        json: () => Promise.resolve({ error: 'No se pudo actualizar el turno' }),
+      })
+      const user = userEvent.setup()
+      renderModal()
+
+      await user.click(screen.getByRole('button', { name: /Confirmar asistencia/ }))
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalled()
+      })
+      expect(mockOnClose).not.toHaveBeenCalled()
+    })
+
+    it('cierra el modal tras cancelar el turno', async () => {
+      const user = userEvent.setup()
+      renderModal()
+
+      await user.click(screen.getByRole('button', { name: /Cancelar turno de/ }))
+      await user.click(screen.getByRole('button', { name: 'Sí, cancelar turno' }))
+
+      await waitFor(() => {
+        expect(mockOnClose).toHaveBeenCalled()
+      })
+    })
+
+    // Los turnos de paquete no se cancelan directo: hay que decidir qué pasa con
+    // la sesión. El modal debe quedarse abierto y ceder el paso al diálogo.
+    it('en un turno de SERIE abre el diálogo de decisión y no cancela por su cuenta', async () => {
+      const user = userEvent.setup()
+      render(
+        <TurnoDetailModal
+          open={true}
+          appointment={{ ...BASE_APPOINTMENT, package_id: 'trt-1' }}
+          onClose={mockOnClose}
+          onReschedule={mockOnReschedule}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: /Cancelar turno de/ }))
+      await user.click(screen.getByRole('button', { name: 'Sí, cancelar turno' }))
+
+      expect(await screen.findByTestId('absence-decision-dialog')).toBeInTheDocument()
+      // Nada se aplicó todavía: la decisión de la serie sigue pendiente.
+      expect(mockFetch).not.toHaveBeenCalled()
+      expect(mockOnClose).not.toHaveBeenCalled()
+    })
+
+    it('NO cierra el modal si la cancelación falla, y deja el error a la vista', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        json: () => Promise.resolve({ error: 'No se pudo cancelar el turno' }),
+      })
+      const user = userEvent.setup()
+      renderModal()
+
+      await user.click(screen.getByRole('button', { name: /Cancelar turno de/ }))
+      await user.click(screen.getByRole('button', { name: 'Sí, cancelar turno' }))
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent('No se pudo cancelar el turno')
       })
       expect(mockOnClose).not.toHaveBeenCalled()
     })

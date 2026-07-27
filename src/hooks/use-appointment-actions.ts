@@ -80,14 +80,25 @@ export interface AppointmentActionsState {
   cancelError: string | null
   setCancelTarget: (apt: Appointment | null) => void
   clearCancelError: () => void
-  handleCancelConfirm: () => Promise<void>
+  /**
+   * Devuelve `true` sólo si el turno se canceló DIRECTO y con éxito. Devuelve
+   * `false` si falló (el error queda en `cancelError`) o si el turno es de
+   * serie y se derivó al AbsenceDecisionDialog. El host usa el booleano para
+   * decidir si cierra su modal.
+   */
+  handleCancelConfirm: () => Promise<boolean>
 
   // Asistencia (completed / no_show)
   attendanceLoading: boolean
+  /**
+   * Devuelve `true` sólo si el estado se aplicó DIRECTO y con éxito. Devuelve
+   * `false` si falló (se avisa por toast) o si se derivó al
+   * AbsenceDecisionDialog (no_show de un turno de serie).
+   */
   handleAttendanceSelect: (
     appointment: Appointment,
     status: 'completed' | 'no_show'
-  ) => Promise<void>
+  ) => Promise<boolean>
 
   // Decisión de serie (no_show / cancelled para turnos con package_id)
   absenceTarget: { appointment: Appointment; action: 'no_show' | 'cancelled' } | null
@@ -145,8 +156,23 @@ export function useAppointmentActions(date: string): AppointmentActionsState {
     }
   }
 
+  // Invalida TODA la agenda, no sólo el día.
+  //
+  // Bug ISADI 2026-07-24: se invalidaba únicamente ['agenda', 'day', date], pero
+  // las vistas Semana y Mes leen de ['agenda', 'range', ...] (use-appointments-range).
+  // Resultado: se cancelaba/marcaba en la base y el turno seguía en pantalla en
+  // Semana/Mes → para la recepcionista "el botón no hace nada".
+  // El prefijo 'agenda' a secas cubre day + range + day-status de una sola vez
+  // (mismo criterio que ya usaba handleColorChange).
+  function invalidateAgendaQueries() {
+    queryClient.invalidateQueries({ queryKey: ['agenda'] })
+    // El día del host puede no estar montado (p. ej. se canceló desde Semana):
+    // refetchType 'all' fuerza que también se refresque cuando vuelva a mostrarse.
+    queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date], refetchType: 'all' })
+  }
+
   function invalidateTrackingQueries(patientId: string | null) {
-    queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
+    invalidateAgendaQueries()
     queryClient.invalidateQueries({ queryKey: ['treatments'], exact: false })
     if (patientId) {
       queryClient.invalidateQueries({ queryKey: ['treatments', 'by-patient', patientId] })
@@ -167,7 +193,7 @@ export function useAppointmentActions(date: string): AppointmentActionsState {
         toast.success('Acción deshecha correctamente.')
         queryClient.invalidateQueries({ queryKey: ['agenda'] })
         queryClient.invalidateQueries({ queryKey: ['treatments'] })
-      } catch (err) {
+      } catch {
         toast.error('Error al deshacer la acción.')
       }
     }
@@ -183,49 +209,64 @@ export function useAppointmentActions(date: string): AppointmentActionsState {
     )
   }
 
-  async function handleCancelConfirm() {
-    if (!cancelTarget) return
+  // Devuelve true SÓLO si la cancelación directa se aplicó con éxito.
+  async function handleCancelConfirm(): Promise<boolean> {
+    if (!cancelTarget) return false
     // Turno de serie → abrir el diálogo de decisión en lugar de cancelar directo.
+    // No es un éxito todavía: el host NO debe cerrarse (el diálogo se superpone).
     if (cancelTarget.package_id) {
       setCancelError(null)
       setAbsenceError(null)
       setAbsenceTarget({ appointment: cancelTarget, action: 'cancelled' })
       setCancelTarget(null)
-      return
+      return false
     }
     setCancelLoading(true)
     setCancelError(null)
+    const patientName = cancelTarget.patients?.full_name || 'Paciente'
     try {
       await updateStatus(cancelTarget.appointment_id, 'cancelled')
-      queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
+      invalidateAgendaQueries()
+      // Cancelar libera el hueco: la disponibilidad mostrada queda vieja si no se invalida.
+      queryClient.invalidateQueries({ queryKey: ['availability'], exact: false })
       setCancelTarget(null)
+      toast.success(`Turno de ${patientName} cancelado.`)
+      return true
     } catch (err) {
       setCancelError(err instanceof Error ? err.message : 'Error al cancelar el turno')
+      return false
     } finally {
       setCancelLoading(false)
     }
   }
 
+  // Devuelve true SÓLO si el estado se aplicó directo y con éxito.
   async function handleAttendanceSelect(
     appointment: Appointment,
     status: 'completed' | 'no_show'
-  ) {
+  ): Promise<boolean> {
     // Story 13.6 — no_show de un turno de serie → diálogo de decisión manual.
     // 'completed' (confirmar asistencia) NUNCA dispara el diálogo.
     if (status === 'no_show' && appointment.package_id) {
       setAbsenceError(null)
       setAbsenceTarget({ appointment, action: 'no_show' })
-      return
+      return false
     }
     setAttendanceLoading(true)
     try {
       await updateStatus(appointment.appointment_id, status)
-      queryClient.invalidateQueries({ queryKey: ['agenda', 'day', date] })
+      invalidateAgendaQueries()
       if (status === 'no_show') {
         showUndoToast(appointment.appointment_id, appointment.patients?.full_name || 'Paciente')
       }
-    } catch {
-      // silently — error puede mejorarse en siguiente iteración
+      return true
+    } catch (err) {
+      // El error ya NO se silencia: si el PATCH falla, el host se quedaba cerrado
+      // creyendo que había confirmado la asistencia (ISADI 2026-07-24).
+      toast.error(
+        err instanceof Error ? err.message : 'No se pudo actualizar el estado del turno',
+      )
+      return false
     } finally {
       setAttendanceLoading(false)
     }
