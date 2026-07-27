@@ -1,16 +1,23 @@
 # ekonlabs-ai-core
 
-Open-source backend foundation for multi-tenant clinical AI assistants.
+Open-source backend foundation for **multi-tenant clinical AI assistants** — the reusable
+infrastructure layer underneath a WhatsApp booking agent that went on to run in production for a
+healthcare client.
 
-`ekonlabs-ai-core` is a Python/FastAPI service focused on infrastructure concerns that healthcare-facing AI products usually need early: tenant isolation, configurable tenant rules, RAG primitives, and operational boundaries (rate limiting, async workers, migrations).
+## Why this exists
 
-## Why this project exists
+Most AI assistant demos are single-tenant and impossible to operate: the tenant's rules live in a
+prompt, the knowledge base is a folder, and the first real deployment rewrites everything. This
+repository is the other half of the problem — the half nobody demos. Tenant isolation enforced in
+SQL rather than requested in a prompt, configuration as data, retrieval bounded per tenant, async
+ingestion, rate limiting, migrations.
 
-Most AI assistant demos are single-tenant and hard to operationalize. This project focuses on the reusable backend layer that teams can adapt for real deployments in clinics and regulated contexts.
+## Status
 
-## Current status
-
-This repository is **active work in progress**. Core backend foundations are implemented and tested; some agent orchestration endpoints are intentionally scaffolded for upcoming milestones.
+**Stable foundation, no longer the active codebase.** The product this seeded moved to a private
+repository as it took on client-specific work. What remains here is the open, reusable core: it
+runs, it is tested and it is documented, but treat it as a starting point to fork rather than a
+maintained dependency.
 
 Implemented:
 - FastAPI API base with standardized response envelopes and error handling.
@@ -25,10 +32,6 @@ Implemented:
 - Meta/WhatsApp webhook ingestion pipeline (RQ async workers).
 - Native calendar availability service (`availability_service.py`) — replaces Google Calendar API for tenants with `uses_native_calendar = True`. Reads `professional_schedules`, `blocked_times`, `service_professionals`, and `appointments` from Supabase.
 - Per-professional appointment tracking: agent writes `professional_id` when creating appointments, enabling dashboard "Mi Agenda" per-professional filtering.
-
-Planned next milestones:
-- Preferred professional support: extended lookahead (2×) for returning patients, fallback with notification.
-- Auto-set `preferred_professional_id` on first confirmed appointment.
 
 ## Architecture
 
