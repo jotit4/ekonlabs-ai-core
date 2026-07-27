@@ -1,13 +1,23 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { X } from 'lucide-react'
+import { PatientFormSchema } from '@/lib/schemas/patient.schema'
 
 // Story 16.1 — mini-modal de "Registrar llegada" para la cola de orden de
 // llegada. Busca al paciente reusando /api/patients/search (mismo patrón que
 // NewTurnoModal: autobúsqueda por DNI 7-8 dígitos con debounce + Enter como
 // fallback + auto-selección si hay 1 resultado). service_id y professional_id
 // vienen FIJOS por props (los del servicio walk-in): el modal NO los elige.
+//
+// Alta al vuelo (pedido ISADI 2026-07-27): si el DNI no existe, el paciente
+// se carga acá mismo en lugar de mandar a recepción a /pacientes y volver.
+// El caso real es el mostrador con la persona enfrente, así que "Crear y
+// anotar" hace las dos cosas de una: POST /api/patients y, con el id nuevo,
+// POST /api/appointments/walk-in. Se piden solo los campos que la API exige
+// (nombre y teléfono); el resto de la ficha se completa después desde
+// /pacientes.
 
 const DNI_REGEX = /^\d{7,8}$/
 
@@ -36,6 +46,10 @@ export function RegistrarLlegadaModal({
   onRegistered,
 }: RegistrarLlegadaModalProps) {
   const inputRef = useRef<HTMLInputElement | null>(null)
+  // Id del paciente creado en este modal: evita que un reintento tras un fallo
+  // de la cola cree una segunda ficha con el mismo DNI.
+  const creadoIdRef = useRef<string | null>(null)
+  const queryClient = useQueryClient()
 
   const [q, setQ] = useState('')
   const [isSearching, setIsSearching] = useState(false)
@@ -46,6 +60,14 @@ export function RegistrarLlegadaModal({
 
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+
+  // Alta al vuelo: `dniNuevo` guarda el DNI buscado sin resultados, que se usa
+  // como dato del paciente nuevo (y como señal de que hay que mostrar el form).
+  const [dniNuevo, setDniNuevo] = useState<string | null>(null)
+  const [nuevoNombre, setNuevoNombre] = useState('')
+  const [nuevoTelefono, setNuevoTelefono] = useState('')
+  const [isCreating, setIsCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
 
   // El modal se monta fresco cada vez que se abre (el padre lo renderiza sólo
   // con `open`), así que el estado inicial de useState ya es el "reset" — no
@@ -68,6 +90,10 @@ export function RegistrarLlegadaModal({
     setResults(null)
     setSelected(null)
     setSubmitError(null)
+    setDniNuevo(null)
+    setCreateError(null)
+    // Otra búsqueda = otro DNI: el id creado antes ya no aplica.
+    creadoIdRef.current = null
 
     try {
       const res = await fetch(`/api/patients/search?q=${encodeURIComponent(query)}`)
@@ -80,11 +106,14 @@ export function RegistrarLlegadaModal({
 
       const found = body.patients ?? []
       if (found.length === 0) {
-        setSearchError(
-          DNI_REGEX.test(query)
-            ? `No hay ningún paciente con DNI ${query}.`
-            : `Sin resultados para "${query}".`,
-        )
+        // DNI válido sin match → se ofrece cargarlo acá mismo. Con una búsqueda
+        // por nombre/teléfono no alcanza para dar de alta (falta el DNI), así
+        // que ahí se mantiene el error a secas.
+        if (DNI_REGEX.test(query)) {
+          setDniNuevo(query)
+          return
+        }
+        setSearchError(`Sin resultados para "${query}".`)
         return
       }
       if (found.length === 1) {
@@ -123,16 +152,16 @@ export function RegistrarLlegadaModal({
     setResults(null)
   }
 
-  const handleRegister = async () => {
-    if (!selected || isSubmitting) return
-    setIsSubmitting(true)
-    setSubmitError(null)
+  // Devuelve el mensaje de error, o null si entró bien. Separado del handler
+  // porque el alta al vuelo lo reusa con el id del paciente recién creado, que
+  // nunca pasa por `selected`.
+  const registrarEnCola = async (patientId: string): Promise<string | null> => {
     try {
       const res = await fetch('/api/appointments/walk-in', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          patient_id: selected.patient_id,
+          patient_id: patientId,
           service_id: serviceId,
           professional_id: professionalId,
         }),
@@ -140,25 +169,91 @@ export function RegistrarLlegadaModal({
 
       if (res.status === 409) {
         const body = (await res.json().catch(() => ({}))) as { error?: string }
-        setSubmitError(
-          body.error === 'already_in_queue'
-            ? 'Este paciente ya está en la cola.'
-            : 'No se pudo registrar la llegada. Probá de nuevo.',
-        )
-        return
+        return body.error === 'already_in_queue'
+          ? 'Este paciente ya está en la cola.'
+          : 'No se pudo registrar la llegada. Probá de nuevo.'
       }
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string }
-        setSubmitError(body.error ?? 'No se pudo registrar la llegada.')
+        return body.error ?? 'No se pudo registrar la llegada.'
+      }
+      return null
+    } catch {
+      return 'Error de red. Verificá tu conexión e intentá de nuevo.'
+    }
+  }
+
+  const handleRegister = async () => {
+    if (!selected || isSubmitting) return
+    setIsSubmitting(true)
+    setSubmitError(null)
+
+    const error = await registrarEnCola(selected.patient_id)
+    setIsSubmitting(false)
+
+    if (error) {
+      setSubmitError(error)
+      return
+    }
+    onRegistered()
+    onClose()
+  }
+
+  const handleCrearYAnotar = async () => {
+    if (isCreating || !dniNuevo) return
+
+    // Mismas reglas que el alta de /pacientes (nombre ≥2, teléfono ≥7): se
+    // valida con el schema compartido en vez de repetir los mínimos acá.
+    const parsed = PatientFormSchema.safeParse({
+      full_name: nuevoNombre.trim(),
+      phone_number: nuevoTelefono.trim(),
+      dni: dniNuevo,
+    })
+    if (!parsed.success) {
+      setCreateError(parsed.error.issues[0]?.message ?? 'Revisá los datos del paciente.')
+      return
+    }
+
+    setIsCreating(true)
+    setCreateError(null)
+
+    try {
+      // Si un intento anterior ya creó al paciente y lo que falló fue la cola,
+      // se reusa ese id: reintentar no puede dejar dos fichas del mismo DNI.
+      let patientId = creadoIdRef.current
+
+      if (!patientId) {
+        const res = await fetch('/api/patients', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(parsed.data),
+        })
+        const body = (await res.json().catch(() => ({}))) as {
+          patient?: { patient_id: string }
+          error?: string
+        }
+
+        if (!res.ok || !body.patient) {
+          setCreateError(body.error ?? 'No se pudo crear el paciente.')
+          return
+        }
+        patientId = body.patient.patient_id
+        creadoIdRef.current = patientId
+        queryClient.invalidateQueries({ queryKey: ['patients'] })
+      }
+
+      const error = await registrarEnCola(patientId)
+      if (error) {
+        setCreateError(error)
         return
       }
 
       onRegistered()
       onClose()
     } catch {
-      setSubmitError('Error de red. Verificá tu conexión e intentá de nuevo.')
+      setCreateError('Error de red al crear el paciente.')
     } finally {
-      setIsSubmitting(false)
+      setIsCreating(false)
     }
   }
 
@@ -248,6 +343,79 @@ export function RegistrarLlegadaModal({
               </p>
             )}
           </form>
+
+          {/* DNI sin resultados → cargar al paciente sin salir del modal */}
+          {dniNuevo && !selected && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                void handleCrearYAnotar()
+              }}
+              noValidate
+              aria-label="Cargar paciente nuevo"
+              className="rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-4"
+            >
+              <p className="text-sm font-medium text-[var(--color-text-primary)]">
+                No hay ningún paciente con DNI {dniNuevo}
+              </p>
+              <p className="mt-0.5 text-xs text-[var(--color-text-secondary)]">
+                Cargalo acá y queda anotado en la cola. El resto de la ficha se completa
+                después desde Pacientes.
+              </p>
+
+              <label
+                htmlFor="walk-in-nuevo-nombre"
+                className="mb-1 mt-4 block text-sm font-medium text-[var(--color-text-primary)]"
+              >
+                Nombre y apellido
+              </label>
+              <input
+                id="walk-in-nuevo-nombre"
+                type="text"
+                autoComplete="off"
+                placeholder="Ej: Nicolás Raytano"
+                value={nuevoNombre}
+                onChange={(e) => setNuevoNombre(e.target.value)}
+                className="min-h-[44px] w-full rounded-[8px] border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]"
+              />
+
+              <label
+                htmlFor="walk-in-nuevo-telefono"
+                className="mb-1 mt-3 block text-sm font-medium text-[var(--color-text-primary)]"
+              >
+                Teléfono
+              </label>
+              <input
+                id="walk-in-nuevo-telefono"
+                type="tel"
+                inputMode="tel"
+                autoComplete="off"
+                placeholder="Ej: 2615551234"
+                value={nuevoTelefono}
+                onChange={(e) => setNuevoTelefono(e.target.value)}
+                className="min-h-[44px] w-full rounded-[8px] border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]"
+                aria-describedby={createError ? 'walk-in-create-error' : undefined}
+              />
+
+              {createError && (
+                <p id="walk-in-create-error" role="alert" className="mt-2 text-xs text-red-600">
+                  {createError}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={isCreating}
+                className={[
+                  'mt-4 min-h-[44px] w-full rounded-[10px] px-4 text-sm font-semibold text-white transition-opacity',
+                  'bg-[var(--color-status-ok)] hover:opacity-90 focus:outline-none focus-visible:ring-4 focus-visible:ring-[var(--color-status-ok)]/30',
+                  isCreating ? 'cursor-not-allowed opacity-50' : '',
+                ].join(' ')}
+              >
+                {isCreating ? 'Creando…' : 'Crear y anotar en la cola'}
+              </button>
+            </form>
+          )}
 
           {/* Paciente seleccionado → confirmar alta */}
           {selected && (
