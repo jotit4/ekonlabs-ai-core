@@ -42,7 +42,15 @@ beforeEach(() => {
 })
 
 // Wrapper: el motor es controlado por el padre (selected + onChange).
-function Harness({ total, professionalId = 'prof-1' }: { total: number; professionalId?: string | null }) {
+function Harness({
+  total,
+  professionalId = 'prof-1',
+  includeElapsedToday = false,
+}: {
+  total: number
+  professionalId?: string | null
+  includeElapsedToday?: boolean
+}) {
   const [selected, setSelected] = useState<SelectedSlot[]>([])
   return (
     <MultiSessionScheduler
@@ -51,6 +59,7 @@ function Harness({ total, professionalId = 'prof-1' }: { total: number; professi
       total={total}
       selected={selected}
       onChange={setSelected}
+      includeElapsedToday={includeElapsedToday}
     />
   )
 }
@@ -109,6 +118,23 @@ describe('MultiSessionScheduler', () => {
   it('ofrece la cadencia "Todos los días"', () => {
     render(<Harness total={5} />)
     expect(screen.getByRole('button', { name: 'Todos los días' })).toBeInTheDocument()
+  })
+
+  it('propaga la excepción manual solamente al selector del ancla', async () => {
+    const user = userEvent.setup()
+    render(<Harness total={2} professionalId={null} includeElapsedToday />)
+
+    expect(vi.mocked(useAvailability)).toHaveBeenCalledWith(
+      expect.objectContaining({ includeElapsedToday: true }),
+    )
+    await pickDate('2026-07-07')
+    await user.click(screen.getByRole('button', { name: '12:00' }))
+    await waitFor(() => expect(fetchAvailabilityDays).toHaveBeenCalled())
+    expect(
+      vi.mocked(fetchAvailabilityDays).mock.calls.every(
+        ([params]) => params.includeElapsedToday !== true,
+      ),
+    ).toBe(true)
   })
 
   describe('Proponer automáticamente (Pedido B — bonos x5/x10 en días consecutivos)', () => {

@@ -44,6 +44,34 @@ describe('useAvailability', () => {
     expect(url).toContain('service_id=svc-1')
   })
 
+  it('transporta includeElapsedToday y lo separa en la query key', async () => {
+    const mockFetch = vi.spyOn(global, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ days: {} }), { status: 200 }),
+    )
+
+    const { result, rerender } = renderHook(
+      ({ includeElapsedToday }: { includeElapsedToday: boolean }) =>
+        useAvailability({
+          dateFrom: '2026-07-30',
+          dateTo: '2026-07-30',
+          serviceId: 'svc-1',
+          includeElapsedToday,
+        }),
+      { wrapper, initialProps: { includeElapsedToday: true } },
+    )
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(new URL(mockFetch.mock.calls[0][0] as string, 'http://localhost').searchParams.get(
+      'include_elapsed_today',
+    )).toBe('true')
+
+    rerender({ includeElapsedToday: false })
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2))
+    expect(new URL(mockFetch.mock.calls[1][0] as string, 'http://localhost').searchParams.has(
+      'include_elapsed_today',
+    )).toBe(false)
+  })
+
   it('expone daysShifts en modo shifts', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({ days: { '2026-06-04': { available: true, shifts: [SHIFT] } } }), { status: 200 }),

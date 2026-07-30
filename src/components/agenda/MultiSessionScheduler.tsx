@@ -7,6 +7,7 @@ import { AvailabilitySlotPicker, type SelectedSlot } from './AvailabilitySlotPic
 import { advanceDate } from '@/lib/agenda/advance-date'
 import { fetchAvailabilityDays } from '@/hooks/use-availability'
 import { proposeConsecutiveSessions } from '@/lib/treatments/propose-consecutive-sessions'
+import { getArgentinaToday } from '@/lib/utils/argentina-date'
 import type { AvailabilityShift, DayShifts } from '@/types/availability'
 
 // Motor REUTILIZABLE de selección de N sesiones (bonos x5/x10/N).
@@ -47,6 +48,8 @@ interface MultiSessionSchedulerProps {
   onChange: (slots: SelectedSlot[]) => void
   /** Fecha mínima seleccionable (YYYY-MM-DD). Default: hoy. */
   minDate?: string
+  /** Solo el ancla puede usar la disponibilidad manual del día de hoy. */
+  includeElapsedToday?: boolean
 }
 
 // Identidad de un slot: compuesta (fecha+hora+profesional) en modo "cualquier
@@ -95,8 +98,9 @@ export function MultiSessionScheduler({
   selected,
   onChange,
   minDate,
+  includeElapsedToday = false,
 }: MultiSessionSchedulerProps) {
-  const today = new Date().toLocaleDateString('en-CA')
+  const today = getArgentinaToday()
   const floor = minDate ?? today
   const [date, setDate] = useState<string>('')
   // ISADI pidió días consecutivos para cualquier cantidad de sesiones. La
@@ -315,6 +319,7 @@ export function MultiSessionScheduler({
         minDate={floor}
         date={date}
         onDateChange={setDate}
+        includeElapsedToday={includeElapsedToday}
       />
 
       {selected.length > 0 && proposeError && (

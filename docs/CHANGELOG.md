@@ -4,6 +4,43 @@ Registro de trabajo por Epic/Story — decisiones técnicas, hallazgos de code r
 
 ---
 
+## Sesión ISADI — series iniciadas hoy desde Recepción — 2026-07-30
+
+**Tipo:** Feedback operativo + disponibilidad manual + simplificación UX | **Estado:** validación local
+
+### Contexto
+
+Recepción arma paquetes de 5/10 sesiones durante sus momentos libres y necesita
+usar como ancla un bloque de hoy aunque su hora ya haya comenzado. La
+disponibilidad estándar lo ocultaba por `slot_start > NOW()`, desplazando la
+serie a mañana. El flujo también volvía a pedir Servicio y Profesional pese a
+que la operación acordada es “Fisioterapia” con profesional indistinto.
+
+### Cambios
+
+- Migración `060`: RPC `check_reception_availability`, aislada de la RPC
+  estándar, con validación interna de rol `receptionist`, tenant del JWT y fecha
+  mínima definida en `America/Argentina/Buenos_Aires`.
+- `/api/availability` transporta `include_elapsed_today` solo para Recepción y
+  usa una clave de caché distinta; agente, admin y consumidores sin flag
+  mantienen `check_clinic_availability`.
+- El scheduler rotula los slots transcurridos como `horario de hoy` y usa la
+  excepción únicamente para el ancla. Las propuestas siguientes conservan
+  disponibilidad futura estándar.
+- En series x5/x10 de Recepción se fija el servicio activo exacto
+  `Fisioterapia`, se ocultan Servicio/Profesional, el paquete se crea sin
+  profesional fijo y cada sesión conserva el profesional real del hueco.
+- Si falta el servicio canónico, el scheduler y la creación quedan bloqueados
+  con una indicación accionable para Administración.
+
+### Seguridad y cupo
+
+La RPC replica el núcleo de disponibilidad de la migración 058, incluido el
+conteo por profesional/horario. El trigger concurrente `enforce_slot_capacity`
+sigue siendo el candado definitivo y no se modifica la RPC estándar.
+
+---
+
 ## Sesión ISADI — recepción, paquetes y vista Mes — 2026-07-16
 
 **Tipo:** Implementación + recuperación de sesión + hardening UX | **Commit:** `0c45764` | **Deploy:** `origin/ekonlabs-dashboard` | **Tests:** 2913/2913 suite previa al ajuste visual; 104/104 paquetes; 55/55 Mes

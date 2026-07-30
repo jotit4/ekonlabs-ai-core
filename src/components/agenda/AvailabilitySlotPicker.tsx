@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { format, parseISO, isValid } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { useAvailability } from '@/hooks/use-availability'
+import { getArgentinaToday } from '@/lib/utils/argentina-date'
 import type { AvailabilityShift } from '@/types/availability'
 
 // Selector de horarios POR DISPONIBILIDAD REAL — módulo REUTILIZABLE.
@@ -62,6 +63,8 @@ interface AvailabilitySlotPickerProps {
    */
   date?: string
   onDateChange?: (date: string) => void
+  /** Permite a Recepción seleccionar slots transcurridos exclusivamente de hoy. */
+  includeElapsedToday?: boolean
 }
 
 function fmtDateLong(iso: string): string {
@@ -78,8 +81,9 @@ export function AvailabilitySlotPicker({
   minDate,
   date: dateProp,
   onDateChange,
+  includeElapsedToday = false,
 }: AvailabilitySlotPickerProps) {
-  const today = new Date().toLocaleDateString('en-CA')
+  const today = getArgentinaToday()
   const floor = minDate ?? today
   // Fecha controlada por el padre (auto-avance) o estado interno (uso original).
   const [internalDate, setInternalDate] = useState<string>('')
@@ -100,6 +104,7 @@ export function AvailabilitySlotPicker({
     serviceId,
     professionalId,
     allProfessionals: anyMode,
+    includeElapsedToday,
     enabled,
   })
 
@@ -158,6 +163,7 @@ export function AvailabilitySlotPicker({
               </p>
               <div className="flex flex-wrap gap-2" role="group" aria-label="Horarios disponibles">
                 {visibleShifts.map((shift) => {
+                  const isElapsedToday = includeElapsedToday && shift.elapsed_today === true
                   // Una propuesta automática puede haber elegido otro
                   // profesional para esta misma hora. Si ya existe, alternamos
                   // ESE slot real para que quitarlo no cambie silenciosamente la
@@ -189,6 +195,9 @@ export function AvailabilitySlotPicker({
                       ].join(' ')}
                     >
                       {shift.open}
+                      {isElapsedToday && (
+                        <span className="ml-1 text-xs font-normal opacity-80">· horario de hoy</span>
+                      )}
                     </button>
                   )
                 })}

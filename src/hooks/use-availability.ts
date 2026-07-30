@@ -33,6 +33,11 @@ export interface UseAvailabilityOptions {
    * a un hueco por hora (primer profesional libre).
    */
   allProfessionals?: boolean
+  /**
+   * Excepción manual de Recepción: incluye horarios con cupo ya transcurridos
+   * del día de hoy. El endpoint y la RPC vuelven a autorizar el rol.
+   */
+  includeElapsedToday?: boolean
 }
 
 export interface UseAvailabilityResult {
@@ -59,6 +64,7 @@ export interface FetchAvailabilityDaysParams {
   professionalId?: string | null
   summary?: boolean
   allProfessionals?: boolean
+  includeElapsedToday?: boolean
 }
 
 /**
@@ -77,6 +83,7 @@ export async function fetchAvailabilityDays({
   professionalId,
   summary = false,
   allProfessionals = false,
+  includeElapsedToday = false,
 }: FetchAvailabilityDaysParams): Promise<AvailabilityResponse> {
   const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo })
   // `serviceIds` (grupo) tiene prioridad sobre `serviceId` (puntual) — ver
@@ -89,6 +96,7 @@ export async function fetchAvailabilityDays({
   if (professionalId) params.set('professional_id', professionalId)
   if (summary) params.set('summary', 'true')
   if (allProfessionals) params.set('all_professionals', 'true')
+  if (includeElapsedToday) params.set('include_elapsed_today', 'true')
 
   const res = await fetch(`/api/availability?${params.toString()}`)
   if (!res.ok) {
@@ -106,6 +114,7 @@ export function useAvailability({
   summary = false,
   enabled = true,
   allProfessionals = false,
+  includeElapsedToday = false,
 }: UseAvailabilityOptions): UseAvailabilityResult {
   const query = useQuery<AvailabilityResponse>({
     queryKey: [
@@ -116,9 +125,19 @@ export function useAvailability({
       professionalId ?? '',
       summary,
       allProfessionals,
+      includeElapsedToday,
     ],
     queryFn: () =>
-      fetchAvailabilityDays({ dateFrom, dateTo, serviceId, serviceIds, professionalId, summary, allProfessionals }),
+      fetchAvailabilityDays({
+        dateFrom,
+        dateTo,
+        serviceId,
+        serviceIds,
+        professionalId,
+        summary,
+        allProfessionals,
+        includeElapsedToday,
+      }),
     staleTime: 60_000, // se invalida por Realtime de todos modos
     enabled,
   })

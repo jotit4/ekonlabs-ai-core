@@ -29,6 +29,7 @@ vi.mock('@/lib/utils/jwt', () => ({
 }))
 
 import { GET } from './route'
+import { getArgentinaToday } from '@/lib/utils/argentina-date'
 
 const SAMPLE_SHIFT = {
   open: '09:00',
@@ -79,6 +80,61 @@ describe('GET /api/availability', () => {
     expect(res.status).toBe(200)
   })
 
+  it('receptionist con include_elapsed_today usa la RPC manual aislada', async () => {
+    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
+    const today = getArgentinaToday()
+    const res = await GET(
+      makeRequest(
+        `date_from=${today}&date_to=${today}&service_id=svc-1&include_elapsed_today=true`,
+      ),
+    )
+    expect(res.status).toBe(200)
+    expect(mockRpc).toHaveBeenCalledWith(
+      'check_reception_availability',
+      expect.objectContaining({
+        p_org_id: 'tenant-1',
+        p_date: today,
+        p_service_id: 'svc-1',
+      }),
+    )
+  })
+
+  it.each([
+    [
+      'un rango de fechas',
+      'date_from=2099-01-01&date_to=2099-01-02&service_id=svc-1&include_elapsed_today=true',
+    ],
+    [
+      'una consulta sin service_id',
+      'date_from=2099-01-01&date_to=2099-01-01&include_elapsed_today=true',
+    ],
+    [
+      'el modo summary',
+      'date_from=2099-01-01&date_to=2099-01-01&service_id=svc-1&summary=true&include_elapsed_today=true',
+    ],
+    [
+      'service_ids grupales',
+      'date_from=2099-01-01&date_to=2099-01-01&service_id=svc-1&service_ids=00000000-0000-0000-0000-000000000001&include_elapsed_today=true',
+    ],
+    [
+      'una fecha anterior a hoy en Argentina',
+      'date_from=2020-01-01&date_to=2020-01-01&service_id=svc-1&include_elapsed_today=true',
+    ],
+  ])('receptionist recibe 400 si usa la excepción manual con %s', async (_case, query) => {
+    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
+    const res = await GET(makeRequest(query))
+    expect(res.status).toBe(400)
+    expect(mockRpc).not.toHaveBeenCalled()
+  })
+
+  it('admin no puede activar include_elapsed_today', async () => {
+    const res = await GET(
+      makeRequest('date_from=2026-06-04&date_to=2026-06-04&include_elapsed_today=true'),
+    )
+    expect(res.status).toBe(403)
+    expect(mockRpc).not.toHaveBeenCalled()
+  })
+
   it('400 si falta date_from o date_to', async () => {
     const res = await GET(makeRequest('date_from=2026-06-04'))
     expect(res.status).toBe(400)
@@ -109,6 +165,15 @@ describe('GET /api/availability', () => {
     expect(mockRpc).toHaveBeenCalledWith(
       'check_clinic_availability',
       expect.objectContaining({ p_org_id: 'tenant-1', p_date: '2026-06-04' }),
+    )
+  })
+
+  it('receptionist sin flag conserva la RPC estándar', async () => {
+    mockParseJwt.mockReturnValue({ app_role: 'receptionist', tenant_id: 'tenant-1' })
+    await GET(makeRequest('date_from=2026-06-04&date_to=2026-06-04'))
+    expect(mockRpc).toHaveBeenCalledWith(
+      'check_clinic_availability',
+      expect.objectContaining({ p_org_id: 'tenant-1' }),
     )
   })
 

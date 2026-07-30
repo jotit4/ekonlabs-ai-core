@@ -119,6 +119,33 @@ describe('AvailabilitySlotPicker', () => {
     })
   })
 
+  it('pide la excepción manual y rotula un horario transcurrido de hoy', async () => {
+    mockAvailability([
+      {
+        ...makeShift('16:00', '2026-07-30T19:00:00.000Z'),
+        elapsed_today: true,
+      },
+    ])
+    render(
+      <AvailabilitySlotPicker
+        serviceId={SERVICE}
+        professionalId={null}
+        selected={[]}
+        onToggle={vi.fn()}
+        date="2026-07-30"
+        onDateChange={vi.fn()}
+        includeElapsedToday
+      />,
+    )
+
+    expect(vi.mocked(useAvailability)).toHaveBeenCalledWith(
+      expect.objectContaining({ includeElapsedToday: true }),
+    )
+    expect(
+      screen.getByRole('button', { name: /16:00.*horario de hoy/i }),
+    ).toBeInTheDocument()
+  })
+
   describe('modo "cualquier profesional" (professionalId=null)', () => {
     it('consulta disponibilidad con allProfessionals=true en vez de exigir professionalId', () => {
       render(

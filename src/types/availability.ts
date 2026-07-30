@@ -19,6 +19,8 @@ export interface AvailabilityShift {
   require_referral: boolean
   professional_id: string
   professional_name: string
+  /** Solo la RPC manual 060: el slot pertenece a hoy y ya comenzó. */
+  elapsed_today?: boolean
 }
 
 /** Forma completa de un día (modo shifts). */

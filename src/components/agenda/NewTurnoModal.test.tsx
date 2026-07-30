@@ -107,46 +107,51 @@ vi.mock('@tanstack/react-query', () => ({
 // Nota P0.2: el mock ignora los `filters` del useList, así que incluimos un
 // servicio 'cycle' para verificar que el filtro CLIENTE del modal (booking_mode
 // === 'appointment') lo oculta.
+const mockServicesData = vi.hoisted(() => ({
+  current: [] as Array<Record<string, unknown>>,
+}))
 vi.mock('@refinedev/core', () => ({
   useList: () => ({
     result: {
-      data: [
-        {
-          service_id: 'svc-1',
-          name: 'Kinesiología',
-          professional_name: 'Patricia Pérez',
-          duration_minutes: 60,
-          booking_mode: 'appointment',
-          reception_group: 'fisioterapia',
-        },
-        {
-          service_id: 'svc-2',
-          name: 'Fisioterapia',
-          professional_name: null,
-          duration_minutes: 30,
-          booking_mode: 'appointment',
-          reception_group: 'fisioterapia',
-        },
-        {
-          service_id: 'svc-odonto',
-          name: 'Odontología',
-          professional_name: null,
-          duration_minutes: 30,
-          booking_mode: 'appointment',
-          reception_group: null,
-        },
-        {
-          service_id: 'svc-cycle',
-          name: 'Aquagym',
-          professional_name: null,
-          duration_minutes: 60,
-          booking_mode: 'cycle',
-          reception_group: 'pileta',
-        },
-      ],
+      data: mockServicesData.current,
     },
   }),
 }))
+
+const DEFAULT_SERVICES = [
+  {
+    service_id: 'svc-1',
+    name: 'Kinesiología',
+    professional_name: 'Patricia Pérez',
+    duration_minutes: 60,
+    booking_mode: 'appointment',
+    reception_group: 'fisioterapia',
+  },
+  {
+    service_id: 'svc-2',
+    name: 'Fisioterapia',
+    professional_name: null,
+    duration_minutes: 30,
+    booking_mode: 'appointment',
+    reception_group: 'fisioterapia',
+  },
+  {
+    service_id: 'svc-odonto',
+    name: 'Odontología',
+    professional_name: null,
+    duration_minutes: 30,
+    booking_mode: 'appointment',
+    reception_group: null,
+  },
+  {
+    service_id: 'svc-cycle',
+    name: 'Aquagym',
+    professional_name: null,
+    duration_minutes: 60,
+    booking_mode: 'cycle',
+    reception_group: 'pileta',
+  },
+]
 
 const mockOnClose = vi.fn()
 
@@ -233,6 +238,7 @@ async function search(user: User, query: string) {
 describe('NewTurnoModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockServicesData.current = DEFAULT_SERVICES.map((service) => ({ ...service }))
     // Default: búsqueda sin resultados
     setupFetch({ search: [] })
     // Default: disponibilidad con 09:00–11:00 libres cuando se eligió servicio+profesional+fecha
@@ -1394,6 +1400,143 @@ describe('NewTurnoModal', () => {
       // Fecha y Horario se mantienen — recepción sí elige cuándo, no qué/quién.
       expect(screen.getByLabelText('Fecha')).toBeInTheDocument()
       expect(screen.getByLabelText('Horario')).toBeInTheDocument()
+    })
+
+    it('en serie oculta Servicio/Profesional y habilita el ancla manual con el servicio canónico', async () => {
+      const user = userEvent.setup()
+      render(
+        <NewTurnoModal
+          open={true}
+          onClose={mockOnClose}
+          date="2026-07-30"
+          isReceptionist
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: /5 sesiones/i }))
+
+      expect(screen.queryByLabelText('Servicio')).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('Profesional')).not.toBeInTheDocument()
+      expect(screen.getByText('Fisioterapia')).toBeInTheDocument()
+      expect(vi.mocked(useAvailability)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serviceId: 'svc-2',
+          professionalId: null,
+          allProfessionals: true,
+          includeElapsedToday: true,
+        }),
+      )
+    })
+
+    it('bloquea la serie con un mensaje accionable si falta el servicio canónico', async () => {
+      mockServicesData.current = DEFAULT_SERVICES
+        .filter((service) => service.name !== 'Fisioterapia')
+        .map((service) => ({ ...service }))
+
+      const user = userEvent.setup()
+      render(
+        <NewTurnoModal
+          open={true}
+          onClose={mockOnClose}
+          date="2026-07-30"
+          isReceptionist
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: /5 sesiones/i }))
+
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        /falta configurar un servicio activo llamado exactamente “Fisioterapia”/i,
+      )
+      expect(screen.getByText(/scheduler estará disponible/i)).toBeInTheDocument()
+      expect(screen.queryByTestId('multi-session-scheduler')).not.toBeInTheDocument()
+    })
+
+    it('la serie crea el paquete Fisioterapia sin profesional fijo y conserva el profesional real por sesión', async () => {
+      vi.mocked(useAvailability).mockImplementation(({ enabled }) => ({
+        daysShifts: {},
+        daysSummary: {},
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+        shiftsForDate: (d: string) =>
+          enabled && d
+            ? [
+                {
+                  ...makeShift('16:00'),
+                  slot_start_iso: `${d}T19:00:00.000Z`,
+                  slot_end_iso: `${d}T20:00:00.000Z`,
+                  service_id: 'svc-2',
+                  service_name: 'Fisioterapia',
+                  professional_id: 'prof-2',
+                  professional_name: 'Aldo Luque',
+                },
+              ]
+            : [],
+      }))
+      mockFetch.mockImplementation((url: string, init?: { method?: string }) => {
+        if (url.includes('/api/patients/search')) {
+          return Promise.resolve(makeSearchResponse([singlePatient]))
+        }
+        if (url === '/api/treatments' && init?.method === 'POST') {
+          return Promise.resolve({
+            ok: true,
+            status: 201,
+            json: async () => ({ treatment_id: 'trt-reception' }),
+          })
+        }
+        if (
+          url === '/api/treatments/trt-reception/sessions' &&
+          init?.method === 'POST'
+        ) {
+          return Promise.resolve({
+            ok: true,
+            status: 201,
+            json: async () => ({ creadas: 1, skipped: [] }),
+          })
+        }
+        return Promise.resolve(makeSearchResponse([]))
+      })
+
+      const user = userEvent.setup()
+      render(
+        <NewTurnoModal
+          open={true}
+          onClose={mockOnClose}
+          date="2026-07-30"
+          isReceptionist
+        />,
+      )
+
+      await search(user, '87654321')
+      await waitFor(() => screen.getByText(/María López/))
+      await user.click(screen.getByRole('button', { name: /5 sesiones/i }))
+      fireEvent.change(screen.getByLabelText('Fecha'), {
+        target: { value: '2026-07-30' },
+      })
+      await user.click(await screen.findByRole('button', { name: /^16:00/ }))
+      await user.click(screen.getByRole('button', { name: 'Reservar 1 (quedan 4)' }))
+
+      await waitFor(() => {
+        const treatmentCall = mockFetch.mock.calls.find(
+          (call) =>
+            call[0] === '/api/treatments' &&
+            (call[1] as { method?: string })?.method === 'POST',
+        )
+        expect(treatmentCall).toBeTruthy()
+        const body = JSON.parse((treatmentCall![1] as { body: string }).body)
+        expect(body.service_id).toBe('svc-2')
+        expect(body).not.toHaveProperty('professional_id')
+      })
+
+      const sessionsCall = mockFetch.mock.calls.find(
+        (call) =>
+          call[0] === '/api/treatments/trt-reception/sessions' &&
+          (call[1] as { method?: string })?.method === 'POST',
+      )
+      expect(sessionsCall).toBeTruthy()
+      const sessionsBody = JSON.parse((sessionsCall![1] as { body: string }).body)
+      expect(sessionsBody.slots[0].professional_id).toBe('prof-2')
     })
 
     it('pide disponibilidad para TODOS los service_id del grupo fisioterapia, con cualquier profesional', async () => {

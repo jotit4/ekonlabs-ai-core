@@ -2,6 +2,7 @@ import 'server-only'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { getAuthClaims } from '@/lib/auth/claims'
 import { parseJwtPayload } from '@/lib/utils/jwt'
+import { getArgentinaToday } from '@/lib/utils/argentina-date'
 import { eachDayOfInterval, formatISO, parseISO, isValid, differenceInCalendarDays } from 'date-fns'
 import type { AvailabilityShift, DayShifts, DaySummary } from '@/types/availability'
 
@@ -70,6 +71,18 @@ export async function GET(request: Request): Promise<Response> {
     : null
   const professionalId = searchParams.get('professional_id')
   const summary = searchParams.get('summary') === 'true'
+  // Excepción administrativa 060: solo Recepción puede pedir los horarios con
+  // cupo que ya comenzaron HOY. La RPC separada vuelve a validar rol y tenant.
+  const includeElapsedToday = searchParams.get('include_elapsed_today') === 'true'
+  if (includeElapsedToday && role !== 'receptionist') {
+    return Response.json(
+      { error: 'La disponibilidad de horarios transcurridos es exclusiva de Recepción' },
+      { status: 403 },
+    )
+  }
+  const availabilityRpc = includeElapsedToday
+    ? 'check_reception_availability'
+    : 'check_clinic_availability'
   // P0.1 — "Cualquier profesional disponible": cuando se pide un servicio sin
   // profesional concreto, iterar TODOS los profesionales del servicio y unir sus
   // huecos (sin colapsar por hora) para que cada hueco conserve su profesional.
@@ -113,6 +126,24 @@ export async function GET(request: Request): Promise<Response> {
   }
   if (spanDays + 1 > MAX_RANGE_DAYS) {
     return Response.json({ error: `El rango no puede superar ${MAX_RANGE_DAYS} días` }, { status: 400 })
+  }
+
+  // La excepción manual existe únicamente para elegir el ancla de una serie:
+  // una fecha puntual, un servicio puntual y la respuesta completa de horarios.
+  // Las propuestas posteriores conservan la disponibilidad estándar.
+  if (includeElapsedToday) {
+    if (dateFrom !== dateTo || !serviceId || serviceIdList || summary) {
+      return Response.json(
+        { error: 'La disponibilidad manual requiere una fecha y un servicio puntuales' },
+        { status: 400 },
+      )
+    }
+    if (dateFrom < getArgentinaToday()) {
+      return Response.json(
+        { error: 'No se puede consultar disponibilidad manual de fechas anteriores a hoy' },
+        { status: 400 },
+      )
+    }
   }
 
   // 6. Lista de fechas del rango (inclusive)
@@ -194,7 +225,7 @@ export async function GET(request: Request): Promise<Response> {
       for (const sid of serviceIdList!) {
         const profIds = groupServiceProfessionals[sid] ?? []
         for (const profId of profIds) {
-          const { data, error } = await supabase.rpc('check_clinic_availability', {
+          const { data, error } = await supabase.rpc(availabilityRpc, {
             p_org_id: tenantId,
             p_date: isoDay,
             p_service_id: sid,
@@ -221,7 +252,7 @@ export async function GET(request: Request): Promise<Response> {
       // professional_id/professional_name.
       const merged: AvailabilityShift[] = []
       for (const profId of serviceProfessionalIds) {
-        const { data, error } = await supabase.rpc('check_clinic_availability', {
+        const { data, error } = await supabase.rpc(availabilityRpc, {
           p_org_id: tenantId,
           p_date: isoDay,
           p_service_id: serviceId ?? undefined,
@@ -243,7 +274,7 @@ export async function GET(request: Request): Promise<Response> {
       shifts = merged
       available = merged.length > 0
     } else {
-      const { data, error } = await supabase.rpc('check_clinic_availability', {
+      const { data, error } = await supabase.rpc(availabilityRpc, {
         p_org_id: tenantId,
         p_date: isoDay,
         // p_timezone se omite → usa el DEFAULT de la RPC (America/Argentina/Buenos_Aires)

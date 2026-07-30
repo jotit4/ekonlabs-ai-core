@@ -23,6 +23,7 @@ import { ColorSwatchPicker } from '@/components/agenda/ColorSwatchPicker'
 import { ANY_PROFESSIONAL } from '@/lib/agenda/any-professional'
 import { listAlternateProfessionalShifts } from '@/lib/agenda/reception-retry'
 import { summarizeSkipped } from '@/lib/paquetes/skip-reasons'
+import { getArgentinaToday } from '@/lib/utils/argentina-date'
 import type { AvailabilityShift, DayShifts } from '@/types/availability'
 import { createSupabaseBrowserClient } from '@/lib/supabase/client'
 
@@ -165,14 +166,11 @@ export function NewTurnoModal({
   const [createdTreatmentId, setCreatedTreatmentId] = useState<string | null>(null)
   const isPackageMode = sessionCount > 1
 
-  // Pedido 1 (ISADI 2026-07-16) — modo recepción para el turno ÚNICO (1
-  // sesión): recepción NO elige servicio ni profesional, ambos se resuelven
-  // del hueco elegido (grupo Fisioterapia completo). Solo aplica al turno
-  // suelto — el alta de series/bono (x5/x10) usa MultiSessionScheduler, que
-  // necesita un servicio+profesional concretos y queda fuera de este pedido
-  // (para recepción, el select de Servicio en modo serie sigue existiendo
-  // pero recortado al grupo Fisioterapia — ver `servicesForSelect`).
+  // Recepción nunca elige servicio/profesional: el turno único resuelve ambos
+  // desde el hueco del grupo y la serie usa el servicio canónico Fisioterapia
+  // con un profesional real distinto por sesión.
   const isReceptionSingleTurno = isReceptionist && !isPackageMode
+  const isReceptionPackage = isReceptionist && isPackageMode
   // Hueco elegido en modo recepción: clave compuesta
   // `${service_id}__${professional_id}__${HH:MM}` — a diferencia de
   // `anySlotKey` (solo profesional), acá también hace falta el service_id
@@ -235,14 +233,12 @@ export function NewTurnoModal({
     (s) => s.booking_mode === undefined || s.booking_mode === 'appointment',
   )
 
-  // Pedido 1 (ISADI 2026-07-16) — subconjunto del grupo Fisioterapia
-  // (`reception_group='fisioterapia'`). Se usa para: (a) la disponibilidad
-  // de grupo del turno único de recepción, y (b) recortar el <select> de
-  // Servicio al grupo cuando recepción está en modo serie (x5/x10, que sigue
-  // usando el flujo con select porque MultiSessionScheduler no se toca).
+  // El turno único usa todo el grupo. Las series requieren exactamente el
+  // servicio activo "Fisioterapia": elegir el primer servicio del grupo sería
+  // ambiguo y podría mezclar semánticas/cupos.
   const fisioServices = services.filter((s) => s.reception_group === RECEPTION_FISIO_GROUP)
   const fisioServiceIds = fisioServices.map((s) => s.service_id)
-  const servicesForSelect = isReceptionist ? fisioServices : services
+  const receptionFisioService = fisioServices.find((s) => s.name === 'Fisioterapia')
 
   // Watch selección de servicio / profesional / fecha para calcular la
   // disponibilidad REAL (no horarios inventados). El horario solo se elige
@@ -963,11 +959,19 @@ export function NewTurnoModal({
 
     if (!patient) return
     const values = appointmentForm.getValues()
-    const serviceId = values.service_id
-    const professionalId = values.professional_id
+    const serviceId = isReceptionPackage
+      ? (receptionFisioService?.service_id ?? '')
+      : values.service_id
+    const professionalId = isReceptionPackage
+      ? ANY_PROFESSIONAL
+      : values.professional_id
 
     if (!serviceId) {
-      setSubmitError('Elegí un servicio')
+      setSubmitError(
+        isReceptionPackage
+          ? 'Falta configurar el servicio activo “Fisioterapia” dentro del grupo de recepción.'
+          : 'Elegí un servicio',
+      )
       return
     }
     if (!professionalId) {
@@ -985,6 +989,10 @@ export function NewTurnoModal({
     // "cualquiera"), por eso el body de /sessions viaja con professional_id
     // por slot en ese caso.
     const isAny = professionalId === ANY_PROFESSIONAL
+    if (isAny && multiSlots.some((slot) => !slot.professional_id)) {
+      setSubmitError('No se pudo resolver el profesional de una sesión. Volvé a elegir sus horarios.')
+      return
+    }
 
     setIsSubmittingPackage(true)
     const intentadas = multiSlots.length
@@ -1131,12 +1139,16 @@ export function NewTurnoModal({
   const sectionLabel =
     'text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)]'
 
-  const today = new Date().toLocaleDateString('en-CA')
+  const today = getArgentinaToday()
 
   // Botón "Reservar" de la serie: habilitado con reserva PARCIAL (≥1 elegida,
   // no exige las N). El texto refleja cuánto se eligió vs. el total del bono.
   const packageChosen = multiSlots.length
-  const packageSubmitDisabled = !patient || packageChosen < 1 || isSubmittingPackage
+  const packageSubmitDisabled =
+    !patient ||
+    packageChosen < 1 ||
+    isSubmittingPackage ||
+    (isReceptionPackage && !receptionFisioService)
   const packageSubmitLabel = isSubmittingPackage
     ? 'Reservando...'
     : packageChosen === 0
@@ -1501,12 +1513,9 @@ export function NewTurnoModal({
                       )}
                     </div>
 
-                    {/* Servicio — Pedido 1 (ISADI 2026-07-16): para recepción, en el
-                        turno único NO hay selector — es SIEMPRE Fisioterapia, sin
-                        elegir servicio ni profesional (ver rótulo fijo abajo). En
-                        modo serie (x5/x10) recepción sigue viendo el select, pero
-                        recortado al grupo Fisioterapia (servicesForSelect). */}
-                    {isReceptionSingleTurno ? (
+                    {/* Para Recepción la operación completa se llama Fisioterapia.
+                        En series, el id interno debe ser el servicio canónico exacto. */}
+                    {isReceptionist ? (
                       <div>
                         <span className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
                           Servicio
@@ -1514,6 +1523,12 @@ export function NewTurnoModal({
                         <p className="px-3 py-2 rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text-primary)]">
                           Fisioterapia
                         </p>
+                        {isReceptionPackage && !receptionFisioService && (
+                          <p role="alert" className="mt-2 text-xs text-red-600">
+                            Falta configurar un servicio activo llamado exactamente “Fisioterapia”
+                            dentro del grupo de recepción. Pedile a Administración que revise Servicios.
+                          </p>
+                        )}
                       </div>
                     ) : (
                       <div>
@@ -1533,7 +1548,7 @@ export function NewTurnoModal({
                           }
                         >
                           <option value="">Seleccioná un servicio</option>
-                          {servicesForSelect.map((svc) => (
+                          {services.map((svc) => (
                             <option key={svc.service_id} value={svc.service_id}>
                               {svc.name}
                               {svc.professional_name ? ` · ${svc.professional_name}` : ''}
@@ -1552,7 +1567,7 @@ export function NewTurnoModal({
                         Pedido 1: oculto en el turno único de recepción — se resuelve
                         automáticamente del hueco elegido (cualquier profesional del
                         grupo Fisioterapia). */}
-                    {!isReceptionSingleTurno && (
+                    {!isReceptionist && (
                     <div>
                       <label
                         htmlFor="professional-select"
@@ -1896,15 +1911,25 @@ export function NewTurnoModal({
                         <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
                           Horarios de las {sessionCount} sesiones
                         </label>
-                        {!selectedServiceId || !selectedProfessionalId ? (
+                        {isReceptionPackage && !receptionFisioService ? (
+                          <p className="text-sm text-[var(--color-text-secondary)]">
+                            El scheduler estará disponible cuando se configure el servicio Fisioterapia.
+                          </p>
+                        ) : !isReceptionPackage && (!selectedServiceId || !selectedProfessionalId) ? (
                           <p className="text-sm text-[var(--color-text-secondary)]">
                             Elegí servicio para ver la disponibilidad.
                           </p>
                         ) : (
                           <MultiSessionScheduler
-                            serviceId={selectedServiceId}
+                            serviceId={
+                              isReceptionPackage
+                                ? receptionFisioService!.service_id
+                                : selectedServiceId
+                            }
                             professionalId={
-                              selectedProfessionalId === ANY_PROFESSIONAL ? null : selectedProfessionalId
+                              isReceptionPackage || selectedProfessionalId === ANY_PROFESSIONAL
+                                ? null
+                                : selectedProfessionalId
                             }
                             total={sessionCount}
                             selected={multiSlots}
@@ -1915,6 +1940,7 @@ export function NewTurnoModal({
                               setMultiSlots(slots)
                             }}
                             minDate={today}
+                            includeElapsedToday={isReceptionPackage}
                           />
                         )}
                         {slotConflictError && (

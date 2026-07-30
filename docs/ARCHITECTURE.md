@@ -209,6 +209,8 @@ AgendaView
 - `services.reception_group` clasifica servicios para los botones operativos de recepción (`fisioterapia`, `pileta`, `pilates`).
 - En el turno simplificado de recepción, la UI deduplica por hora; el slot elegido conserva internamente el servicio y profesional reales.
 - En paquetes sin profesional fijo, `AvailabilitySlotPicker` también deduplica por hora, pero la identidad de selección es fecha+hora+profesional.
+- `include_elapsed_today=true` selecciona la RPC aislada `check_reception_availability`: solo el rol `receptionist` puede ver slots con cupo ya transcurridos del día actual de Buenos Aires. La RPC estándar conserva `> NOW()`.
+- En series x5/x10 de Recepción, `NewTurnoModal` exige el servicio activo exacto `Fisioterapia`, crea el paquete sin profesional fijo y persiste en cada sesión el `professional_id` real elegido por disponibilidad.
 
 ### Paquetes y propuesta automática
 
