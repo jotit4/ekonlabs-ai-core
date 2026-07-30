@@ -1,19 +1,14 @@
 import { redirect } from 'next/navigation'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
-import { parseJwtPayload } from '@/lib/utils/jwt'
+import { getAuthClaims } from '@/lib/auth/claims'
 import { AgentPromptEditor } from '@/components/configuracion/AgentPromptEditor'
 
 export const dynamic = 'force-dynamic'
 
 export default async function AgentePage() {
-  const supabase = await createSupabaseServerClient()
-
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
-
-  const { data: { session } } = await supabase.auth.getSession()
-  const claims = parseJwtPayload(session?.access_token ?? '')
-  const role = claims?.app_role as string
+  const auth = await getAuthClaims()
+  if (!auth) redirect('/login')
+  const role = auth.role ?? ''
 
   if (!['admin', 'doctor', 'receptionist'].includes(role)) {
     redirect('/agenda')
@@ -30,6 +25,7 @@ export default async function AgentePage() {
   // receptionist/doctor un control que el backend rechazaría.
   let initialShadowMode = false
   if (isAdmin) {
+    const supabase = await createSupabaseServerClient()
     const { data: tenantData } = await supabase
       .from('tenants')
       .select('shadow_mode_enabled')

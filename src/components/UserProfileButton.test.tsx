@@ -6,6 +6,13 @@ import type { CurrentUser } from '@/hooks/use-current-user'
 
 // ───── Mocks ─────
 
+const { mockRemoveQueries } = vi.hoisted(() => ({
+  mockRemoveQueries: vi.fn(),
+}))
+vi.mock('@tanstack/react-query', () => ({
+  useQueryClient: () => ({ removeQueries: mockRemoveQueries }),
+}))
+
 const mockPush = vi.fn()
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
@@ -126,6 +133,16 @@ describe('UserProfileButton', () => {
     // Esperar la promise
     await vi.waitFor(() => {
       expect(mockPush).toHaveBeenCalledWith('/login')
+    })
+  })
+
+  it('después de signOut(), descarta el usuario cacheado', async () => {
+    mockUseCurrentUserFn = () => ({ user: adminUser, isLoading: false })
+    const user = userEvent.setup()
+    render(<UserProfileButton collapsed={false} />)
+    await user.click(screen.getByRole('button', { name: /cerrar sesión/i }))
+    expect(mockRemoveQueries).toHaveBeenCalledWith({
+      queryKey: ['auth', 'current-user'],
     })
   })
 

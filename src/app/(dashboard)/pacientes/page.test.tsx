@@ -49,10 +49,14 @@ const mockListQuery = {
 const mockUseListState = {
   result: { data: [makePatient()] as Patient[], total: undefined },
 }
+const mockUseList = vi.fn()
 
 // Mock @refinedev/core
 vi.mock('@refinedev/core', () => ({
-  useList: () => ({ query: mockListQuery, ...mockUseListState }),
+  useList: (options: unknown) => {
+    mockUseList(options)
+    return { query: mockListQuery, ...mockUseListState }
+  },
 }))
 
 // Mock @tanstack/react-query — useQuery para conversaciones
@@ -78,6 +82,18 @@ describe('PacientesPage', () => {
     render(<PacientesPage />)
     expect(screen.getByText('María García')).toBeInTheDocument()
     expect(screen.getByText('+5491133334444')).toBeInTheDocument()
+  })
+
+  it('limita el listado a 50 e integra estado conversacional sin cargar la bandeja completa', () => {
+    render(<PacientesPage />)
+    expect(mockUseList).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pagination: { mode: 'server', pageSize: 50, currentPage: 1 },
+        meta: expect.objectContaining({
+          select: expect.stringContaining('thread_states(status, paused_reason)'),
+        }),
+      }),
+    )
   })
 
   it('filtro vacío — muestra todos los pacientes sin error', () => {

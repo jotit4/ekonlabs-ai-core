@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
@@ -15,13 +16,18 @@ import {
   CheckCircle2,
   CalendarCheck,
 } from 'lucide-react'
-import { NewTurnoModal } from '@/components/agenda/NewTurnoModal'
-import { AgendaDayView } from '@/components/agenda/AgendaDayView'
 import { ProximosTurnos } from '@/components/recepcion/ProximosTurnos'
 import { WalkInQueuePanel } from '@/components/recepcion/WalkInQueuePanel'
 import { useAppointments } from '@/hooks/use-appointments'
 import { useCurrentUser } from '@/hooks/use-current-user'
 import type { ConversationSummary } from '@/types/conversations'
+
+const NewTurnoModal = dynamic(() =>
+  import('@/components/agenda/NewTurnoModal').then((mod) => mod.NewTurnoModal),
+)
+const AgendaDayView = dynamic(() =>
+  import('@/components/agenda/AgendaDayView').then((mod) => mod.AgendaDayView),
+)
 
 // Estados de una conversación que necesitan una persona: la IA pidió ayuda
 // (needs_intervention) o alguien tomó el control manual (human_takeover).
@@ -86,8 +92,6 @@ export default function RecepcionPage() {
 
   // ── Modal de "Dar un turno" ─────────────────────────────────────────────────
   const [modalTurnoAbierto, setModalTurnoAbierto] = useState(false)
-  const [initialPatient, setInitialPatient] = useState<any>(undefined)
-  const [initialPatientPhone, setInitialPatientPhone] = useState<string | undefined>(undefined)
 
   // ── Mostrar / ocultar la agenda de hoy embebida ─────────────────────────────
   const [mostrarAgenda, setMostrarAgenda] = useState(false)
@@ -397,18 +401,16 @@ export default function RecepcionPage() {
           que el modal arranca directo en modo simplificado (grupo
           Fisioterapia, sin elegir servicio ni profesional) — mismo criterio
           que /agenda para el rol receptionist. */}
-      <NewTurnoModal
-        open={modalTurnoAbierto}
-        onClose={() => {
-          setModalTurnoAbierto(false)
-          setInitialPatient(undefined)
-          setInitialPatientPhone(undefined)
-        }}
-        date={hoyISO}
-        initialPatient={initialPatient}
-        initialPatientPhone={initialPatientPhone}
-        isReceptionist
-      />
+      {modalTurnoAbierto && (
+        <NewTurnoModal
+          open
+          onClose={() => {
+            setModalTurnoAbierto(false)
+          }}
+          date={hoyISO}
+          isReceptionist
+        />
+      )}
 
       {/* ── Atajo discreto para abrir el panel completo ──────────────────── */}
       <p className="mt-10 text-center text-[13px] text-[var(--color-text-secondary)]">

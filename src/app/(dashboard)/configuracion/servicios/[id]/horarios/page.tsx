@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
-import { parseJwtPayload } from '@/lib/utils/jwt'
+import { getAuthClaims } from '@/lib/auth/claims'
 import { ServiceHoursView } from '@/components/configuracion/ServiceHoursView'
 
 export const dynamic = 'force-dynamic'
@@ -10,20 +10,14 @@ export default async function ServiceHorariosPage({
 }: {
   params: Promise<{ id: string }>
 }) {
-  const supabase = await createSupabaseServerClient()
-
-  // 1. Autenticación
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
-
-  // 2. Autorización
-  const { data: { session } } = await supabase.auth.getSession()
-  const claims = parseJwtPayload(session?.access_token ?? '')
-  if (claims?.app_role !== 'admin') {
+  const auth = await getAuthClaims()
+  if (!auth) redirect('/login')
+  if (auth.role !== 'admin') {
     redirect('/agenda')
   }
 
   // 3. Verificar que el servicio existe y pertenece al tenant (RLS filtra automáticamente)
+  const supabase = await createSupabaseServerClient()
   const { id } = await params
   const { data: service } = await supabase
     .from('services')

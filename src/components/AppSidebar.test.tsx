@@ -5,6 +5,7 @@ import { AppSidebar } from './AppSidebar'
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/agenda',
+  useRouter: () => ({ prefetch: vi.fn() }),
 }))
 
 vi.mock('next/link', () => ({

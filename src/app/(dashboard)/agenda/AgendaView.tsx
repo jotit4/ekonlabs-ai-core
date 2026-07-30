@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import dynamic from 'next/dynamic'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { SlidersHorizontal } from 'lucide-react'
 import {
@@ -12,12 +13,7 @@ import { es } from 'date-fns/locale'
 import { CalendarView } from '@/components/agenda/CalendarView'
 import { CalendarViewRangeReadOnly } from '@/components/agenda/CalendarViewRangeReadOnly'
 import { CalendarViewSelector, type CalendarViewType } from '@/components/agenda/CalendarViewSelector'
-import { TurnoDetailModal } from '@/components/agenda/TurnoDetailModal'
 import { KPIStrip } from '@/components/agenda/KPIStrip'
-import { NewTurnoModal } from '@/components/agenda/NewTurnoModal'
-import { NewPaqueteModal } from '@/components/paquetes/NewPaqueteModal'
-import { RescheduleTurnoModal } from '@/components/agenda/RescheduleTurnoModal'
-import { DayStatusModal } from '@/components/agenda/DayStatusModal'
 import { AgendaFilters, AgendaServiceButtons, type AreaFocus } from '@/components/agenda/AgendaFilters'
 import { ColaOrdenLlegada } from '@/components/recepcion/ColaOrdenLlegada'
 import { isRehabService } from '@/lib/agenda/service-visuals'
@@ -34,6 +30,25 @@ import { useSetDayStatus } from '@/hooks/use-set-day-status'
 import { useWalkInService } from '@/hooks/use-walk-in-service'
 import type { Appointment } from '@/types/appointments'
 import type { UserRole } from '@/types'
+
+// Estos formularios no forman parte del primer render. Separarlos del bundle
+// inicial evita descargar y parsear validadores, selects y calendarios hasta que
+// la persona realmente abre la acción correspondiente.
+const TurnoDetailModal = dynamic(() =>
+  import('@/components/agenda/TurnoDetailModal').then((mod) => mod.TurnoDetailModal),
+)
+const NewTurnoModal = dynamic(() =>
+  import('@/components/agenda/NewTurnoModal').then((mod) => mod.NewTurnoModal),
+)
+const NewPaqueteModal = dynamic(() =>
+  import('@/components/paquetes/NewPaqueteModal').then((mod) => mod.NewPaqueteModal),
+)
+const RescheduleTurnoModal = dynamic(() =>
+  import('@/components/agenda/RescheduleTurnoModal').then((mod) => mod.RescheduleTurnoModal),
+)
+const DayStatusModal = dynamic(() =>
+  import('@/components/agenda/DayStatusModal').then((mod) => mod.DayStatusModal),
+)
 
 function parseValidDate(str: string | null): Date {
   if (!str || !/^\d{4}-\d{2}-\d{2}$/.test(str)) return new Date()
@@ -126,12 +141,14 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
 
   // Story 16.2 — cola de orden de llegada (walk-in). Hook SIEMPRE llamado
   // (regla de hooks); devuelve null si el tenant no tiene servicio walk-in.
-  const walkIn = useWalkInService()
+  const isDayView = vistaActiva === 'dia'
+  const walkIn = useWalkInService(isDayView && isToday(selectedDate))
 
   // Hooks siempre llamados — nunca condicionales
   const { appointments, isLoading, isError, refetch } = useAppointments(isoDate, {
     professionalId,
     serviceId,
+    enabled: isDayView,
   })
 
   const {
@@ -139,14 +156,18 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
     isLoading: rangeLoading,
     isError: rangeError,
     refetch: rangeRefetch,
-  } = useAppointmentsRange(rangeFrom, rangeTo, { professionalId, serviceId })
+  } = useAppointmentsRange(rangeFrom, rangeTo, {
+    professionalId,
+    serviceId,
+    enabled: !isDayView,
+  })
 
   // Feriados + estado del día (pedido ISADI 2026-07-14) — mismo rango visible
   // que ya se usa para los turnos de Semana/Mes (rangeFrom/rangeTo). Se pasa
   // como PROP a CalendarViewRangeReadOnly (componente presentacional, no
   // fetchea nada) — el fetch/mutation viven acá, junto con el resto del
   // estado de modales de la agenda.
-  const { days: dayStatusMap } = useDayStatusRange(rangeFrom, rangeTo)
+  const { days: dayStatusMap } = useDayStatusRange(rangeFrom, rangeTo, !isDayView)
   const setDayStatus = useSetDayStatus()
   const [decidingDate, setDecidingDate] = useState<string | null>(null)
 
@@ -268,8 +289,6 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
   }
 
   const [showNewTurnoModal, setShowNewTurnoModal] = useState(false)
-  const [initialPatient, setInitialPatient] = useState<any>(undefined)
-  const [initialPatientPhone, setInitialPatientPhone] = useState<string | undefined>(undefined)
   // CTA secundario "Nuevo paquete" (Story 13.5) — abre el modal SIN initialPatient.
   const [showNewPaqueteModal, setShowNewPaqueteModal] = useState(false)
   // Prefill del NewTurnoModal al agendar desde una celda vacía de la grilla
@@ -374,8 +393,6 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
   function handleCloseNewTurno() {
     setShowNewTurnoModal(false)
     setNewTurnoPrefill(null)
-    setInitialPatient(undefined)
-    setInitialPatientPhone(undefined)
   }
 
   // La recepcionista es la usuaria principal del módulo → tiene acceso a los
@@ -539,13 +556,15 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
             onEmptyCellClick={handleEmptyCellClick}
             onAppointmentClick={handleAppointmentClick}
           />
-          <TurnoDetailModal
-            open={selectedAppointmentDetail !== null}
-            appointment={selectedAppointmentDetail}
-            onClose={() => setSelectedAppointmentDetail(null)}
-            onReschedule={handleRescheduleFromDetail}
-            date={isoDate}
-          />
+          {selectedAppointmentDetail && (
+            <TurnoDetailModal
+              open
+              appointment={selectedAppointmentDetail}
+              onClose={() => setSelectedAppointmentDetail(null)}
+              onReschedule={handleRescheduleFromDetail}
+              date={isoDate}
+            />
+          )}
         </>
       ) : (
         <>
@@ -561,50 +580,56 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
             dayStatusMap={dayStatusMap}
             onDayStatusClick={handleDayStatusClick}
           />
-          <TurnoDetailModal
-            open={selectedAppointmentDetail !== null}
-            appointment={selectedAppointmentDetail}
-            onClose={() => setSelectedAppointmentDetail(null)}
-            onReschedule={handleRescheduleFromDetail}
-            date={isoDate}
-          />
+          {selectedAppointmentDetail && (
+            <TurnoDetailModal
+              open
+              appointment={selectedAppointmentDetail}
+              onClose={() => setSelectedAppointmentDetail(null)}
+              onReschedule={handleRescheduleFromDetail}
+              date={isoDate}
+            />
+          )}
         </>
       )}
 
       </div>
 
-      <NewTurnoModal
-        open={showNewTurnoModal}
-        onClose={handleCloseNewTurno}
-        date={newTurnoPrefill?.date ?? isoDate}
-        initialServiceId={newTurnoPrefill?.serviceId}
-        initialProfessionalId={newTurnoPrefill?.professionalId}
-        initialDate={newTurnoPrefill?.date}
-        initialTimeHHmm={newTurnoPrefill?.timeHHmm}
-        initialPatient={initialPatient}
-        initialPatientPhone={initialPatientPhone}
-        isReceptionist={isReceptionist}
-      />
-      <RescheduleTurnoModal
-        open={showRescheduleTurnoModal}
-        onClose={handleCloseReschedule}
-        appointment={selectedAppointmentForReschedule}
-        date={isoDate}
-      />
-      {showFilters && (
+      {showNewTurnoModal && (
+        <NewTurnoModal
+          open
+          onClose={handleCloseNewTurno}
+          date={newTurnoPrefill?.date ?? isoDate}
+          initialServiceId={newTurnoPrefill?.serviceId}
+          initialProfessionalId={newTurnoPrefill?.professionalId}
+          initialDate={newTurnoPrefill?.date}
+          initialTimeHHmm={newTurnoPrefill?.timeHHmm}
+          isReceptionist={isReceptionist}
+        />
+      )}
+      {showRescheduleTurnoModal && (
+        <RescheduleTurnoModal
+          open
+          onClose={handleCloseReschedule}
+          appointment={selectedAppointmentForReschedule}
+          date={isoDate}
+        />
+      )}
+      {showFilters && showNewPaqueteModal && (
         <NewPaqueteModal
-          open={showNewPaqueteModal}
+          open
           onClose={() => setShowNewPaqueteModal(false)}
         />
       )}
-      <DayStatusModal
-        open={decidingDate !== null}
-        date={decidingDate}
-        entry={decidingDate ? dayStatusMap[decidingDate] : undefined}
-        onClose={handleCloseDayStatus}
-        onDecide={handleDecideDayStatus}
-        isSaving={setDayStatus.isPending}
-      />
+      {decidingDate && (
+        <DayStatusModal
+          open
+          date={decidingDate}
+          entry={dayStatusMap[decidingDate]}
+          onClose={handleCloseDayStatus}
+          onDecide={handleDecideDayStatus}
+          isSaving={setDayStatus.isPending}
+        />
+      )}
     </section>
   )
 }

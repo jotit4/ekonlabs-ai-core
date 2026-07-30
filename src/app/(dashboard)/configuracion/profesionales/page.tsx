@@ -1,20 +1,14 @@
 import { redirect } from 'next/navigation'
-import { createSupabaseServerClient } from '@/lib/supabase/server'
-import { parseJwtPayload } from '@/lib/utils/jwt'
+import { getAuthClaims } from '@/lib/auth/claims'
 import { ProfesionalesView } from '@/components/configuracion/ProfesionalesView'
 
 export const dynamic = 'force-dynamic'
 
 export default async function ProfesionalesPage() {
-  const supabase = await createSupabaseServerClient()
+  const auth = await getAuthClaims()
+  if (!auth) redirect('/login')
 
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
-
-  const { data: { session } } = await supabase.auth.getSession()
-  const claims = parseJwtPayload(session?.access_token ?? '')
-
-  const role = claims?.app_role
+  const role = auth.role
   if (role !== 'admin' && role !== 'receptionist') {
     redirect('/agenda')
   }

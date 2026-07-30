@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import {
   Calendar, CalendarClock, ChartBar, Home, Layers, MessageSquare, PanelLeft,
   PanelLeftClose, Settings, ShieldCheck, UserCheck, UserCog, UserX, Users,
@@ -50,6 +50,7 @@ const NAV_ITEMS: Record<UserRole, NavItem[]> = {
 export function AppSidebar({ role }: { role: UserRole }) {
   const [collapsed, setCollapsed] = useState(false)
   const pathname = usePathname()
+  const router = useRouter()
   const items = NAV_ITEMS[role] ?? NAV_ITEMS.receptionist
 
   // "Inicio" lleva al landing del rol y se resalta cuando estás en esa página.
@@ -89,6 +90,9 @@ export function AppSidebar({ role }: { role: UserRole }) {
           <li>
             <Link
               href={homeHref}
+              prefetch={false}
+              onMouseEnter={() => router.prefetch(homeHref)}
+              onFocus={() => router.prefetch(homeHref)}
               aria-current={homeActive ? 'page' : undefined}
               className={[
                 'flex items-center gap-3 px-3 py-2.5 rounded-[8px] min-h-[44px]',
@@ -109,6 +113,9 @@ export function AppSidebar({ role }: { role: UserRole }) {
               <li key={href}>
                 <Link
                   href={href}
+                  prefetch={false}
+                  onMouseEnter={() => router.prefetch(href)}
+                  onFocus={() => router.prefetch(href)}
                   aria-current={active ? 'page' : undefined}
                   className={[
                     'flex items-center gap-3 px-3 py-2.5 rounded-[8px] min-h-[44px]',
@@ -141,6 +148,7 @@ export function AppSidebar({ role }: { role: UserRole }) {
         {/* Inicio — primero también en móvil. Lleva a "/" (redirige por rol). */}
         <Link
           href={homeHref}
+          prefetch={false}
           aria-current={homeActive ? 'page' : undefined}
           aria-label={HOME_LABEL}
           className={[
@@ -161,6 +169,7 @@ export function AppSidebar({ role }: { role: UserRole }) {
             <Link
               key={href}
               href={href}
+              prefetch={false}
               aria-current={active ? 'page' : undefined}
               aria-label={label}
               className={[

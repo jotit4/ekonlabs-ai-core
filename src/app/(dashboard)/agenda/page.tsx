@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
-import { parseJwtPayload } from '@/lib/utils/jwt'
+import { getAuthClaims } from '@/lib/auth/claims'
 import { miDiaHref } from '@/lib/landing'
 import type { UserRole } from '@/types'
 import { AgendaView } from './AgendaView'
@@ -12,17 +12,12 @@ export default async function AgendaPage({
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 }) {
-  const supabase = await createSupabaseServerClient()
-
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
-
-  const { data: { session } } = await supabase.auth.getSession()
-  const claims = parseJwtPayload(session?.access_token ?? '')
+  const auth = await getAuthClaims()
+  if (!auth) redirect('/login')
 
   // El doctor NO accede a la agenda global — su vista es "Mi Agenda".
   // Guard server-side: redirige antes de renderizar el client component (sin parpadeo).
-  if (claims?.app_role === 'doctor') {
+  if (auth.role === 'doctor') {
     redirect('/agenda/mi-agenda')
   }
 
@@ -30,7 +25,7 @@ export default async function AgendaPage({
   // Se pasa como `initialRole` para que el PRIMER frame de AgendaView ya sea el
   // correcto (modo turnero / foco de área), sin el parpadeo de resolver el rol
   // async en el cliente.
-  const initialRole = (claims?.app_role ?? claims?.role ?? null) as UserRole | null
+  const initialRole = (auth.role ?? null) as UserRole | null
 
   // Atajo "ver mi día" (ISADI 2026-07-17, regeneralizado por el subtipo de la
   // migración 056): un "Doctor-fila" (attention_mode = 'walk_in') que llega a la
@@ -46,10 +41,11 @@ export default async function AgendaPage({
   const sp = await searchParams
   const hasAnyParam = Object.keys(sp).length > 0
   if (!hasAnyParam) {
+    const supabase = await createSupabaseServerClient()
     const { data: du } = await supabase
       .from('dashboard_users')
       .select('professional_id, attention_mode')
-      .eq('user_id', user.id)
+      .eq('user_id', auth.userId)
       .single()
     if (du?.attention_mode === 'walk_in' && du.professional_id) {
       redirect(miDiaHref(du.professional_id))

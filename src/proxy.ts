@@ -1,7 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { parseJwtPayload } from '@/lib/utils/jwt'
 
 const PROTECTED_PATHS = [
   '/agenda',
@@ -9,6 +8,11 @@ const PROTECTED_PATHS = [
   '/conversaciones',
   '/configuracion',
   '/metricas',
+  '/recepcion',
+  '/inicio',
+  '/mi-jornada',
+  '/mi-disponibilidad',
+  '/mi-perfil',
 ]
 
 function isProtectedPath(pathname: string): boolean {
@@ -48,32 +52,23 @@ export async function proxy(request: NextRequest) {
     },
   })
 
-  // This is the ONE place that reaches the Supabase Auth server, once per
-  // navigation. getUser() (a) refreshes an expiring session and persists the new
-  // tokens here — the only context that can write cookies to the response — and
-  // (b) validates the user server-side, giving us periodic revocation detection.
-  // The dashboard layout and API routes then validate the JWT LOCALLY (signature
-  // + exp) with zero network round-trips per request.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  // `getClaims()` refresca una sesión vencida y persiste las cookies mediante
+  // setAll, igual que requiere el patrón SSR oficial. Con JWT asimétrico ES256
+  // verifica firma + expiración contra la JWKS cacheada, evitando el round-trip
+  // de `getUser()` a Supabase Auth en CADA navegación del dashboard.
+  const { data, error } = await supabase.auth.getClaims()
+  const claims = !error ? data?.claims : null
+  const isAuthenticated = typeof claims?.sub === 'string'
 
   const { pathname } = request.nextUrl
 
-  if (!user && isProtectedPath(pathname)) {
+  if (!isAuthenticated && isProtectedPath(pathname)) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  if (user && isProtectedPath(pathname)) {
-    // Read the (possibly refreshed) access token from cookies — local, no round-trip.
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
-    if (session?.access_token) {
-      const claims = parseJwtPayload(session.access_token)
-      if (claims?.tenant_id) {
-        supabaseResponse.headers.set('x-tenant-id', claims.tenant_id as string)
-      }
+  if (isAuthenticated && isProtectedPath(pathname)) {
+    if (typeof claims?.tenant_id === 'string') {
+      supabaseResponse.headers.set('x-tenant-id', claims.tenant_id)
     }
   }
 

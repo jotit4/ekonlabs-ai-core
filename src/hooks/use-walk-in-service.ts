@@ -33,7 +33,7 @@ export interface WalkInService {
   defaultProfessionalId: string | null
 }
 
-export function useWalkInService(): WalkInService | null {
+export function useWalkInService(enabled = true): WalkInService | null {
   const { result } = useList<WalkInServiceRow>({
     resource: 'services',
     meta: { select: 'service_id, name' },
@@ -43,6 +43,7 @@ export function useWalkInService(): WalkInService | null {
     ],
     sorters: [{ field: 'name', order: 'asc' }],
     pagination: { mode: 'off' },
+    queryOptions: { enabled, staleTime: 5 * 60_000 },
   })
 
   const walkInServiceId = result?.data?.[0]?.service_id ?? null
@@ -57,7 +58,7 @@ export function useWalkInService(): WalkInService | null {
       // setState síncrono — mismo criterio que NewTurnoModal/WalkInQueuePanel
       // (react-hooks/set-state-in-effect).
       setProfessionalIds([])
-      if (!walkInServiceId) return
+      if (!enabled || !walkInServiceId) return
 
       try {
         const res = await fetch(
@@ -75,10 +76,10 @@ export function useWalkInService(): WalkInService | null {
     return () => {
       cancelled = true
     }
-  }, [walkInServiceId])
+  }, [enabled, walkInServiceId])
 
   // Sin servicio walk-in el tenant no tiene cola → nada que montar.
-  if (!walkInServiceId) return null
+  if (!enabled || !walkInServiceId) return null
 
   return {
     serviceId: walkInServiceId,

@@ -116,7 +116,10 @@ export function ConversationListSidebar() {
   } = useQuery<ConversationSummary[]>({
     queryKey: ['conversations', 'list', { status: 'all' }],
     queryFn: fetchConversations,
-    staleTime: 0,
+    // La home de Recepción usa exactamente esta queryKey. Reutilizar sus datos
+    // evita repetir el request al navegar; Realtime y el polling mantienen la
+    // lista fresca.
+    staleTime: 30_000,
     refetchInterval: 30_000, // fallback: si Realtime cae, la lista se actualiza igual cada 30s
     // Un 403 (permiso) no se resuelve reintentando; solo reintentar fallos transitorios.
     retry: (failureCount, err) =>

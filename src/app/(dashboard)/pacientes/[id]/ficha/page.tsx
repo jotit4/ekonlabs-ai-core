@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { getAuthClaims } from '@/lib/auth/claims'
 import { getFichaDossier } from '@/lib/pacientes/ficha-dossier'
 import { FichaImprimibleView } from '@/components/pacientes/FichaImprimibleView'
 
@@ -14,13 +15,10 @@ export default async function FichaPacientePage({
 }: {
   params: Promise<{ id: string }>
 }) {
+  const auth = await getAuthClaims()
+  if (!auth) redirect('/login')
+
   const supabase = await createSupabaseServerClient()
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
-
   const { id } = await params
   const dossier = await getFichaDossier(supabase, id)
   if (!dossier) redirect('/pacientes')

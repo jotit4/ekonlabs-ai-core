@@ -1,14 +1,18 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
+import dynamic from 'next/dynamic'
 import { useList } from '@refinedev/core'
-import { useQuery } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { Dialog } from '@base-ui/react/dialog'
 import { PatientRowItem } from '@/components/pacientes/PatientRowItem'
-import { PatientForm } from '@/components/pacientes/PatientForm'
 import type { Patient } from '@/types/patients'
-import type { ConversationSummary } from '@/types/conversations'
+
+const PatientForm = dynamic(() =>
+  import('@/components/pacientes/PatientForm').then((mod) => mod.PatientForm),
+)
+
+const PAGE_SIZE = 50
 
 // ─── Skeleton de carga ───────────────────────────────────────────────────────
 
@@ -61,10 +65,14 @@ export default function PacientesPage() {
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
 
   // Debounce 300ms
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedQuery(query), 300)
+    const timer = setTimeout(() => {
+      setDebouncedQuery(query)
+      setCurrentPage(1)
+    }, 300)
     return () => clearTimeout(timer)
   }, [query])
 
@@ -78,7 +86,8 @@ export default function PacientesPage() {
         dni,
         obra_social,
         deletion_requested_at,
-        appointments(appointment_id, start_at, end_at, status)
+        appointments(appointment_id, start_at, status),
+        thread_states(status, paused_reason)
       `,
     },
     filters:
@@ -95,7 +104,10 @@ export default function PacientesPage() {
           ]
         : [],
     sorters: [{ field: 'full_name', order: 'asc' }],
-    pagination: { mode: 'server', pageSize: 500, currentPage: 1 },
+    // Antes se pedían hasta 500 pacientes, con TODO su historial de turnos, y
+    // además otra consulta que reconstruía la bandeja completa de WhatsApp.
+    // Una página acotada mantiene estable el payload aun cuando crezca ISADI.
+    pagination: { mode: 'server', pageSize: PAGE_SIZE, currentPage },
     queryOptions: {
       queryKey: ['patients', 'list', debouncedQuery],
       staleTime: 5 * 60 * 1000,
@@ -105,34 +117,8 @@ export default function PacientesPage() {
   const isPending = listQuery.isPending
   const isError = listQuery.isError
   const patients: Patient[] = (result?.data ?? []) as Patient[]
-
-  const { data: conversations = [] } = useQuery<ConversationSummary[]>({
-    queryKey: ['conversations', 'list', { status: 'all' }],
-    queryFn: async () => {
-      const res = await fetch('/api/conversations')
-      if (!res.ok) throw new Error('Error al cargar conversaciones')
-      const json = await res.json() as { conversations: ConversationSummary[] }
-      return json.conversations
-    },
-    // El badge "tiene conversación" no necesita datos frescos al segundo:
-    // 60s (alineado al default global) evita redisparar el RPC+3-queries de
-    // /api/conversations cada vez que se vuelve a Pacientes.
-    staleTime: 60_000,
-  })
-
-  const threadStateByPhone = useMemo(() => {
-    const map = new Map<string, { status: 'active' | 'paused'; paused_reason: string | null }>()
-    for (const conv of conversations) {
-      if (conv.status === 'resolved') continue
-      const status = conv.status === 'ai_active' ? 'active' : 'paused'
-      const paused_reason =
-        conv.status === 'human_takeover' ? 'human_takeover'
-        : conv.status === 'needs_intervention' ? 'low_confidence'
-        : null
-      map.set(conv.phone_number, { status, paused_reason })
-    }
-    return map
-  }, [conversations])
+  const totalPatients = result?.total ?? patients.length
+  const totalPages = Math.max(1, Math.ceil(totalPatients / PAGE_SIZE))
 
   const handlePatientCreated = (patientId: string) => {
     setDialogOpen(false)
@@ -168,7 +154,7 @@ export default function PacientesPage() {
             Nuevo paciente
           </Dialog.Trigger>
 
-          <Dialog.Portal>
+          {dialogOpen && <Dialog.Portal>
             <Dialog.Backdrop
               style={{
                 position: 'fixed',
@@ -210,7 +196,7 @@ export default function PacientesPage() {
                 onSuccess={handlePatientCreated}
               />
             </Dialog.Popup>
-          </Dialog.Portal>
+          </Dialog.Portal>}
         </Dialog.Root>
       </div>
 
@@ -315,12 +301,40 @@ export default function PacientesPage() {
                       key={p.patient_id}
                       patient={p}
                       onClick={() => router.push(`/pacientes/${p.patient_id}`)}
-                      threadState={threadStateByPhone.get(p.phone_number) ?? null}
+                      threadState={p.thread_states?.[0] ?? null}
                     />
                   ))}
                 </tbody>
               </table>
             </div>
+          )}
+          {totalPages > 1 && (
+            <nav
+              aria-label="Paginación de pacientes"
+              className="mt-6 flex items-center justify-between gap-4"
+            >
+              <p className="text-sm text-[var(--color-text-secondary)]">
+                Página {currentPage} de {totalPages} · {totalPatients} pacientes
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={currentPage === 1 || listQuery.isFetching}
+                  onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                  className="min-h-[44px] rounded-[8px] border border-[var(--color-border)] px-4 text-sm disabled:opacity-40"
+                >
+                  Anterior
+                </button>
+                <button
+                  type="button"
+                  disabled={currentPage === totalPages || listQuery.isFetching}
+                  onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                  className="min-h-[44px] rounded-[8px] border border-[var(--color-border)] px-4 text-sm disabled:opacity-40"
+                >
+                  Siguiente
+                </button>
+              </div>
+            </nav>
           )}
         </>
       )}

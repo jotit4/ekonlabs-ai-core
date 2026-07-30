@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { useQueryClient } from '@tanstack/react-query'
 import { LogOut, ChevronDown, IdCard } from 'lucide-react'
 import { createSupabaseBrowserClient } from '@/lib/supabase/client'
 import { useCurrentUser } from '@/hooks/use-current-user'
@@ -24,11 +25,13 @@ interface UserProfileButtonProps {
 
 export function UserProfileButton({ collapsed }: UserProfileButtonProps) {
   const router = useRouter()
+  const queryClient = useQueryClient()
   const { user, isLoading } = useCurrentUser()
 
   async function handleLogout() {
     const supabase = createSupabaseBrowserClient()
     await supabase.auth.signOut()
+    queryClient.removeQueries({ queryKey: ['auth', 'current-user'] })
     router.push('/login')
   }
 

@@ -1,20 +1,14 @@
 import { redirect } from 'next/navigation'
-import { createSupabaseServerClient } from '@/lib/supabase/server'
-import { parseJwtPayload } from '@/lib/utils/jwt'
+import { getAuthClaims } from '@/lib/auth/claims'
 import { ServicesView } from '@/components/configuracion/ServicesView'
 
 export const dynamic = 'force-dynamic'
 
 export default async function ServiciosPage() {
-  const supabase = await createSupabaseServerClient()
+  const auth = await getAuthClaims()
+  if (!auth) redirect('/login')
 
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
-
-  const { data: { session } } = await supabase.auth.getSession()
-  const claims = parseJwtPayload(session?.access_token ?? '')
-
-  if (claims?.app_role !== 'admin') {
+  if (auth.role !== 'admin') {
     redirect('/agenda')
   }
 

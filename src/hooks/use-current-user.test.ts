@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { createElement, type ReactNode } from 'react'
 import { useCurrentUser } from './use-current-user'
 
 function makeJwt(payload: Record<string, unknown>) {
@@ -32,6 +34,16 @@ vi.mock('@/lib/supabase/client', () => ({
   createSupabaseBrowserClient: () => mockSupabase,
 }))
 
+function renderCurrentUser(sharedClient?: QueryClient) {
+  const client = sharedClient ?? new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  return renderHook(() => useCurrentUser(), {
+    wrapper: ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client }, children),
+  })
+}
+
 describe('useCurrentUser', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -39,7 +51,7 @@ describe('useCurrentUser', () => {
 
   it('retorna isLoading=true inicialmente', () => {
     mockGetSession.mockReturnValue(new Promise(() => {})) // never resolves
-    const { result } = renderHook(() => useCurrentUser())
+    const { result } = renderCurrentUser()
     expect(result.current.isLoading).toBe(true)
     expect(result.current.user).toBeNull()
   })
@@ -58,7 +70,7 @@ describe('useCurrentUser', () => {
       error: null,
     })
 
-    const { result } = renderHook(() => useCurrentUser())
+    const { result } = renderCurrentUser()
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false)
@@ -85,7 +97,7 @@ describe('useCurrentUser', () => {
       error: null,
     })
 
-    const { result } = renderHook(() => useCurrentUser())
+    const { result } = renderCurrentUser()
     await waitFor(() => expect(result.current.isLoading).toBe(false))
 
     expect(result.current.user?.initials).toBe('YL')
@@ -105,7 +117,7 @@ describe('useCurrentUser', () => {
       error: null,
     })
 
-    const { result } = renderHook(() => useCurrentUser())
+    const { result } = renderCurrentUser()
     await waitFor(() => expect(result.current.isLoading).toBe(false))
 
     expect(result.current.user?.initials).toBe('AD')
@@ -125,7 +137,7 @@ describe('useCurrentUser', () => {
       error: { message: 'Row not found', code: 'PGRST116' },
     })
 
-    const { result } = renderHook(() => useCurrentUser())
+    const { result } = renderCurrentUser()
     await waitFor(() => expect(result.current.isLoading).toBe(false))
 
     expect(result.current.user).not.toBeNull()
@@ -139,7 +151,7 @@ describe('useCurrentUser', () => {
       data: { session: null },
     })
 
-    const { result } = renderHook(() => useCurrentUser())
+    const { result } = renderCurrentUser()
     await waitFor(() => expect(result.current.isLoading).toBe(false))
 
     expect(result.current.user).toBeNull()
@@ -159,9 +171,37 @@ describe('useCurrentUser', () => {
       error: null,
     })
 
-    const { result } = renderHook(() => useCurrentUser())
+    const { result } = renderCurrentUser()
     await waitFor(() => expect(result.current.isLoading).toBe(false))
 
     expect(result.current.user?.role).toBe('doctor')
+  })
+
+  it('deduplica la sesión y el perfil entre consumidores montados', async () => {
+    mockGetSession.mockResolvedValue({
+      data: {
+        session: {
+          access_token: makeJwt({ app_role: 'admin', tenant_id: 'uuid-1' }),
+          user: { id: 'user-id-6', email: 'admin@test.com' },
+        },
+      },
+    })
+    mockSingle.mockResolvedValue({
+      data: { full_name: 'Admin ISADI', email: 'admin@test.com' },
+      error: null,
+    })
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+
+    const first = renderCurrentUser(client)
+    const second = renderCurrentUser(client)
+    await waitFor(() => {
+      expect(first.result.current.isLoading).toBe(false)
+      expect(second.result.current.isLoading).toBe(false)
+    })
+
+    expect(mockGetSession).toHaveBeenCalledTimes(1)
+    expect(mockSingle).toHaveBeenCalledTimes(1)
   })
 })

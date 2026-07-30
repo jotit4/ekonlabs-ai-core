@@ -46,6 +46,7 @@ export function AppTopbar({ role }: { role: UserRole }) {
         <Link
           data-tour="topbar-volver"
           href={parentPath}
+          prefetch={false}
           aria-label="Volver"
           className={[
             'inline-flex items-center justify-center rounded-[8px] min-h-[44px] min-w-[44px]',
@@ -61,6 +62,7 @@ export function AppTopbar({ role }: { role: UserRole }) {
       <Link
         data-tour="topbar-inicio"
         href={homeHref}
+        prefetch={false}
         aria-current={isHome ? 'page' : undefined}
         aria-label="Ir a Inicio"
         className={[
@@ -83,6 +85,7 @@ export function AppTopbar({ role }: { role: UserRole }) {
           </span>
           <Link
             href={`/${section}`}
+            prefetch={false}
             className={[
               'cursor-pointer rounded-[4px] px-1 -mx-1',
               'text-[14px] font-medium text-[var(--color-text-primary)] truncate',

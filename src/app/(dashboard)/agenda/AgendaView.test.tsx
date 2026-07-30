@@ -308,21 +308,21 @@ describe('AgendaPage', () => {
   // grilla, así que el prefill del NewTurnoModal se arma solo con fecha/hora
   // (+ profesional cuando la vista Día ya lo identifica).
   describe('atajo "Dar un turno" desde celda vacía', () => {
-    it('vista día: click en la celda vacía abre NewTurnoModal con fecha/hora/profesional prellenados', () => {
+    it('vista día: click en la celda vacía abre NewTurnoModal con fecha/hora/profesional prellenados', async () => {
       mockSearchParamsData = { vista: 'dia' }
       render(<AgendaPage />)
       fireEvent.click(screen.getByRole('button', { name: 'mock-empty-cell-dia' }))
-      const modal = screen.getByTestId('new-turno-modal')
+      const modal = await screen.findByTestId('new-turno-modal')
       expect(modal).toHaveAttribute('data-date', '2026-07-14')
       expect(modal).toHaveAttribute('data-time', '10:00')
       expect(modal).toHaveAttribute('data-prof', 'prof-9')
     })
 
-    it('vista semana: click en la celda vacía abre NewTurnoModal con fecha/hora prellenados', () => {
+    it('vista semana: click en la celda vacía abre NewTurnoModal con fecha/hora prellenados', async () => {
       mockSearchParamsData = {}
       render(<AgendaPage />)
       fireEvent.click(screen.getByRole('button', { name: 'mock-empty-cell-semana' }))
-      const modal = screen.getByTestId('new-turno-modal')
+      const modal = await screen.findByTestId('new-turno-modal')
       expect(modal).toHaveAttribute('data-date', '2026-07-15')
       expect(modal).toHaveAttribute('data-time', '11:00')
     })
@@ -398,13 +398,13 @@ describe('AgendaPage', () => {
     expect(screen.queryByRole('button', { name: /nuevo paquete/i })).not.toBeInTheDocument()
   })
 
-  it('al hacer click en "+ Nuevo paquete" abre el NewPaqueteModal (sin initialPatient)', () => {
+  it('al hacer click en "+ Nuevo paquete" abre el NewPaqueteModal (sin initialPatient)', async () => {
     // Admin ve "Nuevo paquete" siempre visible (agenda completa).
     vi.mocked(useUserRole).mockReturnValue('admin')
     mockSearchParamsData = { vista: 'dia' }
     render(<AgendaPage />)
     fireEvent.click(screen.getByRole('button', { name: /nuevo paquete/i }))
-    expect(screen.getByTestId('new-paquete-modal')).toBeInTheDocument()
+    expect(await screen.findByTestId('new-paquete-modal')).toBeInTheDocument()
   })
 
   // ── Modo turnero (recepción) vs agenda completa (admin) ────────────────────
@@ -808,7 +808,7 @@ describe('AgendaPage', () => {
     it('click en el badge de estado del día (vía CalendarViewRangeReadOnly) abre el modal', async () => {
       render(<AgendaPage />)
       fireEvent.click(screen.getByText('mock-day-status-click'))
-      expect(screen.getByTestId('day-status-modal')).toBeInTheDocument()
+      expect(await screen.findByTestId('day-status-modal')).toBeInTheDocument()
     })
   })
 

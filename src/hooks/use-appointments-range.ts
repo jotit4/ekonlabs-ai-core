@@ -7,6 +7,7 @@ import type { Appointment } from '@/types/appointments'
 export interface UseAppointmentsRangeOptions {
   professionalId?: string | null
   serviceId?: string | null
+  enabled?: boolean
 }
 
 export interface UseAppointmentsRangeResult {
@@ -21,7 +22,7 @@ export function useAppointmentsRange(
   dateTo: string,   // ISO date: 'YYYY-MM-DD'
   options?: UseAppointmentsRangeOptions,
 ): UseAppointmentsRangeResult {
-  const { professionalId, serviceId } = options ?? {}
+  const { professionalId, serviceId, enabled = true } = options ?? {}
 
   const startISO = formatISO(startOfDay(parseISO(dateFrom)))
   const endISO = formatISO(endOfDay(parseISO(dateTo)))
@@ -45,6 +46,7 @@ export function useAppointmentsRange(
     queryOptions: {
       queryKey: ['agenda', 'range', dateFrom, dateTo, professionalId ?? '', serviceId ?? ''],
       staleTime: 2 * 60_000,
+      enabled,
     },
   })
 

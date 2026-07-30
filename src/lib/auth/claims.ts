@@ -36,12 +36,10 @@ interface AuthSurface {
  * verifies the signature + expiry against the in-process cached JWKS using
  * WebCrypto. The JWKS is fetched once per process (10 min TTL), not per request.
  *
- * Security trade-off (documented, intentional): `getUser()` used to detect
- * server-side revocation immediately on every request; local validation instead
- * trusts a signed, unexpired token until its next refresh (~1h). The proxy
- * (middleware) still calls `getUser()` once per navigation, preserving periodic
- * revocation detection + token refresh. Access tokens are short-lived, so the
- * revocation window is bounded.
+ * Security trade-off (documented, intentional): local validation trusts a
+ * signed, unexpired access token until its next refresh (~1h). The proxy uses
+ * the same official `getClaims()` SSR path and persists refreshed cookies.
+ * Access tokens are short-lived, so the revocation window is bounded.
  *
  * Compatibility fallback: when the Supabase client does not expose `getClaims`
  * (e.g. unit-test doubles that only stub `getUser`, or an older client), we fall
