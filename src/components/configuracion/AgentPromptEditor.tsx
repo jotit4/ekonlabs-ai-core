@@ -46,7 +46,7 @@ const TABS = [
   { id: 'personalidad', label: 'Personalidad' },
   { id: 'capacidades', label: 'Qué puede hacer' },
   { id: 'conocimiento', label: 'Conocimiento' },
-  { id: 'avanzado', label: 'Avanzado' },
+  { id: 'avanzado', label: 'Reglas de agenda' },
 ]
 
 // ── Style helpers ─────────────────────────────────────────────────────────────
@@ -80,6 +80,8 @@ export function AgentPromptEditor({
   canEdit = true,
 }: AgentPromptEditorProps) {
   const [activeTab, setActiveTab] = useState<string>('personalidad')
+  // Índice de la franja cuya eliminación está pendiente de confirmación. null = ninguna.
+  const [confirmRemoveIndex, setConfirmRemoveIndex] = useState<number | null>(null)
   const { config, isPending, isError, refetch } = useAgentConfig()
   const mutation = useUpdateAgentConfig()
 
@@ -195,7 +197,7 @@ export function AgentPromptEditor({
     )
   }
 
-  // ── Error ────────────────────────────────────────────────────────────────────
+  // ── Error ────────────────────��───────────────────────────────────────────────
   if (isError) {
     return (
       <div
@@ -361,11 +363,11 @@ export function AgentPromptEditor({
             </fieldset>
           </TabPanel>
 
-          {/* ── Tab 4: Avanzado ──────────────────────────────────────────── */}
+          {/* ── Tab 4: Reglas de agenda ──────────────────────────────────── */}
           <TabPanel id="avanzado" className="space-y-6 pt-6">
-            {/* Operaciones de agenda */}
+            {/* Reglas de disponibilidad */}
             <fieldset className="space-y-4">
-              <legend className={sectionTitleClass}>Operaciones de agenda</legend>
+              <legend className={sectionTitleClass}>Reglas de disponibilidad</legend>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
@@ -432,7 +434,7 @@ export function AgentPromptEditor({
                         htmlFor={`booking-window-start-${index}`}
                         className={labelClass}
                       >
-                        Desde (franja {index + 1})
+                        Desde
                       </label>
                       <Controller
                         name={`operations_config.booking_windows.${index}.start`}
@@ -458,7 +460,7 @@ export function AgentPromptEditor({
 
                     <div className="min-w-[120px] flex-1">
                       <label htmlFor={`booking-window-end-${index}`} className={labelClass}>
-                        Hasta (franja {index + 1})
+                        Hasta
                       </label>
                       <Controller
                         name={`operations_config.booking_windows.${index}.end`}
@@ -482,14 +484,38 @@ export function AgentPromptEditor({
                       )}
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => removeBookingWindow(index)}
-                      aria-label={`Quitar franja horaria ${index + 1}`}
-                      className="min-h-11 shrink-0 rounded-[8px] border border-[var(--color-border)] px-3 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)]"
-                    >
-                      Quitar
-                    </button>
+                    {confirmRemoveIndex === index ? (
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            removeBookingWindow(index)
+                            setConfirmRemoveIndex(null)
+                          }}
+                          aria-label={`Confirmar quitar horario ${index + 1}`}
+                          className="min-h-11 rounded-[8px] bg-[var(--color-status-alert)] px-3 text-sm font-medium text-white"
+                        >
+                          Quitar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmRemoveIndex(null)}
+                          aria-label="Cancelar"
+                          className="min-h-11 rounded-[8px] border border-[var(--color-border)] px-3 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)]"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmRemoveIndex(index)}
+                        aria-label={`Quitar horario ${index + 1}`}
+                        className="min-h-11 shrink-0 rounded-[8px] border border-[var(--color-border)] px-3 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)]"
+                      >
+                        Quitar
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

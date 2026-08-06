@@ -7,6 +7,8 @@ import { useRouter } from 'next/navigation'
 import { Dialog } from '@base-ui/react/dialog'
 import { PatientRowItem } from '@/components/pacientes/PatientRowItem'
 import type { Patient } from '@/types/patients'
+import { EmptyState } from '@/components/ui/empty-state'
+import { Users, SearchX } from 'lucide-react'
 
 const PatientForm = dynamic(() =>
   import('@/components/pacientes/PatientForm').then((mod) => mod.PatientForm),
@@ -205,20 +207,31 @@ export default function PacientesPage() {
 
       {/* Estado: error */}
       {isError && !isPending && (
-        <div role="alert" className="text-center py-8 text-[var(--color-text-secondary)]">
-          Error al cargar pacientes. Recargá la página.
-        </div>
+        <EmptyState
+          icon={<Users className="h-6 w-6" />}
+          title="No se pudo cargar la lista de pacientes"
+          description="Puede ser un problema temporal. Intentá recargar la página."
+          action={{ label: 'Recargar', onClick: () => window.location.reload() }}
+        />
       )}
 
       {/* Lista de pacientes */}
       {!isPending && !isError && (
         <>
           {patients.length === 0 ? (
-            <p className="text-center text-[15px] text-[var(--color-text-secondary)] py-8">
-              {debouncedQuery.length >= 2
-                ? `Sin resultados para "${debouncedQuery}"`
-                : 'No hay pacientes registrados aún.'}
-            </p>
+            debouncedQuery.length >= 2 ? (
+              <EmptyState
+                icon={<SearchX className="h-6 w-6" />}
+                title={`Sin resultados para "${debouncedQuery}"`}
+                description="Probá con el DNI completo, el nombre exacto o el número de teléfono."
+              />
+            ) : (
+              <EmptyState
+                icon={<Users className="h-6 w-6" />}
+                title="Todavía no hay pacientes registrados"
+                description="Usá el botón 'Nuevo paciente' para agregar el primero."
+              />
+            )
           ) : (
             <div style={{ overflowX: 'auto' }}>
               <table

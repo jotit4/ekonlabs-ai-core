@@ -20,7 +20,7 @@ export function ShadowModeBanner() {
       }}
     >
       <span aria-hidden="true">⚠</span>
-      Shadow mode activo — el agendamiento automático está bloqueado
+      Modo observación activo — el agente no confirma turnos automáticamente
     </div>
   )
 }

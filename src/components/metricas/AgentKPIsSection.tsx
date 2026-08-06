@@ -67,16 +67,16 @@ export function AgentKPIsSection({
   const fallbackSubtitulo =
     kpis?.fallback_rate === null || kpis === null
       ? 'Datos no disponibles'
-      : `${kpis.fallback_rate}% de respuestas de respaldo`
+      : `${kpis.fallback_rate}% no resuelto por el agente`
 
   const responseTimeValue = formatTiempoRespuesta(kpis?.response_time_avg_ms ?? null)
   const responseTimeSubtitulo =
     kpis?.response_time_avg_ms === null || kpis === null
       ? 'Datos no disponibles'
-      : 'Promedio usuario→agente'
+      : 'Tiempo promedio de respuesta'
 
   const escalacionesValue = kpis?.escalaciones ?? 0
-  const escalacionesSubtitulo = 'Takeovers manuales en el período'
+  const escalacionesSubtitulo = 'Intervenciones manuales en el período'
 
   return (
     <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -87,13 +87,13 @@ export function AgentKPIsSection({
         isLoading={isLoading}
       />
       <KPICard
-        titulo="Escalaciones"
+        titulo="Intervenciones"
         valor={escalacionesValue}
         subtitulo={escalacionesSubtitulo}
         isLoading={isLoading}
       />
       <KPICard
-        titulo="Fallback rate"
+        titulo="Respuestas de fallback"
         valor={fallbackValue}
         subtitulo={fallbackSubtitulo}
         isLoading={isLoading}

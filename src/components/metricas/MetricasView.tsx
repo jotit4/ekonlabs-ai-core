@@ -3,6 +3,8 @@
 import type { ClinicKPIs, AgentKPIs } from '@/types/metricas'
 import { KPICard } from './KPICard'
 import { AgentKPIsSection } from './AgentKPIsSection'
+import { EmptyState } from '@/components/ui/empty-state'
+import { BarChart3 } from 'lucide-react'
 
 interface MetricasViewProps {
   kpis: ClinicKPIs | null
@@ -30,18 +32,12 @@ export function MetricasView({
         <header className="mb-6">
           <p className="text-sm text-[var(--color-text-secondary)]">{periodoLabel}</p>
         </header>
-        <div className="flex flex-col items-center gap-4 py-8 text-center">
-          <p className="text-[var(--color-text-secondary)]">
-            No se pudieron cargar las métricas.
-          </p>
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="rounded-[var(--radius-sm)] bg-[var(--color-interactive)] px-4 py-2 text-sm font-medium text-white"
-          >
-            Reintentar
-          </button>
-        </div>
+        <EmptyState
+          icon={<BarChart3 className="h-6 w-6" />}
+          title="No se pudieron cargar las métricas"
+          description="Puede ser un problema temporal. Intentá recargar la página."
+          action={{ label: 'Recargar', onClick: () => window.location.reload() }}
+        />
       </section>
     )
   }
@@ -57,9 +53,12 @@ export function MetricasView({
         </header>
 
         {sinDatos ? (
-          <p className="text-center text-[var(--color-text-secondary)] py-8">
-            Sin datos para el período seleccionado
-          </p>
+          <EmptyState
+            icon={<BarChart3 className="h-6 w-6" />}
+            title="Sin datos para este período"
+            description="No hay turnos ni actividad registrada en el rango de fechas seleccionado."
+            className="mb-6"
+          />
         ) : null}
 
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

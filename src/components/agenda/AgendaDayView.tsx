@@ -2,6 +2,8 @@
 
 import type { Appointment } from '@/types/appointments'
 import { TurnoCard } from './TurnoCard'
+import { EmptyState } from '@/components/ui/empty-state'
+import { CalendarOff } from 'lucide-react'
 
 interface AgendaDayViewProps {
   date: string // ISO date YYYY-MM-DD (used for label/display context)
@@ -48,26 +50,22 @@ export function AgendaDayView({ appointments, isLoading, isError, onRefetch, onR
 
   if (isError) {
     return (
-      <div
-        role="alert"
-        className="flex flex-col items-center gap-3 py-12 text-[var(--color-text-secondary)]"
-      >
-        <p className="text-sm">Error al cargar los turnos</p>
-        <button
-          onClick={() => onRefetch()}
-          className="min-h-[44px] px-4 text-sm text-[var(--color-interactive)] hover:underline"
-        >
-          Reintentar
-        </button>
-      </div>
+      <EmptyState
+        icon={<CalendarOff className="h-6 w-6" />}
+        title="No se pudieron cargar los turnos"
+        description="Puede ser un problema temporal de conexión."
+        action={{ label: 'Reintentar', onClick: onRefetch }}
+      />
     )
   }
 
   if (appointments.length === 0) {
     return (
-      <div className="flex items-center justify-center py-16 text-sm text-[var(--color-text-secondary)]">
-        Sin turnos para hoy
-      </div>
+      <EmptyState
+        icon={<CalendarOff className="h-6 w-6" />}
+        title="Sin turnos para hoy"
+        description="No hay turnos agendados para este día."
+      />
     )
   }
 

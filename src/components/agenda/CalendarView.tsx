@@ -13,6 +13,8 @@ import {
 } from '@/lib/agenda/turnero-grid'
 import { TurneroGrid } from './TurneroGrid'
 import { AgendaDayViewSkeleton } from './AgendaDayView'
+import { EmptyState } from '@/components/ui/empty-state'
+import { CalendarOff } from 'lucide-react'
 
 const NO_PROFESSIONAL_ID = 'sin-profesional'
 const NO_PROFESSIONAL_LABEL = 'Sin profesional'
@@ -116,33 +118,22 @@ export function CalendarView({
 
   if (isError) {
     return (
-      <div
-        role="alert"
-        className="flex flex-col items-center gap-3 py-12 text-[var(--color-text-secondary)]"
-      >
-        <p className="text-sm">Error al cargar los turnos</p>
-        <button
-          onClick={() => onRefetch()}
-          className="min-h-[44px] px-4 text-sm text-[var(--color-interactive)] hover:underline"
-        >
-          Reintentar
-        </button>
-      </div>
+      <EmptyState
+        icon={<CalendarOff className="h-6 w-6" />}
+        title="No se pudieron cargar los turnos"
+        description="Puede ser un problema temporal de conexión."
+        action={{ label: 'Reintentar', onClick: onRefetch }}
+      />
     )
   }
 
   if (grid.columns.length === 0) {
     return (
-      <div
-        style={{
-          padding: '64px 0',
-          textAlign: 'center',
-          color: 'var(--color-text-secondary)',
-          fontSize: 14,
-        }}
-      >
-        Sin turnos para este día
-      </div>
+      <EmptyState
+        icon={<CalendarOff className="h-6 w-6" />}
+        title="Sin turnos para este día"
+        description="No hay turnos agendados. Podés dar uno desde el botón 'Dar turno' arriba."
+      />
     )
   }
 

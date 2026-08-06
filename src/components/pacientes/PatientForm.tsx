@@ -173,136 +173,126 @@ export function PatientForm({ mode, patient, onSuccess }: PatientFormProps) {
     }
   }
 
-  return (
-    <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
+  // ── Campos siempre visibles en modo "crear" ──────────────────────────────
+  const camposEsenciales = (
+    <>
+      {/* full_name */}
+      <div>
+        <label htmlFor="full_name" className={labelClass()}>
+          Nombre completo <span aria-hidden="true" className="text-red-500">*</span>
+        </label>
+        <input
+          id="full_name"
+          type="text"
+          autoComplete="name"
+          {...register('full_name')}
+          className={inputClass(!!errors.full_name)}
+          aria-invalid={!!errors.full_name}
+          aria-describedby={errors.full_name ? 'full-name-error' : undefined}
+          aria-required="true"
+        />
+        {errors.full_name && (
+          <p id="full-name-error" role="alert" className="mt-1 text-xs text-red-600">
+            {errors.full_name.message}
+          </p>
+        )}
+      </div>
 
-      {/* ── Sección: Datos principales ─────────────────────────────────── */}
-      <fieldset className="space-y-4">
-        <legend className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] pb-1">
-          Datos principales
-        </legend>
+      {/* phone_number */}
+      <div>
+        <label htmlFor="phone_number" className={labelClass()}>
+          Teléfono <span aria-hidden="true" className="text-red-500">*</span>
+        </label>
+        <input
+          id="phone_number"
+          type="tel"
+          autoComplete="tel"
+          {...register('phone_number')}
+          className={inputClass(!!errors.phone_number)}
+          aria-invalid={!!errors.phone_number}
+          aria-describedby={errors.phone_number ? 'phone-number-error' : undefined}
+          aria-required="true"
+        />
+        {errors.phone_number && (
+          <p id="phone-number-error" role="alert" className="mt-1 text-xs text-red-600">
+            {errors.phone_number.message}
+          </p>
+        )}
+      </div>
 
-        {/* full_name */}
-        <div>
-          <label htmlFor="full_name" className={labelClass()}>
-            Nombre completo <span aria-hidden="true" className="text-red-500">*</span>
-          </label>
-          <input
-            id="full_name"
-            type="text"
-            autoComplete="name"
-            {...register('full_name')}
-            className={inputClass(!!errors.full_name)}
-            aria-invalid={!!errors.full_name}
-            aria-describedby={errors.full_name ? 'full-name-error' : undefined}
-            aria-required="true"
-          />
-          {errors.full_name && (
-            <p id="full-name-error" role="alert" className="mt-1 text-xs text-red-600">
-              {errors.full_name.message}
-            </p>
+      {/* dni */}
+      <div>
+        <label htmlFor="dni" className={labelClass()}>
+          DNI
+        </label>
+        <input
+          id="dni"
+          type="text"
+          placeholder="12345678"
+          {...register('dni')}
+          className={inputClass(!!errors.dni)}
+          aria-invalid={!!errors.dni}
+          aria-describedby={errors.dni ? 'dni-error' : undefined}
+        />
+        {errors.dni && (
+          <p id="dni-error" role="alert" className="mt-1 text-xs text-red-600">
+            {errors.dni.message}
+          </p>
+        )}
+      </div>
+
+      {/* date_of_birth */}
+      <div>
+        <label htmlFor="date_of_birth" className={labelClass()}>
+          Fecha de nacimiento
+        </label>
+        <Controller
+          name="date_of_birth"
+          control={control}
+          render={({ field }) => (
+            <DateField
+              id="date_of_birth"
+              value={field.value ?? ''}
+              onChange={field.onChange}
+              onBlur={field.onBlur}
+              aria-invalid={!!errors.date_of_birth}
+            />
           )}
-        </div>
+        />
+      </div>
+    </>
+  )
 
-        {/* phone_number */}
-        <div>
-          <label htmlFor="phone_number" className={labelClass()}>
-            Teléfono <span aria-hidden="true" className="text-red-500">*</span>
-          </label>
-          <input
-            id="phone_number"
-            type="tel"
-            autoComplete="tel"
-            {...register('phone_number')}
-            className={inputClass(!!errors.phone_number)}
-            aria-invalid={!!errors.phone_number}
-            aria-describedby={errors.phone_number ? 'phone-number-error' : undefined}
-            aria-required="true"
-          />
-          {errors.phone_number && (
-            <p id="phone-number-error" role="alert" className="mt-1 text-xs text-red-600">
-              {errors.phone_number.message}
-            </p>
-          )}
-        </div>
-      </fieldset>
+  // ── Campos que se expanden con "+ Más datos" (solo en modo crear) ─────────
+  const camposExtendidos = (
+    <>
+      {/* email */}
+      <div>
+        <label htmlFor="email" className={labelClass()}>
+          Email
+        </label>
+        <input
+          id="email"
+          type="email"
+          autoComplete="email"
+          {...register('email')}
+          className={inputClass(!!errors.email)}
+          aria-invalid={!!errors.email}
+          aria-describedby={errors.email ? 'email-error' : undefined}
+        />
+        {errors.email && (
+          <p id="email-error" role="alert" className="mt-1 text-xs text-red-600">
+            {errors.email.message}
+          </p>
+        )}
+      </div>
 
-      {/* ── Sección: Identificación ────────────────────────────────────── */}
-      <fieldset className="space-y-4">
-        <legend className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] pb-1">
-          Identificación
-        </legend>
-
-        {/* dni */}
-        <div>
-          <label htmlFor="dni" className={labelClass()}>
-            DNI
-          </label>
-          <input
-            id="dni"
-            type="text"
-            placeholder="12345678"
-            {...register('dni')}
-            className={inputClass(!!errors.dni)}
-            aria-invalid={!!errors.dni}
-            aria-describedby={errors.dni ? 'dni-error' : undefined}
-          />
-          {errors.dni && (
-            <p id="dni-error" role="alert" className="mt-1 text-xs text-red-600">
-              {errors.dni.message}
-            </p>
-          )}
-        </div>
-
-        {/* date_of_birth */}
-        <div>
-          <label htmlFor="date_of_birth" className={labelClass()}>
-            Fecha de nacimiento
-          </label>
-          <Controller
-            name="date_of_birth"
-            control={control}
-            render={({ field }) => (
-              <DateField
-                id="date_of_birth"
-                value={field.value ?? ''}
-                onChange={field.onChange}
-                onBlur={field.onBlur}
-                aria-invalid={!!errors.date_of_birth}
-              />
-            )}
-          />
-        </div>
-
-        {/* email */}
-        <div>
-          <label htmlFor="email" className={labelClass()}>
-            Email
-          </label>
-          <input
-            id="email"
-            type="email"
-            autoComplete="email"
-            {...register('email')}
-            className={inputClass(!!errors.email)}
-            aria-invalid={!!errors.email}
-            aria-describedby={errors.email ? 'email-error' : undefined}
-          />
-          {errors.email && (
-            <p id="email-error" role="alert" className="mt-1 text-xs text-red-600">
-              {errors.email.message}
-            </p>
-          )}
-        </div>
-      </fieldset>
-
-      {/* ── Sección: Cobertura médica ──────────────────────────────────── */}
-      <fieldset className="space-y-4">
+      {/* ── Cobertura médica ── */}
+      <fieldset className="space-y-4 pt-2">
         <legend className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] pb-1">
           Cobertura médica
         </legend>
 
-        {/* obra_social — selector en cascada (Story 3.3) */}
         <div>
           <label className={labelClass()}>
             Obra social
@@ -319,7 +309,6 @@ export function PatientForm({ mode, patient, onSuccess }: PatientFormProps) {
           )}
         </div>
 
-        {/* obra_social_number */}
         <div>
           <label htmlFor="obra_social_number" className={labelClass()}>
             Número de afiliado
@@ -334,13 +323,12 @@ export function PatientForm({ mode, patient, onSuccess }: PatientFormProps) {
         </div>
       </fieldset>
 
-      {/* ── Sección: Adicionales ──────────────────────────────────────── */}
-      <fieldset className="space-y-4">
+      {/* ── Información adicional ── */}
+      <fieldset className="space-y-4 pt-2">
         <legend className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] pb-1">
           Información adicional
         </legend>
 
-        {/* address */}
         <div>
           <label htmlFor="address" className={labelClass()}>
             Domicilio
@@ -355,7 +343,6 @@ export function PatientForm({ mode, patient, onSuccess }: PatientFormProps) {
           />
         </div>
 
-        {/* alternative_phone */}
         <div>
           <label htmlFor="alternative_phone" className={labelClass()}>
             Teléfono alternativo
@@ -369,7 +356,6 @@ export function PatientForm({ mode, patient, onSuccess }: PatientFormProps) {
           />
         </div>
 
-        {/* reason_for_visit */}
         <div>
           <label htmlFor="reason_for_visit" className={labelClass()}>
             Motivo de consulta
@@ -383,7 +369,6 @@ export function PatientForm({ mode, patient, onSuccess }: PatientFormProps) {
           />
         </div>
 
-        {/* notes */}
         <div>
           <label htmlFor="notes" className={labelClass()}>
             Notas
@@ -398,72 +383,43 @@ export function PatientForm({ mode, patient, onSuccess }: PatientFormProps) {
         </div>
       </fieldset>
 
-      {/* ── Sección: Ficha de admisión (migración 047 — Fase 1 digitalización) ── */}
-      <fieldset className="space-y-4">
+      {/* ── Ficha de admisión ── */}
+      <fieldset className="space-y-4 pt-2">
         <legend className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] pb-1">
           Ficha de admisión
         </legend>
 
-        {/* lugar */}
         <div>
           <label htmlFor="lugar" className={labelClass()}>
             Lugar
           </label>
-          <input
-            id="lugar"
-            type="text"
-            {...register('lugar')}
-            className={inputClass(!!errors.lugar)}
-            aria-invalid={!!errors.lugar}
-          />
+          <input id="lugar" type="text" {...register('lugar')} className={inputClass(!!errors.lugar)} aria-invalid={!!errors.lugar} />
         </div>
 
-        {/* ocupacion */}
         <div>
           <label htmlFor="ocupacion" className={labelClass()}>
             Ocupación
           </label>
-          <input
-            id="ocupacion"
-            type="text"
-            {...register('ocupacion')}
-            className={inputClass(!!errors.ocupacion)}
-            aria-invalid={!!errors.ocupacion}
-          />
+          <input id="ocupacion" type="text" {...register('ocupacion')} className={inputClass(!!errors.ocupacion)} aria-invalid={!!errors.ocupacion} />
         </div>
 
-        {/* derivacion */}
         <div>
           <label htmlFor="derivacion" className={labelClass()}>
             Derivación
           </label>
-          <input
-            id="derivacion"
-            type="text"
-            {...register('derivacion')}
-            className={inputClass(!!errors.derivacion)}
-            aria-invalid={!!errors.derivacion}
-          />
+          <input id="derivacion" type="text" {...register('derivacion')} className={inputClass(!!errors.derivacion)} aria-invalid={!!errors.derivacion} />
         </div>
 
-        {/* actividad_fisica */}
         <div>
           <label htmlFor="actividad_fisica" className={labelClass()}>
             Actividad física
           </label>
-          <input
-            id="actividad_fisica"
-            type="text"
-            {...register('actividad_fisica')}
-            className={inputClass(!!errors.actividad_fisica)}
-            aria-invalid={!!errors.actividad_fisica}
-          />
+          <input id="actividad_fisica" type="text" {...register('actividad_fisica')} className={inputClass(!!errors.actividad_fisica)} aria-invalid={!!errors.actividad_fisica} />
         </div>
 
-        {/* primary_professional_id — KLGO a cargo (select de profesionales activos) */}
         <div>
           <label htmlFor="primary_professional_id" className={labelClass()}>
-            KLGO a cargo
+            Profesional a cargo
           </label>
           <select
             id="primary_professional_id"
@@ -485,6 +441,84 @@ export function PatientForm({ mode, patient, onSuccess }: PatientFormProps) {
           )}
         </div>
       </fieldset>
+    </>
+  )
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
+
+      {mode === 'create' ? (
+        <>
+          {/* ── Campos esenciales siempre visibles ─────────────────────── */}
+          <div className="space-y-4">{camposEsenciales}</div>
+
+          {/* ── Accordion "+ Más datos" ─────────────────────────────────── */}
+          <details className="group">
+            <summary
+              className={[
+                'flex cursor-pointer list-none items-center gap-2 select-none',
+                'min-h-[44px] rounded-[8px] border border-[var(--color-border)]',
+                'px-3 py-2 text-sm font-medium text-[var(--color-interactive)]',
+                'hover:bg-[var(--color-surface)] transition-colors',
+              ].join(' ')}
+            >
+              {/* Chevron rotado por CSS cuando el details está abierto */}
+              <svg
+                aria-hidden="true"
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className="h-4 w-4 shrink-0 transition-transform duration-200 group-open:rotate-180"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              <span className="group-open:hidden">+ Más datos</span>
+              <span className="hidden group-open:inline">Menos datos</span>
+            </summary>
+
+            <div className="mt-4 space-y-4 border-t border-[var(--color-border)] pt-4">
+              {camposExtendidos}
+            </div>
+          </details>
+        </>
+      ) : (
+        // ── Modo edición: todos los campos visibles sin accordion ─────────
+        <>
+          <fieldset className="space-y-4">
+            <legend className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] pb-1">
+              Datos principales
+            </legend>
+            {camposEsenciales}
+          </fieldset>
+
+          <fieldset className="space-y-4">
+            <legend className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] pb-1">
+              Cobertura médica
+            </legend>
+
+            <div>
+              <label className={labelClass()}>Obra social</label>
+              <ObraSocialSelector value={obraSocialSelection} onChange={setObraSocialSelection} disabled={isSubmitting} />
+              {errors.obra_social && (
+                <p id="obra-social-error" role="alert" className="mt-1 text-xs text-red-600">
+                  {errors.obra_social.message}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label htmlFor="obra_social_number" className={labelClass()}>Número de afiliado</label>
+              <input id="obra_social_number" type="text" {...register('obra_social_number')} className={inputClass(!!errors.obra_social_number)} aria-invalid={!!errors.obra_social_number} />
+            </div>
+          </fieldset>
+
+          {camposExtendidos}
+        </>
+      )}
 
       {/* ── Botón submit ───────────────────────────────────────────────── */}
       <button
