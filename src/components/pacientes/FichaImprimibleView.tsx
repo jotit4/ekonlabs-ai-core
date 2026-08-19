@@ -164,7 +164,7 @@ export function FichaImprimibleView({ dossier }: FichaImprimibleViewProps) {
               <td colSpan={3}>{orDash(patient.ocupacion)}</td>
             </tr>
             <tr>
-              <td className="ficha-label">Diagnóstico</td>
+              <td className="ficha-label">Motivo de consulta</td>
               <td colSpan={3}>{orDash(patient.reason_for_visit)}</td>
             </tr>
             <tr>

@@ -16,7 +16,7 @@ export interface FichaPatientData {
   address: string | null
   obra_social: string | null
   obra_social_number: string | null
-  reason_for_visit: string | null // "Diagnóstico" en el papel
+  reason_for_visit: string | null // "Diagnóstico" en el papel; en la UI se muestra "Motivo de consulta"
   notes: string | null // "Observaciones" en el papel
   antecedentes: string | null
   medicacion: string | null

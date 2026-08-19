@@ -22,6 +22,7 @@ import { PatientDeletionRequest } from '@/components/pacientes/PatientDeletionRe
 import { PaquetesTracking } from '@/components/paquetes/PaquetesTracking'
 import { NewPaqueteModal } from '@/components/paquetes/NewPaqueteModal'
 import { NewTurnoModal } from '@/components/agenda/NewTurnoModal'
+import { calculateAge } from '@/lib/pacientes/ficha-helpers'
 import type { Patient } from '@/types/patients'
 
 // ─── Tipos locales ────────────────────────────────────────────────────────────
@@ -259,6 +260,9 @@ export default function PacienteFichaPage() {
 
   // Detectar si el paciente tiene eliminación pendiente
   const hasDeletionPending = !!patient.deletion_requested_at
+
+  // Edad derivada de date_of_birth (mismo helper que la ficha imprimible)
+  const edad = calculateAge(patient.date_of_birth)
 
   // CTA "Cargar tratamiento": sólo admin/receptionist y sin eliminación pendiente (AC1).
   const canCreatePaquete =
@@ -517,8 +521,8 @@ export default function PacienteFichaPage() {
               <tr>
                 <td style={dpLabel}>Fecha de nacimiento</td>
                 <td style={dpValue}>{patient.date_of_birth || '—'}</td>
-                <td style={dpLabel}>Lugar</td>
-                <td style={dpValue}>{patient.lugar || '—'}</td>
+                <td style={dpLabel}>Edad</td>
+                <td style={dpValue}>{edad != null ? `${edad} años` : '—'}</td>
               </tr>
               <tr>
                 <td style={dpLabel}>Obra social</td>
@@ -534,7 +538,9 @@ export default function PacienteFichaPage() {
               </tr>
               <tr>
                 <td style={dpLabel}>Email</td>
-                <td style={dpValue} colSpan={3}>{patient.email || '—'}</td>
+                <td style={dpValue}>{patient.email || '—'}</td>
+                <td style={dpLabel}>Lugar</td>
+                <td style={dpValue}>{patient.lugar || '—'}</td>
               </tr>
               <tr>
                 <td style={dpLabel}>Domicilio</td>
@@ -553,7 +559,7 @@ export default function PacienteFichaPage() {
                 <td style={dpValue}>{patient.actividad_fisica || '—'}</td>
               </tr>
               <tr>
-                <td style={dpLabel}>Diagnóstico</td>
+                <td style={dpLabel}>Motivo de consulta</td>
                 <td style={dpValue} colSpan={3}>{patient.reason_for_visit || '—'}</td>
               </tr>
               <tr>
