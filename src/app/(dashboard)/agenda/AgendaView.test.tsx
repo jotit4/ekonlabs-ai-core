@@ -62,7 +62,7 @@ vi.mock('@/hooks/use-gcal-channel-status', () => ({
 }))
 
 vi.mock('@/hooks/use-tenant-config', () => ({
-  useTenantConfig: vi.fn(() => ({ usesNativeCalendar: false, isPending: false })),
+  useTenantConfig: vi.fn(() => ({ usesNativeCalendar: false, agendaAreaFocus: null, isPending: false, isError: false, refetch: vi.fn() })),
 }))
 
 vi.mock('@/components/agenda/SyncStatusBanner', () => ({
@@ -103,39 +103,86 @@ vi.mock('@/components/recepcion/ColaOrdenLlegada', () => ({
   ),
 }))
 
+// El mock replica el orden de ramas isLoading → isError → grilla del
+// CalendarView real (ver CalendarView.tsx) — necesario para los tests de
+// "config del tenant pendiente/en error" (fix de code review): sin esto, el
+// mock siempre pintaría los turnos recibidos sin importar isLoading/isError,
+// y no podríamos afirmar "no se ve ningún turno" mientras la config no
+// resolvió.
 vi.mock('@/components/agenda/CalendarView', () => ({
   CalendarView: ({
     appointments,
+    isLoading,
+    isError,
+    onRefetch,
     onEmptyCellClick,
   }: {
     appointments?: { appointment_id?: string }[]
+    isLoading?: boolean
+    isError?: boolean
+    onRefetch?: () => void
     onEmptyCellClick?: (date: string, timeHHmm: string, professionalId?: string) => void
-  }) => (
-    <div data-testid="calendar-view" data-appt-count={appointments?.length ?? 0}>
-      <button onClick={() => onEmptyCellClick?.('2026-07-14', '10:00', 'prof-9')}>
-        mock-empty-cell-dia
-      </button>
-    </div>
-  ),
+  }) => {
+    if (isLoading) return <div data-testid="calendar-view-skeleton" />
+    if (isError) {
+      return (
+        <div data-testid="calendar-view-error">
+          <button onClick={() => onRefetch?.()}>mock-reintentar</button>
+        </div>
+      )
+    }
+    return (
+      <div data-testid="calendar-view" data-appt-count={appointments?.length ?? 0}>
+        <button onClick={() => onEmptyCellClick?.('2026-07-14', '10:00', 'prof-9')}>
+          mock-empty-cell-dia
+        </button>
+      </div>
+    )
+  },
 }))
 
+// Mismo criterio que el mock de CalendarView: replica el orden de ramas
+// isLoading → isError → contenido del componente real (ver
+// CalendarViewRangeReadOnly.tsx) — necesario para los tests de "config del
+// tenant pendiente/en error" en la vista Semana/Mes, que es la vista por
+// DEFAULT (sin `?vista` en la URL). Sin esto el mock siempre pintaría su
+// contenido sin importar isLoading/isError, y ningún test detectaría que
+// AgendaView dejó de pasarle `combinedRangeIsLoading`/`combinedRangeIsError`.
 vi.mock('@/components/agenda/CalendarViewRangeReadOnly', () => ({
   CalendarViewRangeReadOnly: ({
+    appointments,
+    isLoading,
+    isError,
+    onRefetch,
     onEmptyCellClick,
     onDayStatusClick,
   }: {
+    appointments?: { appointment_id?: string }[]
+    isLoading?: boolean
+    isError?: boolean
+    onRefetch?: () => void
     onEmptyCellClick?: (date: string, timeHHmm: string) => void
     onDayStatusClick?: (date: string) => void
-  }) => (
-    <div data-testid="calendar-view-range">
-      <button onClick={() => onEmptyCellClick?.('2026-07-15', '11:00')}>
-        mock-empty-cell-semana
-      </button>
-      <button onClick={() => onDayStatusClick?.('2026-07-16')}>
-        mock-day-status-click
-      </button>
-    </div>
-  ),
+  }) => {
+    if (isLoading) return <div data-testid="calendar-view-range-skeleton" />
+    if (isError) {
+      return (
+        <div data-testid="calendar-view-range-error">
+          <button onClick={() => onRefetch?.()}>mock-reintentar-semana</button>
+        </div>
+      )
+    }
+    return (
+      <div data-testid="calendar-view-range" data-appt-count={appointments?.length ?? 0}>
+        <button onClick={() => onEmptyCellClick?.('2026-07-15', '11:00')}>
+          mock-empty-cell-semana
+        </button>
+        <button onClick={() => onDayStatusClick?.('2026-07-16')}>
+          mock-day-status-click
+        </button>
+      </div>
+    )
+  },
 }))
 
 vi.mock('@/components/agenda/CalendarViewSelector', () => ({
@@ -158,8 +205,27 @@ vi.mock('@/components/agenda/TurnoDetailModal', () => ({
   TurnoDetailModal: () => <div data-testid="turno-detail-modal" />,
 }))
 
+// Mismo criterio que los mocks de CalendarView/CalendarViewRangeReadOnly:
+// replica el orden de ramas isLoading → isError → KPIs del componente real
+// (ver KPIStrip.tsx) — necesario para los tests de "config del tenant
+// pendiente/en error" y de recorte por rehab: sin esto, el mock siempre
+// pintaría el mismo testid sin importar isLoading/isError/appointments, y
+// nadie detectaría un `isLoading={isLoading}` (turnos, sin combinar con la
+// config) reintroducido por error.
 vi.mock('@/components/agenda/KPIStrip', () => ({
-  KPIStrip: () => <div data-testid="kpi-strip" />,
+  KPIStrip: ({
+    appointments,
+    isLoading,
+    isError,
+  }: {
+    appointments?: { appointment_id?: string }[]
+    isLoading?: boolean
+    isError?: boolean
+  }) => {
+    if (isLoading) return <div data-testid="kpi-strip-skeleton" />
+    if (isError) return <div data-testid="kpi-strip-error" />
+    return <div data-testid="kpi-strip" data-appt-count={appointments?.length ?? 0} />
+  },
 }))
 
 vi.mock('@/components/agenda/NewTurnoModal', () => ({
@@ -270,7 +336,7 @@ describe('AgendaPage', () => {
       isError: false,
       refetch: vi.fn(),
     })
-    vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, isPending: false })
+    vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, agendaAreaFocus: null, isPending: false, isError: false, refetch: vi.fn() })
     vi.mocked(useWalkInService).mockReturnValue(null)
   })
 
@@ -449,18 +515,302 @@ describe('AgendaPage', () => {
     })
   })
 
-  // ── Foco de área por defecto (Rehabilitación) ──────────────────────────────
+  // ── Foco de área (Rehabilitación) — sin toggle ─────────────────────────────
   // El toggle "Rehabilitación | Ver todo" se retiró (decisión ISADI dueño
-  // 2026-07-16 — la agenda es 100% modo grupos). El foco por defecto a
-  // rehabilitación sigue vigente como constante interna de AgendaView, pero ya
-  // no hay control de UI para cambiarlo. Solo verificamos que el rol 'doctor'
-  // sigue sin ver filtros de agenda (igual que antes).
+  // 2026-07-16 — la agenda es 100% modo grupos). El foco ya no es una
+  // constante interna: se deriva de `tenants.rules.agenda_area_focus` vía
+  // useTenantConfig (ver describe de abajo). Acá solo verificamos que el rol
+  // 'doctor' sigue sin ver filtros de agenda (igual que antes).
   describe('Foco de área (Rehabilitación) — sin toggle', () => {
     it('doctor: no ve filtros de agenda (showFilters = admin || receptionist)', () => {
       vi.mocked(useUserRole).mockReturnValue('doctor')
       render(<AgendaPage />)
       expect(screen.queryByTestId('agenda-service-buttons')).not.toBeInTheDocument()
       expect(screen.queryByTestId('agenda-filters')).not.toBeInTheDocument()
+    })
+  })
+
+  // ── Foco de área por tenant (tenants.rules.agenda_area_focus, migr 062) ────
+  // Antes `areaFocus` estaba fijo en 'rehab' para TODOS los tenants: cualquier
+  // cuenta sin servicios de rehabilitación (nombre que no matchea
+  // isRehabService) veía la agenda completamente vacía. Ahora depende de la
+  // config del tenant (useTenantConfig → agendaAreaFocus).
+  describe('Foco de área por tenant (agenda_area_focus)', () => {
+    it('tenant SIN agenda_area_focus + servicio no-rehab → el turno se ve (reproduce el bug original)', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      mockSearchParamsData = { vista: 'dia' }
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: null,
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+      })
+      vi.mocked(useAppointments).mockReturnValue({
+        appointments: [
+          { appointment_id: 'a1', services: { name: 'Consulta General', reception_group: null } },
+          { appointment_id: 'a2', services: { name: 'Sesión de Psicología', reception_group: null } },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+        overtime: {},
+      } as unknown as ReturnType<typeof useAppointments>)
+      render(<AgendaPage />)
+      expect(screen.getByTestId('calendar-view')).toHaveAttribute('data-appt-count', '2')
+    })
+
+    it('tenant con agenda_area_focus="rehab" (ISADI) → recorta a servicios de rehabilitación (igual que hoy)', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      mockSearchParamsData = { vista: 'dia' }
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: 'rehab',
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+      })
+      vi.mocked(useAppointments).mockReturnValue({
+        appointments: [
+          { appointment_id: 'a1', services: { name: 'Kinesiología', reception_group: 'fisioterapia' } },
+          { appointment_id: 'a2', services: { name: 'Consulta General', reception_group: null } },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+        overtime: {},
+      } as unknown as ReturnType<typeof useAppointments>)
+      render(<AgendaPage />)
+      expect(screen.getByTestId('calendar-view')).toHaveAttribute('data-appt-count', '1')
+      // Medium (3ª ronda de code review): KPIStrip debe recibir los MISMOS
+      // turnos recortados que la grilla (focusedAppointments), no los turnos
+      // sin recortar — si alguien revierte `appointments={focusedAppointments}`
+      // por `appointments={appointments}` en AgendaView, este assert lo detecta.
+      expect(screen.getByTestId('kpi-strip')).toHaveAttribute('data-appt-count', '1')
+    })
+
+    // Rol receptionist: mismo mecanismo de recorte que admin (AreaFocus no
+    // depende del rol) — se confirma acá explícitamente porque ISADI opera
+    // sobre todo desde recepción.
+    it('receptionist + tenant con agenda_area_focus="rehab" → recorta a servicios de rehabilitación', () => {
+      vi.mocked(useUserRole).mockReturnValue('receptionist')
+      mockSearchParamsData = { vista: 'dia' }
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: 'rehab',
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+      })
+      vi.mocked(useAppointments).mockReturnValue({
+        appointments: [
+          { appointment_id: 'a1', services: { name: 'Fisioterapia', reception_group: 'fisioterapia' } },
+          { appointment_id: 'a2', services: { name: 'Consulta General', reception_group: null } },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+        overtime: {},
+      } as unknown as ReturnType<typeof useAppointments>)
+      render(<AgendaPage />)
+      expect(screen.getByTestId('calendar-view')).toHaveAttribute('data-appt-count', '1')
+    })
+
+    // Corrección de code review (High 1): antes, mientras la config del
+    // tenant cargaba, `areaFocus` caía a 'todos' y la grilla mostraba los
+    // turnos SIN recortar por un instante (trade-off aceptado por el dueño en
+    // la primera pasada). Ese criterio quedó REEMPLAZADO: ISADI no debe ver
+    // la grilla sin recortar ni un instante, así que ahora `tenantConfigPending`
+    // combinado con el loading de turnos hace que CalendarView muestre su
+    // skeleton habitual — NINGÚN turno (ni recortado ni sin recortar) se
+    // pinta hasta que la config resolvió.
+    it('mientras la config del tenant está pendiente → se ve el skeleton de carga, no se pinta ningún turno', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      mockSearchParamsData = { vista: 'dia' }
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: null,
+        isPending: true,
+        isError: false,
+        refetch: vi.fn(),
+      })
+      vi.mocked(useAppointments).mockReturnValue({
+        appointments: [
+          { appointment_id: 'a1', services: { name: 'Consulta General', reception_group: null } },
+          { appointment_id: 'a2', services: { name: 'Kinesiología', reception_group: 'fisioterapia' } },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+        overtime: {},
+      } as unknown as ReturnType<typeof useAppointments>)
+      render(<AgendaPage />)
+      expect(screen.getByTestId('calendar-view-skeleton')).toBeInTheDocument()
+      expect(screen.queryByTestId('calendar-view')).not.toBeInTheDocument()
+      expect(screen.queryByText(/consulta general/i)).not.toBeInTheDocument()
+      expect(screen.queryByText(/kinesiología/i)).not.toBeInTheDocument()
+      // Medium (3ª ronda de code review): KPIStrip también debe quedar en su
+      // estado de carga — si `isLoading={combinedIsLoading}` se revirtiera a
+      // `isLoading={isLoading}` (turnos, sin la config), los indicadores se
+      // calcularían con turnos SIN recortar mientras la config todavía carga.
+      expect(screen.getByTestId('kpi-strip-skeleton')).toBeInTheDocument()
+      expect(screen.queryByTestId('kpi-strip')).not.toBeInTheDocument()
+    })
+
+    // Corrección de code review (High 2): un error persistente de
+    // /api/tenant/config ya NO degrada en silencio a "sin recorte" (dejaba a
+    // ISADI toda la sesión sin recortar y sin aviso). Ahora se propaga como el
+    // estado de error+reintento que CalendarView ya usa para el error de
+    // turnos — ningún turno se pinta, y "Reintentar" vuelve a pedir turnos Y
+    // config (refetchTenantConfig).
+    it('config del tenant en error → muestra el estado de error, no pinta turnos, y el reintento repide la config', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      mockSearchParamsData = { vista: 'dia' }
+      const mockRefetchTenantConfig = vi.fn()
+      const mockRefetchAppointments = vi.fn()
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: null,
+        isPending: false,
+        isError: true,
+        refetch: mockRefetchTenantConfig,
+      })
+      vi.mocked(useAppointments).mockReturnValue({
+        appointments: [
+          { appointment_id: 'a1', services: { name: 'Consulta General', reception_group: null } },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: mockRefetchAppointments,
+        overtime: {},
+      } as unknown as ReturnType<typeof useAppointments>)
+      render(<AgendaPage />)
+      expect(screen.getByTestId('calendar-view-error')).toBeInTheDocument()
+      expect(screen.queryByTestId('calendar-view')).not.toBeInTheDocument()
+      expect(screen.queryByText(/consulta general/i)).not.toBeInTheDocument()
+      // Medium (3ª ronda de code review): KPIStrip también debe quedar en su
+      // estado de error — si `isError={combinedIsError}` se revirtiera a
+      // `isError={isError}` (turnos, sin la config), los indicadores se
+      // calcularían con turnos SIN recortar mientras la config está en error.
+      expect(screen.getByTestId('kpi-strip-error')).toBeInTheDocument()
+      expect(screen.queryByTestId('kpi-strip')).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'mock-reintentar' }))
+      expect(mockRefetchAppointments).toHaveBeenCalledOnce()
+      expect(mockRefetchTenantConfig).toHaveBeenCalledOnce()
+    })
+  })
+
+  // ── Corrección de code review (2ª ronda, High 2) — mismo gateo en vista
+  // Semana/Mes (rango) ────────────────────────────────────────────────────────
+  // La descripción anterior solo probaba la vista Día (?vista=dia). La vista
+  // Semana es el DEFAULT (sin ?vista en la URL) — la que ve cualquiera que
+  // abra /agenda "en frío" — y usaba un mock de CalendarViewRangeReadOnly que
+  // ignoraba isLoading/isError/onRefetch, así que un bug en
+  // combinedRangeIsLoading/combinedRangeIsError o un olvido al pasar la prop
+  // no hacía fallar ningún test. Estos tests son el equivalente, en rango, de
+  // los cuatro de arriba (recorte sin regla / con 'rehab' / pendiente / error).
+  describe('Foco de área y loading/error combinados en vista Semana/Mes (rango, default)', () => {
+    it('vista Semana (default): tenant SIN agenda_area_focus + servicio no-rehab → el turno se ve', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      mockSearchParamsData = {}
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: null,
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+      })
+      vi.mocked(useAppointmentsRange).mockReturnValue({
+        appointments: [
+          { appointment_id: 'a1', services: { name: 'Consulta General', reception_group: null } },
+          { appointment_id: 'a2', services: { name: 'Sesión de Psicología', reception_group: null } },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useAppointmentsRange>)
+      render(<AgendaPage />)
+      expect(screen.getByTestId('calendar-view-range')).toHaveAttribute('data-appt-count', '2')
+    })
+
+    it('vista Semana (default): tenant con agenda_area_focus="rehab" (ISADI) → recorta a servicios de rehabilitación', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      mockSearchParamsData = {}
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: 'rehab',
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+      })
+      vi.mocked(useAppointmentsRange).mockReturnValue({
+        appointments: [
+          { appointment_id: 'a1', services: { name: 'Kinesiología', reception_group: 'fisioterapia' } },
+          { appointment_id: 'a2', services: { name: 'Consulta General', reception_group: null } },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useAppointmentsRange>)
+      render(<AgendaPage />)
+      expect(screen.getByTestId('calendar-view-range')).toHaveAttribute('data-appt-count', '1')
+    })
+
+    it('vista Semana (default): mientras la config del tenant está pendiente → se ve el skeleton, no se pinta ningún turno', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      mockSearchParamsData = {}
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: null,
+        isPending: true,
+        isError: false,
+        refetch: vi.fn(),
+      })
+      vi.mocked(useAppointmentsRange).mockReturnValue({
+        appointments: [
+          { appointment_id: 'a1', services: { name: 'Consulta General', reception_group: null } },
+          { appointment_id: 'a2', services: { name: 'Kinesiología', reception_group: 'fisioterapia' } },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useAppointmentsRange>)
+      render(<AgendaPage />)
+      expect(screen.getByTestId('calendar-view-range-skeleton')).toBeInTheDocument()
+      expect(screen.queryByTestId('calendar-view-range')).not.toBeInTheDocument()
+      expect(screen.queryByText(/consulta general/i)).not.toBeInTheDocument()
+      expect(screen.queryByText(/kinesiología/i)).not.toBeInTheDocument()
+    })
+
+    it('vista Semana (default): config del tenant en error → muestra el estado de error, no pinta turnos, y el reintento pide turnos Y config', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      mockSearchParamsData = {}
+      const mockRefetchTenantConfig = vi.fn()
+      const mockRangeRefetch = vi.fn()
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: null,
+        isPending: false,
+        isError: true,
+        refetch: mockRefetchTenantConfig,
+      })
+      vi.mocked(useAppointmentsRange).mockReturnValue({
+        appointments: [
+          { appointment_id: 'a1', services: { name: 'Consulta General', reception_group: null } },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: mockRangeRefetch,
+      } as unknown as ReturnType<typeof useAppointmentsRange>)
+      render(<AgendaPage />)
+      expect(screen.getByTestId('calendar-view-range-error')).toBeInTheDocument()
+      expect(screen.queryByTestId('calendar-view-range')).not.toBeInTheDocument()
+      expect(screen.queryByText(/consulta general/i)).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'mock-reintentar-semana' }))
+      expect(mockRangeRefetch).toHaveBeenCalledOnce()
+      expect(mockRefetchTenantConfig).toHaveBeenCalledOnce()
     })
   })
 
@@ -537,7 +887,7 @@ describe('AgendaPage', () => {
   describe('condicionalidad GCal según uses_native_calendar', () => {
     it('muestra banners GCal cuando usesNativeCalendar=false y vista día', () => {
       mockSearchParamsData = { vista: 'dia' }
-      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, isPending: false })
+      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, agendaAreaFocus: null, isPending: false, isError: false, refetch: vi.fn() })
       render(<AgendaPage />)
       expect(screen.getByTestId('sync-status-banner')).toBeInTheDocument()
       expect(screen.getByTestId('gcal-degradation-banner')).toBeInTheDocument()
@@ -545,7 +895,7 @@ describe('AgendaPage', () => {
 
     it('NO muestra banners GCal cuando usesNativeCalendar=true', () => {
       mockSearchParamsData = { vista: 'dia' }
-      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: true, isPending: false })
+      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: true, agendaAreaFocus: null, isPending: false, isError: false, refetch: vi.fn() })
       render(<AgendaPage />)
       expect(screen.queryByTestId('sync-status-banner')).not.toBeInTheDocument()
       expect(screen.queryByTestId('gcal-degradation-banner')).not.toBeInTheDocument()
@@ -553,14 +903,54 @@ describe('AgendaPage', () => {
 
     it('cuando usesNativeCalendar=true, useGCalChannelStatus se llama con enabled=false', () => {
       mockSearchParamsData = {}
-      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: true, isPending: false })
+      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: true, agendaAreaFocus: null, isPending: false, isError: false, refetch: vi.fn() })
       render(<AgendaPage />)
       expect(vi.mocked(useGCalChannelStatus)).toHaveBeenCalledWith(false)
     })
 
     it('cuando tenantConfig está pendiente (isPending=true), useGCalChannelStatus se llama con enabled=false', () => {
       mockSearchParamsData = {}
-      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, isPending: true })
+      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, agendaAreaFocus: null, isPending: true, isError: false, refetch: vi.fn() })
+      render(<AgendaPage />)
+      expect(vi.mocked(useGCalChannelStatus)).toHaveBeenCalledWith(false)
+    })
+
+    // ── Corrección de code review (2ª ronda, High 1) ──────────────────────────
+    // Antes, `!tenantConfigPending && !usesNativeCalendar` NO consideraba el
+    // error de la config: si /api/tenant/config fallaba tras agotar
+    // reintentos, `isPending` pasaba a false y `usesNativeCalendar` caía a su
+    // fallback `false`, así que la condición daba `true` — el banner de sync
+    // se rendería con `focusedAppointments` SIN recortar (porque
+    // `configAreaFocus` es null con la config en error ⇒ `areaFocus` =
+    // 'todos'), mientras la grilla de al lado mostraba "Error al cargar". El
+    // "caso de control" (config OK, config OK, `usesNativeCalendar=false`) ya
+    // está cubierto arriba ("muestra banners GCal cuando usesNativeCalendar
+    // =false y vista día"); acá se prueba el caso que faltaba: config en
+    // error (con el fallback de usesNativeCalendar a false) NO debe mostrar
+    // los banners.
+    it('config del tenant en error (con usesNativeCalendar=false por fallback) → NO muestra banners GCal', () => {
+      mockSearchParamsData = { vista: 'dia' }
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: null,
+        isPending: false,
+        isError: true,
+        refetch: vi.fn(),
+      })
+      render(<AgendaPage />)
+      expect(screen.queryByTestId('sync-status-banner')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('gcal-degradation-banner')).not.toBeInTheDocument()
+    })
+
+    it('cuando la config del tenant está en error, useGCalChannelStatus se llama con enabled=false', () => {
+      mockSearchParamsData = {}
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: null,
+        isPending: false,
+        isError: true,
+        refetch: vi.fn(),
+      })
       render(<AgendaPage />)
       expect(vi.mocked(useGCalChannelStatus)).toHaveBeenCalledWith(false)
     })

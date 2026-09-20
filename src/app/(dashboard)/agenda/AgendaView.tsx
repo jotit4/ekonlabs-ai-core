@@ -94,19 +94,38 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
   const [filtersOpen, setFiltersOpen] = useState(false)
   const secondaryVisible = isReceptionist ? filtersOpen : true
 
-  // Foco de área (rediseño foco rehabilitación). Fijo en 'rehab' para TODOS los
-  // roles: la agenda arranca (y se queda) viendo SOLO los servicios de
-  // rehabilitación. El toggle "Rehabilitación | Ver todo" se retiró de la UI
-  // (decisión ISADI dueño 2026-07-16 — la agenda es 100% modo grupos: los 3
-  // botones de GRUPO son el único filtro por servicio, igual que recepción), así
-  // que ya no hay estado ni handler que lo cambie. Se conserva como constante
-  // porque el recorte por defecto (applyRehabFocus, más abajo) sigue vigente.
+  // Foco de área (rediseño foco rehabilitación). Ajuste POR TENANT, leído de
+  // `tenants.rules.agenda_area_focus` (migración 062) vía useTenantConfig, más
+  // abajo. Antes estaba fijo en 'rehab' para TODOS los tenants — bug: cualquier
+  // cuenta que no fuera un centro de rehabilitación (ISADI) veía la agenda
+  // vacía, porque el recorte descartaba turnos de servicios no-rehab sin que
+  // hubiera ningún control en pantalla para desactivarlo. El toggle
+  // "Rehabilitación | Ver todo" sigue sin existir en la UI (decisión ISADI
+  // dueño 2026-07-16 — la agenda es 100% modo grupos: los 3 botones de GRUPO
+  // son el único filtro por servicio, igual que recepción); lo que cambió es
+  // que el recorte por defecto ya NO es universal, sino una config de ISADI.
   //
   // Depende de `isRehabService` (heurística PROVISIONAL por nombre — no existe
   // `services.category` todavía; ver detalle en service-visuals.ts). Cuando
   // exista el campo real, este default sigue funcionando igual — solo cambia
   // qué servicios cuentan como "rehab".
-  const areaFocus: AreaFocus = 'rehab'
+  //
+  // `areaFocus` ya NO tiene un caso especial para "mientras la config carga o
+  // falló": decisión del dueño (corrección al criterio anterior) — ISADI
+  // nunca debe ver la grilla sin recortar, ni un instante ni por un error de
+  // red, y ningún tenant debe ver una grilla vacía por culpa de la config. En
+  // vez de elegir un `areaFocus` provisorio mientras no hay respuesta firme,
+  // `combinedIsLoading`/`combinedIsError` (más abajo) hacen que CalendarView y
+  // CalendarViewRangeReadOnly muestren su skeleton/error habituales — nunca
+  // pintan turnos (ni recortados ni sin recortar) hasta que la config resolvió.
+  const {
+    usesNativeCalendar,
+    agendaAreaFocus: configAreaFocus,
+    isPending: tenantConfigPending,
+    isError: tenantConfigError,
+    refetch: refetchTenantConfig,
+  } = useTenantConfig()
+  const areaFocus: AreaFocus = configAreaFocus === 'rehab' ? 'rehab' : 'todos'
 
   // Grupo seleccionado (Fisioterapia/Pileta/Pilates, ver AgendaServiceButtons).
   // Estado local (no URL): no es un service_id real (los grupos no existen en la
@@ -162,6 +181,35 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
     enabled: !isDayView,
   })
 
+  // ── Loading/error combinados con la config del tenant ──────────────────────
+  // KPIStrip, CalendarView y CalendarViewRangeReadOnly (día y rango) ya tienen
+  // rama de skeleton (isLoading) y de error con reintento (isError/onRefetch)
+  // para los turnos. Les sumamos el loading/error de `useTenantConfig` (de
+  // donde sale `areaFocus`) para que NINGUNO de los tres pinte turnos
+  // —recortados o sin recortar— antes de que la config resolvió, y para que
+  // un error persistente de /api/tenant/config se vea (estado de error +
+  // reintento) en vez de degradar en silencio a "sin recorte". El reintento
+  // pide de nuevo TANTO los turnos como la config — si solo reintentara los
+  // turnos, un error de config que no fuera transitorio nunca se resolvería.
+  // El bloque de banners GCal (SyncStatusBanner/GCalDegradationBanner, más
+  // abajo) NO usa estas variables — tiene su propio gate, `showGCalSync` (ver
+  // más abajo, junto a useGCalChannelStatus), que también respeta el error de
+  // config por la misma razón: mientras la config no resolvió, no hay que
+  // pintar nada que dependa de ella (ni turnos ni banners).
+  const combinedIsLoading = isLoading || tenantConfigPending
+  const combinedIsError = isError || tenantConfigError
+  function handleRefetchDay() {
+    refetch()
+    refetchTenantConfig()
+  }
+
+  const combinedRangeIsLoading = rangeLoading || tenantConfigPending
+  const combinedRangeIsError = rangeError || tenantConfigError
+  function handleRefetchRange() {
+    rangeRefetch()
+    refetchTenantConfig()
+  }
+
   // Feriados + estado del día (pedido ISADI 2026-07-14) — mismo rango visible
   // que ya se usa para los turnos de Semana/Mes (rangeFrom/rangeTo). Se pasa
   // como PROP a CalendarViewRangeReadOnly (componente presentacional, no
@@ -212,8 +260,27 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
     applyRehabFocus ? rangeAppointments.filter(isRehabAppointment) : rangeAppointments
   ).filter((apt) => !applyReceptionGroupFilter || isInReceptionGroup(apt))
 
-  const { usesNativeCalendar, isPending: tenantConfigPending } = useTenantConfig()
-  const { status: gcalStatus } = useGCalChannelStatus(!tenantConfigPending && !usesNativeCalendar)
+  // Gateo del sync GCal (banners + polling) — CORREGIDO en la 2ª ronda de code
+  // review. Antes la condición era `!tenantConfigPending && !usesNativeCalendar`:
+  // si /api/tenant/config terminaba en ERROR tras agotar reintentos, React
+  // Query resuelve `tenantConfigPending=false` y `usesNativeCalendar` cae a su
+  // fallback `?? false` (sin dato real), así que esa condición daba `true` —
+  // el banner de sync y el polling de useGCalChannelStatus se activaban igual
+  // con la config en error, asumiendo sin saberlo que el tenant no usa
+  // calendario nativo. Era además un bug más serio de lo documentado en la
+  // ronda anterior: `SyncStatusBanner` recibe `focusedAppointments`, que con
+  // la config en error queda SIN recortar (`configAreaFocus` es null ⇒
+  // `areaFocus` = 'todos') — mostraba un banner calculado sobre turnos que el
+  // resto de la pantalla (grilla, KPIStrip) ya trata como "no disponibles"
+  // vía combinedIsError.
+  // Fix: se agrega `!tenantConfigError` a la condición y se comparte en UNA
+  // sola variable (`showGCalSync`) entre el hook y el bloque de banners, para
+  // que ambos queden sincronizados por construcción — no hay forma de que uno
+  // se actualice sin el otro. No altera el caso normal (config OK):
+  // `tenantConfigError` es `false`, así que `!tenantConfigError` es `true` y
+  // no cambia nada.
+  const showGCalSync = !tenantConfigPending && !tenantConfigError && !usesNativeCalendar
+  const { status: gcalStatus } = useGCalChannelStatus(showGCalSync)
 
   // Navegación URL
   function buildFechaUrl(fecha: string): string {
@@ -539,8 +606,12 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
               hoyISO={isoDate}
             />
           )}
-          <KPIStrip appointments={focusedAppointments} isLoading={isLoading} isError={isError} />
-          {!tenantConfigPending && !usesNativeCalendar && (
+          <KPIStrip
+            appointments={focusedAppointments}
+            isLoading={combinedIsLoading}
+            isError={combinedIsError}
+          />
+          {showGCalSync && (
             <>
               <SyncStatusBanner appointments={focusedAppointments} date={isoDate} />
               <GCalDegradationBanner status={gcalStatus} />
@@ -549,9 +620,9 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
           <CalendarView
             date={isoDate}
             appointments={focusedAppointments}
-            isLoading={isLoading}
-            isError={isError}
-            onRefetch={refetch}
+            isLoading={combinedIsLoading}
+            isError={combinedIsError}
+            onRefetch={handleRefetchDay}
             onReschedule={handleOpenReschedule}
             onEmptyCellClick={handleEmptyCellClick}
             onAppointmentClick={handleAppointmentClick}
@@ -572,9 +643,9 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
             view={vistaActiva === 'semana' ? 'week' : 'month'}
             date={isoDate}
             appointments={focusedRangeAppointments}
-            isLoading={rangeLoading}
-            isError={rangeError}
-            onRefetch={rangeRefetch}
+            isLoading={combinedRangeIsLoading}
+            isError={combinedRangeIsError}
+            onRefetch={handleRefetchRange}
             onAppointmentClick={handleAppointmentClick}
             onEmptyCellClick={handleEmptyCellClick}
             dayStatusMap={dayStatusMap}

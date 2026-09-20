@@ -4,11 +4,14 @@ import { useList } from '@refinedev/core'
 import { useProfesionales } from '@/hooks/use-profesionales'
 import type { Service } from '@/types/servicios'
 
-// Foco del área visible en la agenda. Default = 'rehab' (rediseño foco
-// rehabilitación): la clínica de rehab arranca viendo SOLO sus servicios.
+// Foco del área visible en la agenda. 'rehab' recorta la agenda a servicios
+// de rehabilitación (heurística por nombre, ver service-visuals.ts) — SOLO
+// para el tenant que lo configuró en `tenants.rules.agenda_area_focus` (ISADI,
+// migración 062; ver AgendaView). Antes era un default universal: cualquier
+// tenant sin servicios de rehab veía la agenda vacía — bug corregido.
 // El toggle "Rehabilitación | Ver todo" se retiró de la UI (decisión ISADI
 // dueño 2026-07-16 — la agenda es 100% modo grupos), pero el tipo se conserva
-// porque AgendaView sigue usándolo para el recorte por defecto a rehab.
+// porque AgendaView sigue usándolo para el recorte.
 export type AreaFocus = 'rehab' | 'todos'
 
 // ─── Botones de GRUPO (decisión ISADI 2026-07-16) ─────────────────────────────

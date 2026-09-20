@@ -1,0 +1,55 @@
+-- Migration 062: backfill `agenda_area_focus` en tenants.rules — SOLO ISADI
+--
+-- Bug: `AgendaView.tsx` tenía `areaFocus` fijo en 'rehab' para TODOS los
+-- tenants. Con ese foco y sin `service_id`/`receptionGroup` en la URL, la
+-- vista recorta los turnos con `isRehabService(name)` (regex por nombre:
+-- fisio|kinesi|rehab|terapia física). Cualquier tenant con servicios que no
+-- matcheen esa heurística (ej. "Consulta General", "Sesión de Psicología")
+-- veía el calendario /agenda completamente vacío — sin ningún control en
+-- pantalla para desactivarlo.
+--
+-- Fix: el foco a rehabilitación pasa a ser un ajuste POR TENANT dentro de
+-- `tenants.rules` (jsonb NOT NULL DEFAULT '{}', bootstrap_core L40) — mismo
+-- lugar ya establecido para configuración por cuenta (precedente:
+-- `absence_policy`, migración 039). Clave: `agenda_area_focus`, único valor
+-- válido = 'rehab' (cualquier otra cosa, incluida su ausencia, equivale a
+-- "sin foco" — la agenda muestra todos los turnos). `AgendaView` ahora lee
+-- este valor vía /api/tenant/config + useTenantConfig en vez de tenerlo fijo.
+--
+-- Este backfill aplica ÚNICAMENTE a ISADI (centro de rehabilitación, el
+-- cliente para el que se diseñó el recorte originalmente) — NO a todos los
+-- tenants, a diferencia de 039. El tenant_id de ISADI ya está hardcodeado en
+-- migraciones previas (ver 012, 057, 058, 059, 061).
+--
+-- ── ORDEN DE DESPLIEGUE (obligatorio) ───────────────────────────────────────
+-- Secuencia correcta: 1) aplicar esta migración a mano sobre la base de
+-- producción, 2) publicar el código que la lee (`/api/tenant/config`
+-- devolviendo `agenda_area_focus`, `AgendaView.tsx`).
+--   - Aplicarla ANTES es inofensivo: el código publicado hoy no lee `rules`
+--     para esto, así que el backfill queda en la fila de ISADI sin que nada
+--     lo use todavía.
+--   - Publicar el código ANTES que la migración es lo que NO hay que hacer:
+--     `agenda_area_focus` no existiría aún en `rules` de ISADI, así que
+--     `AgendaView` leería `null` y ISADI vería la agenda SIN recorte (todos
+--     los turnos, no solo los de rehabilitación) hasta que se aplique esta
+--     migración — exactamente el estado que este fix busca evitar.
+--
+-- Idempotente y no destructivo:
+--   - `COALESCE(rules, '{}'::jsonb)` en el SET y el WHERE: `rules` es
+--     NOT NULL DEFAULT '{}' en el schema, pero si alguna fila llegara a tener
+--     NULL igual (dato corrupto/manual), esto evita que el `||`/`?` se
+--     conviertan en un no-op silencioso (`NULL || jsonb` y `NULL ? text` dan
+--     NULL, no error — la fila quedaría sin actualizar sin ningún aviso).
+--   - `||` mergea preservando todas las demás claves de `rules` (NO reemplaza
+--     todo el jsonb) — no pisa `absence_policy` ni ninguna otra clave.
+--   - `WHERE NOT (COALESCE(rules, '{}'::jsonb) ? 'agenda_area_focus')` evita
+--     pisar un valor ya configurado (manual o por una corrida previa) y hace
+--     que re-ejecutar la migración no duplique ni sobrescriba nada.
+--
+-- DB-only. NO se aplica automáticamente: se aplica a mano sobre la base de
+-- producción (ver ORDEN DE DESPLIEGUE arriba).
+
+UPDATE public.tenants
+SET rules = COALESCE(rules, '{}'::jsonb) || jsonb_build_object('agenda_area_focus', 'rehab')
+WHERE tenant_id = '5298fcc5-15bf-494c-9655-b49d759cfef4'
+  AND NOT (COALESCE(rules, '{}'::jsonb) ? 'agenda_area_focus');

@@ -53,7 +53,7 @@ describe('GET /api/tenant/config', () => {
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue({
         single: vi.fn().mockResolvedValue({
-          data: { uses_native_calendar: false },
+          data: { uses_native_calendar: false, rules: {} },
           error: null,
         }),
       }),
@@ -62,7 +62,7 @@ describe('GET /api/tenant/config', () => {
     const response = await GET()
     expect(response.status).toBe(200)
     const body = await response.json()
-    expect(body).toEqual({ uses_native_calendar: false })
+    expect(body).toEqual({ uses_native_calendar: false, agenda_area_focus: null })
   })
 
   it('retorna { uses_native_calendar: true } cuando la query tiene uses_native_calendar = true', async () => {
@@ -74,7 +74,7 @@ describe('GET /api/tenant/config', () => {
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue({
         single: vi.fn().mockResolvedValue({
-          data: { uses_native_calendar: true },
+          data: { uses_native_calendar: true, rules: {} },
           error: null,
         }),
       }),
@@ -83,7 +83,134 @@ describe('GET /api/tenant/config', () => {
     const response = await GET()
     expect(response.status).toBe(200)
     const body = await response.json()
-    expect(body).toEqual({ uses_native_calendar: true })
+    expect(body).toEqual({ uses_native_calendar: true, agenda_area_focus: null })
+  })
+
+  // ── agenda_area_focus (tenants.rules, migración 062) ───────────────────────
+  // Ajuste ISADI aislado por tenant: solo el valor 'rehab' habilita el recorte;
+  // cualquier otra cosa (ausente, otro string, tipo inesperado) equivale a
+  // "sin foco" — nunca se recorta la agenda de un tenant sin este ajuste.
+  it('retorna agenda_area_focus: "rehab" cuando tenants.rules.agenda_area_focus = "rehab" (ISADI)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'token-abc' } },
+      error: null,
+    })
+    mockFrom.mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: { uses_native_calendar: false, rules: { agenda_area_focus: 'rehab' } },
+          error: null,
+        }),
+      }),
+    })
+
+    const response = await GET()
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body).toEqual({ uses_native_calendar: false, agenda_area_focus: 'rehab' })
+  })
+
+  it('retorna agenda_area_focus: null cuando rules.agenda_area_focus está ausente (tenant sin el ajuste)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'token-abc' } },
+      error: null,
+    })
+    mockFrom.mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: { uses_native_calendar: false, rules: { absence_policy: { notice_window_hours: 24 } } },
+          error: null,
+        }),
+      }),
+    })
+
+    const response = await GET()
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body).toEqual({ uses_native_calendar: false, agenda_area_focus: null })
+  })
+
+  it('retorna agenda_area_focus: null cuando rules.agenda_area_focus tiene un valor inválido (no "rehab")', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'token-abc' } },
+      error: null,
+    })
+    mockFrom.mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: { uses_native_calendar: false, rules: { agenda_area_focus: 'otra-cosa' } },
+          error: null,
+        }),
+      }),
+    })
+
+    const response = await GET()
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body).toEqual({ uses_native_calendar: false, agenda_area_focus: null })
+  })
+
+  it('retorna agenda_area_focus: null cuando rules es null', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'token-abc' } },
+      error: null,
+    })
+    mockFrom.mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: { uses_native_calendar: false, rules: null },
+          error: null,
+        }),
+      }),
+    })
+
+    const response = await GET()
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body).toEqual({ uses_native_calendar: false, agenda_area_focus: null })
+  })
+
+  // ── Contrato de la respuesta ────────────────────────────────────────────────
+  // La ruta lee `rules` entero de la DB (para poder leer `agenda_area_focus`),
+  // pero SOLO debe exponer los dos campos públicos — nunca `rules` completo ni
+  // ninguna de sus otras claves (ej. `absence_policy`). Este test falla si
+  // alguien cambia la ruta para devolver `rules` tal cual (spread o campo
+  // directo): `Object.keys` detecta cualquier clave extra, cosa que
+  // `toEqual` por sí solo también haría, pero acá lo hacemos explícito e
+  // independiente del resto de los valores.
+  it('la respuesta expone SOLO uses_native_calendar y agenda_area_focus, aunque rules tenga otras claves', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'token-abc' } },
+      error: null,
+    })
+    mockFrom.mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: {
+            uses_native_calendar: true,
+            rules: {
+              agenda_area_focus: 'rehab',
+              absence_policy: { notice_window_hours: 24, allow_recovery_on_notice: true, no_show_consequence: 'lose' },
+              otra_clave_futura: { algo: 'que-no-deberia-salir' },
+            },
+          },
+          error: null,
+        }),
+      }),
+    })
+
+    const response = await GET()
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(Object.keys(body).sort()).toEqual(['agenda_area_focus', 'uses_native_calendar'])
+    expect(body).not.toHaveProperty('rules')
+    expect(body).not.toHaveProperty('absence_policy')
+    expect(body).not.toHaveProperty('otra_clave_futura')
   })
 
   it('retorna 500 si la query de Supabase falla', async () => {
