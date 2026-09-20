@@ -266,6 +266,42 @@ describe('AgentPromptEditor', () => {
     expect(screen.queryByText(/así va a usar el agente tus reglas/i)).not.toBeInTheDocument()
   })
 
+  // ── Hallazgo 4: ia_config.constraints sembrado como objeto ────────────────
+
+  it('muestra "Qué debe evitar" vacío (no "[object Object]") cuando constraints es un objeto', () => {
+    mockConfigLoaded({
+      ...MOCK_CONFIG,
+      ia_config: {
+        ...MOCK_CONFIG.ia_config,
+        // Simula el dato mal sembrado (jsonb '{}') que llega como objeto
+        // en vez de string desde la API.
+        constraints: {} as unknown as string,
+      },
+    })
+    render(<AgentPromptEditor />)
+
+    expect(screen.getByLabelText(/qué debe evitar/i)).toHaveValue('')
+    expect(screen.queryByText('[object Object]')).not.toBeInTheDocument()
+  })
+
+  it('muestra el texto real de constraints cuando sí es un string', () => {
+    mockConfigLoaded()
+    render(<AgentPromptEditor />)
+
+    expect(screen.getByLabelText(/qué debe evitar/i)).toHaveValue('No dar diagnósticos')
+  })
+
+  // ── Hallazgo 6: placeholder de "Nombre del agente" no debe nombrar a ISADI ──
+
+  it('el placeholder de "Nombre del agente" es genérico, sin nombrar a ISADI', () => {
+    mockConfigLoaded()
+    render(<AgentPromptEditor />)
+
+    const input = screen.getByLabelText(/nombre del agente/i)
+    expect(input).toHaveAttribute('placeholder')
+    expect(input.getAttribute('placeholder')).not.toMatch(/isadi/i)
+  })
+
   // ── Sección "Confirmación de turnos" (admin) ──────────────────────────────
 
   it('ShadowModeToggle se renderiza cuando isAdmin=true', () => {

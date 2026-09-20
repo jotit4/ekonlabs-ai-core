@@ -23,7 +23,25 @@ vi.mock('@/lib/supabase/client', () => {
   }
 })
 
-import { PatientContextPanel } from './PatientContextPanel'
+import { PatientContextPanel, isDateOnlySlot } from './PatientContextPanel'
+
+describe('isDateOnlySlot (decide si se convierte a hora de Argentina)', () => {
+  // Esta decisión NO puede testearse por la salida: en una máquina configurada
+  // en Argentina, convertir o no convertir una fecha sola da el mismo texto.
+  it('trata una fecha sola como fecha sola (no se le aplica zona horaria)', () => {
+    expect(isDateOnlySlot('2026-07-29')).toBe(true)
+  })
+
+  it('trata un instante con hora como instante (sí se convierte)', () => {
+    expect(isDateOnlySlot('2026-07-29T12:00:00+00:00')).toBe(false)
+    expect(isDateOnlySlot('2026-07-29T12:00:00Z')).toBe(false)
+  })
+
+  it('no trata como fecha un texto libre del paciente', () => {
+    expect(isDateOnlySlot('mañana a la tarde')).toBe(false)
+    expect(isDateOnlySlot('')).toBe(false)
+  })
+})
 
 describe('PatientContextPanel', () => {
   beforeEach(() => {
@@ -171,5 +189,84 @@ describe('PatientContextPanel', () => {
 
     const aside = screen.getByRole('complementary', { name: 'Contexto de la conversación' })
     expect(aside).toBeInTheDocument()
+  })
+
+  // ── Hallazgo 8: "Horario solicitado" en horario de Argentina, no ISO/UTC crudo ──
+
+  it('formatea slot_requested (instante ISO en UTC) a horario de Argentina, no crudo', () => {
+    mockUseAgentContext.mockReturnValue({
+      context: {
+        patient_name: 'Juan Pérez',
+        detected_intent: 'agendar_turno',
+        slot_requested: '2026-07-29T12:00:00+00:00',
+        availability_info: null,
+      },
+      isLoading: false,
+      isError: false,
+    })
+
+    render(<PatientContextPanel phone="+5491111111111" />)
+
+    // 12:00 UTC = 09:00 en Argentina (UTC-3) — nunca se muestra el ISO crudo
+    // ni la hora sin convertir.
+    expect(screen.queryByText('2026-07-29T12:00:00+00:00')).not.toBeInTheDocument()
+    expect(screen.queryByText(/12:00/)).not.toBeInTheDocument()
+    expect(screen.getByText(/09:00/)).toBeInTheDocument()
+    expect(screen.getByText(/29\/07/)).toBeInTheDocument()
+  })
+
+  it('usa availability_info (texto libre) cuando no hay slot_requested', () => {
+    mockUseAgentContext.mockReturnValue({
+      context: {
+        patient_name: 'Juan Pérez',
+        detected_intent: 'agendar_turno',
+        slot_requested: null,
+        availability_info: 'Prefiere por la mañana',
+      },
+      isLoading: false,
+      isError: false,
+    })
+
+    render(<PatientContextPanel phone="+5491111111111" />)
+
+    expect(screen.getByText('Prefiere por la mañana')).toBeInTheDocument()
+  })
+
+  it('formatea una fecha sola (sin hora) sin correr el día por zona horaria', () => {
+    mockUseAgentContext.mockReturnValue({
+      context: {
+        patient_name: 'Juan Pérez',
+        detected_intent: 'agendar_turno',
+        slot_requested: '2026-07-29',
+        availability_info: null,
+      },
+      isLoading: false,
+      isError: false,
+    })
+
+    render(<PatientContextPanel phone="+5491111111111" />)
+
+    expect(screen.getByText(/29\/07/)).toBeInTheDocument()
+    expect(screen.queryByText('2026-07-29')).not.toBeInTheDocument()
+  })
+
+  it('usa los rótulos en castellano llano "Qué quiere hacer" y "Horario solicitado"', () => {
+    mockUseAgentContext.mockReturnValue({
+      context: {
+        patient_name: 'Juan Pérez',
+        detected_intent: 'Sacar un turno',
+        slot_requested: null,
+        availability_info: null,
+      },
+      isLoading: false,
+      isError: false,
+    })
+
+    render(<PatientContextPanel phone="+5491111111111" />)
+
+    expect(screen.getByLabelText('Qué quiere hacer')).toBeInTheDocument()
+    expect(screen.getByLabelText('Horario solicitado')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Intención detectada')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Slot / Disponibilidad')).not.toBeInTheDocument()
   })
 })

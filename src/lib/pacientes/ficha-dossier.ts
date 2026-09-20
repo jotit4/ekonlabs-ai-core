@@ -253,6 +253,23 @@ async function resolveAuthorNames(authorIds: (string | null)[]): Promise<Map<str
   return map
 }
 
+interface TenantRow {
+  name: string | null
+}
+
+/**
+ * Nombre de la cuenta (tenants.name) para el encabezado de la ficha imprimible
+ * — hallazgo 7: el header tenía "ISADI — Ficha kinesiológica" fijo en el código,
+ * sin importar la clínica. Mismo patrón de lookup ya usado en otras rutas (ej.
+ * /api/tenant/config, /api/servicios): sin `.eq`, RLS filtra por tenant. Degrada
+ * a null (título neutro en la vista) si la query falla, en vez de romper la ficha.
+ */
+async function fetchTenantName(supabase: SupabaseClient): Promise<string | null> {
+  const { data, error } = await supabase.from('tenants').select('name').single()
+  if (error || !data) return null
+  return (data as TenantRow).name ?? null
+}
+
 function extractSessionIndexAndDate(
   embed: SessionNoteRow['appointments'],
 ): { session_index: number | null; start_at: string | null } {
@@ -267,10 +284,12 @@ export async function getFichaDossier(
   const { patient, clinicalFieldsUnavailable } = await fetchPatient(supabase, patientId)
   if (!patient) return null
 
-  const [{ treatments, treatmentPlansUnavailable }, { notes, sessionNotesUnavailable }] = await Promise.all([
-    fetchTreatments(supabase, patientId),
-    fetchSessionNotes(supabase, patientId),
-  ])
+  const [{ treatments, treatmentPlansUnavailable }, { notes, sessionNotesUnavailable }, tenantName] =
+    await Promise.all([
+      fetchTreatments(supabase, patientId),
+      fetchSessionNotes(supabase, patientId),
+      fetchTenantName(supabase),
+    ])
 
   const authorNames = await resolveAuthorNames(notes.map((n) => n.author_id))
 
@@ -328,5 +347,6 @@ export async function getFichaDossier(
       treatmentPlansUnavailable,
       sessionNotesUnavailable,
     },
+    tenantName,
   }
 }

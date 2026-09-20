@@ -7,6 +7,7 @@ import { standardSchemaResolver } from '@hookform/resolvers/standard-schema'
 import { useServices } from '@/hooks/use-services'
 import { useCreateService } from '@/hooks/use-create-service'
 import { useUpdateService } from '@/hooks/use-update-service'
+import { useTenantConfig } from '@/hooks/use-tenant-config'
 import {
   CreateServiceSchema,
   UpdateServiceSchema,
@@ -31,9 +32,10 @@ function ServicesSkeleton() {
 
 interface CreateFormProps {
   onCancel: () => void
+  usesNativeCalendar: boolean
 }
 
-function CreateServiceForm({ onCancel }: CreateFormProps) {
+function CreateServiceForm({ onCancel, usesNativeCalendar }: CreateFormProps) {
   const createService = useCreateService()
 
   const {
@@ -63,7 +65,7 @@ function CreateServiceForm({ onCancel }: CreateFormProps) {
       : null
     const payload = {
       name: data.name,
-      calendar_id: data.calendar_id,
+      ...(data.calendar_id ? { calendar_id: data.calendar_id } : {}),
       ...(data.professional_name ? { professional_name: data.professional_name } : {}),
       ...(data.duration_minutes !== undefined ? { duration_minutes: data.duration_minutes } : {}),
       reminder_hours_before: reminderHours,
@@ -109,27 +111,29 @@ function CreateServiceForm({ onCancel }: CreateFormProps) {
         )}
       </div>
 
-      <div>
-        <label htmlFor="create-calendar-id" className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
-          ID del Calendario Google <span aria-hidden="true">*</span>
-        </label>
-        <input
-          id="create-calendar-id"
-          type="text"
-          {...register('calendar_id')}
-          placeholder="xxx@group.calendar.google.com"
-          className={[
-            'w-full px-3 py-2 rounded-[8px] border text-sm',
-            'bg-[var(--color-bg)] text-[var(--color-text-primary)]',
-            'focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]',
-            errors.calendar_id ? 'border-red-400' : 'border-[var(--color-border)]',
-          ].join(' ')}
-          aria-invalid={!!errors.calendar_id}
-        />
-        {errors.calendar_id && (
-          <p role="alert" className="mt-1 text-xs text-red-600">{errors.calendar_id.message}</p>
-        )}
-      </div>
+      {!usesNativeCalendar && (
+        <div>
+          <label htmlFor="create-calendar-id" className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
+            ID del Calendario Google <span aria-hidden="true">*</span>
+          </label>
+          <input
+            id="create-calendar-id"
+            type="text"
+            {...register('calendar_id')}
+            placeholder="xxx@group.calendar.google.com"
+            className={[
+              'w-full px-3 py-2 rounded-[8px] border text-sm',
+              'bg-[var(--color-bg)] text-[var(--color-text-primary)]',
+              'focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]',
+              errors.calendar_id ? 'border-red-400' : 'border-[var(--color-border)]',
+            ].join(' ')}
+            aria-invalid={!!errors.calendar_id}
+          />
+          {errors.calendar_id && (
+            <p role="alert" className="mt-1 text-xs text-red-600">{errors.calendar_id.message}</p>
+          )}
+        </div>
+      )}
 
       <div>
         <label htmlFor="create-professional-name" className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
@@ -251,9 +255,10 @@ function CreateServiceForm({ onCancel }: CreateFormProps) {
 interface EditFormProps {
   service: Service
   onCancel: () => void
+  usesNativeCalendar: boolean
 }
 
-function EditServiceForm({ service, onCancel }: EditFormProps) {
+function EditServiceForm({ service, onCancel, usesNativeCalendar }: EditFormProps) {
   const updateService = useUpdateService()
 
   const {
@@ -283,7 +288,7 @@ function EditServiceForm({ service, onCancel }: EditFormProps) {
       : null
     const payload = {
       name: data.name,
-      calendar_id: data.calendar_id,
+      ...(data.calendar_id ? { calendar_id: data.calendar_id } : {}),
       professional_name: data.professional_name || undefined,
       duration_minutes: data.duration_minutes,
       reminder_hours_before: reminderHours,
@@ -327,22 +332,24 @@ function EditServiceForm({ service, onCancel }: EditFormProps) {
         )}
       </div>
 
-      <div>
-        <label htmlFor={`edit-calendar-${service.service_id}`} className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
-          ID del Calendario Google <span aria-hidden="true">*</span>
-        </label>
-        <input
-          id={`edit-calendar-${service.service_id}`}
-          type="text"
-          {...register('calendar_id')}
-          className={[
-            'w-full px-3 py-2 rounded-[8px] border text-sm',
-            'bg-[var(--color-bg)] text-[var(--color-text-primary)]',
-            'focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]',
-            errors.calendar_id ? 'border-[var(--color-border)]' : 'border-[var(--color-border)]',
-          ].join(' ')}
-        />
-      </div>
+      {!usesNativeCalendar && (
+        <div>
+          <label htmlFor={`edit-calendar-${service.service_id}`} className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
+            ID del Calendario Google <span aria-hidden="true">*</span>
+          </label>
+          <input
+            id={`edit-calendar-${service.service_id}`}
+            type="text"
+            {...register('calendar_id')}
+            className={[
+              'w-full px-3 py-2 rounded-[8px] border text-sm',
+              'bg-[var(--color-bg)] text-[var(--color-text-primary)]',
+              'focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]',
+              errors.calendar_id ? 'border-[var(--color-border)]' : 'border-[var(--color-border)]',
+            ].join(' ')}
+          />
+        </div>
+      )}
 
       <div>
         <label htmlFor={`edit-professional-${service.service_id}`} className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
@@ -461,6 +468,7 @@ interface ServiceRowProps {
   service: Service
   isEditing: boolean
   isConfirmingDeactivate: boolean
+  usesNativeCalendar: boolean
   onEdit: () => void
   onCancelEdit: () => void
   onToggleActive: () => void
@@ -472,6 +480,7 @@ function ServiceRow({
   service,
   isEditing,
   isConfirmingDeactivate,
+  usesNativeCalendar,
   onEdit,
   onCancelEdit,
   onToggleActive,
@@ -481,7 +490,7 @@ function ServiceRow({
   if (isEditing) {
     return (
       <li>
-        <EditServiceForm service={service} onCancel={onCancelEdit} />
+        <EditServiceForm service={service} onCancel={onCancelEdit} usesNativeCalendar={usesNativeCalendar} />
       </li>
     )
   }
@@ -491,7 +500,10 @@ function ServiceRow({
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-[var(--color-text-primary)] truncate">{service.name}</p>
         <p className="text-xs text-[var(--color-text-secondary)]">
-          {service.professional_name ?? '—'} · {service.duration_minutes}min · Cal: {service.calendar_id}
+          {service.professional_name ?? '—'} · {service.duration_minutes}min
+          {/* calendar_id (Google Calendar) es código muerto en cuentas con
+              calendario nativo — hallazgo 1. No se muestra ahí. */}
+          {!usesNativeCalendar && <> · Cal: {service.calendar_id}</>}
         </p>
       </div>
       <div className="flex items-center gap-3 shrink-0">
@@ -571,6 +583,7 @@ function ServiceRow({
 
 export function ServicesView() {
   const { services, isPending, isError, refetch } = useServices()
+  const { usesNativeCalendar } = useTenantConfig()
   const updateService = useUpdateService()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
@@ -600,7 +613,7 @@ export function ServicesView() {
   }
 
   return (
-    <section aria-label="Servicios del agente" className="space-y-4">
+    <section aria-label="Servicios" className="space-y-4">
       {services.length === 0 && !showCreateForm && (
         <p className="text-[var(--color-text-secondary)] text-sm">No hay servicios configurados</p>
       )}
@@ -613,6 +626,7 @@ export function ServicesView() {
               service={service}
               isEditing={editingId === service.service_id}
               isConfirmingDeactivate={confirmingId === service.service_id}
+              usesNativeCalendar={usesNativeCalendar}
               onEdit={() => setEditingId(service.service_id)}
               onCancelEdit={() => setEditingId(null)}
               onToggleActive={() => {
@@ -630,7 +644,7 @@ export function ServicesView() {
       )}
 
       {showCreateForm ? (
-        <CreateServiceForm onCancel={() => setShowCreateForm(false)} />
+        <CreateServiceForm onCancel={() => setShowCreateForm(false)} usesNativeCalendar={usesNativeCalendar} />
       ) : (
         <button
           type="button"

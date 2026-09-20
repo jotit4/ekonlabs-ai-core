@@ -36,6 +36,7 @@ function makeFrom(responses: Record<string, FakeResult | FakeResult[]>) {
     chain.eq = vi.fn(() => chain)
     chain.in = vi.fn(() => Promise.resolve(result))
     chain.maybeSingle = vi.fn(() => Promise.resolve(result))
+    chain.single = vi.fn(() => Promise.resolve(result ?? { data: null, error: null }))
     chain.order = vi.fn(() => Promise.resolve(result))
     // Si nadie llama a un terminal explícito (patients_rls-like usage), el chain
     // en sí mismo puede ser awaited directamente por el código bajo test.
@@ -122,6 +123,7 @@ describe('getFichaDossier', () => {
           appointments: { session_index: 1, start_at: '2026-06-05T10:00:00Z' },
         },
       ]),
+      tenants: ok({ name: 'Clínica Demo' }),
     })
     const supabase = { from } as never
 
@@ -144,6 +146,23 @@ describe('getFichaDossier', () => {
       treatmentPlansUnavailable: false,
       sessionNotesUnavailable: false,
     })
+    // Hallazgo 7: el nombre de la cuenta viaja en el dossier, no fijo en el código.
+    expect(result?.tenantName).toBe('Clínica Demo')
+  })
+
+  it('resuelve tenantName a null si la query de tenants falla, sin romper el resto del dossier (hallazgo 7)', async () => {
+    const from = makeFrom({
+      patients: ok(BASE_PATIENT),
+      treatments: ok([]),
+      session_notes: ok([]),
+      tenants: fail('500', 'boom'),
+    })
+    const supabase = { from } as never
+
+    const result = await getFichaDossier(supabase, 'patient-1')
+
+    expect(result).not.toBeNull()
+    expect(result?.tenantName).toBeNull()
   })
 
   it('degrada antecedentes/medicacion si la migración 042 no está aplicada (columna inexistente)', async () => {

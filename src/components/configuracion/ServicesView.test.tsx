@@ -8,10 +8,15 @@ const {
   mockUseServices,
   mockUseCreateService,
   mockUseUpdateService,
+  mockTenantConfig,
 } = vi.hoisted(() => ({
   mockUseServices: vi.fn(),
   mockUseCreateService: vi.fn(),
   mockUseUpdateService: vi.fn(),
+  // Default: cuentas de producción reales (ISADI, Clínica Demo) usan
+  // calendario nativo — hallazgo 1/2. Tests que necesiten el caso "no
+  // nativo" lo sobreescriben puntualmente.
+  mockTenantConfig: { current: true },
 }))
 
 vi.mock('@/hooks/use-services', () => ({
@@ -24,6 +29,10 @@ vi.mock('@/hooks/use-create-service', () => ({
 
 vi.mock('@/hooks/use-update-service', () => ({
   useUpdateService: mockUseUpdateService,
+}))
+
+vi.mock('@/hooks/use-tenant-config', () => ({
+  useTenantConfig: () => ({ usesNativeCalendar: mockTenantConfig.current }),
 }))
 
 import { ServicesView } from './ServicesView'
@@ -89,6 +98,7 @@ function setupDefaultMocks() {
 describe('ServicesView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockTenantConfig.current = true
   })
 
   it('muestra skeleton cuando isPending: true', () => {
@@ -124,7 +134,7 @@ describe('ServicesView', () => {
     expect(screen.getByText('No hay servicios configurados')).toBeInTheDocument()
   })
 
-  it('renderiza lista de servicios con nombre, profesional, duración, calendar_id y estado', () => {
+  it('renderiza lista de servicios con nombre, profesional, duración y estado', () => {
     setupDefaultMocks()
     mockUseServices.mockReturnValue({
       services: [ACTIVE_SERVICE, INACTIVE_SERVICE],
@@ -140,7 +150,38 @@ describe('ServicesView', () => {
     // Profesional y duración — pueden haber múltiples filas con 60min
     expect(screen.getByText(/Patricia Pérez/)).toBeInTheDocument()
     expect(screen.getAllByText(/60min/).length).toBeGreaterThan(0)
-    // calendar_id visible en la fila
+  })
+
+  // ── Hallazgo 1: calendar_id es código muerto en cuentas con calendario
+  // nativo — no debe mostrarse "Cal: ..." en la fila del servicio.
+
+  it('NO muestra "Cal: ..." cuando la cuenta usa calendario nativo (hallazgo 1)', () => {
+    mockTenantConfig.current = true
+    setupDefaultMocks()
+    mockUseServices.mockReturnValue({
+      services: [ACTIVE_SERVICE],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    })
+
+    render(<ServicesView />)
+
+    expect(screen.queryByText(/Cal:/)).not.toBeInTheDocument()
+  })
+
+  it('muestra "Cal: ..." cuando la cuenta NO usa calendario nativo', () => {
+    mockTenantConfig.current = false
+    setupDefaultMocks()
+    mockUseServices.mockReturnValue({
+      services: [ACTIVE_SERVICE],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    })
+
+    render(<ServicesView />)
+
     expect(screen.getByText(/Cal: kin@cal\.com/)).toBeInTheDocument()
   })
 
@@ -171,18 +212,19 @@ describe('ServicesView', () => {
     expect(screen.getByText('Nuevo servicio')).toBeInTheDocument()
   })
 
-  it('submit del formulario de creación llama useCreateService.mutate', async () => {
+  it('submit del formulario de creación llama useCreateService.mutate (cuenta con calendario nativo, sin pedir calendar_id)', async () => {
     const { mutateFn } = setupDefaultMocks()
 
     render(<ServicesView />)
 
     fireEvent.click(screen.getByText('Agregar servicio'))
 
-    const nameInput = screen.getByLabelText(/^Nombre/)
-    const calendarInput = screen.getByLabelText(/ID del Calendario Google/)
+    // Hallazgo 2: en una cuenta con calendario nativo (default de este mock)
+    // el campo "ID del Calendario Google" ni se muestra.
+    expect(screen.queryByLabelText(/ID del Calendario Google/)).not.toBeInTheDocument()
 
+    const nameInput = screen.getByLabelText(/^Nombre/)
     fireEvent.change(nameInput, { target: { value: 'Nuevo Servicio' } })
-    fireEvent.change(calendarInput, { target: { value: 'nuevo@cal.com' } })
 
     const saveBtn = screen.getByText('Guardar')
     fireEvent.click(saveBtn)
@@ -190,6 +232,11 @@ describe('ServicesView', () => {
     await waitFor(() => {
       expect(mutateFn).toHaveBeenCalled()
     })
+    // El payload NO lleva calendar_id: el servidor lo deriva. Si lo mandara
+    // vacío dependeríamos de que el backend lo normalice.
+    const payload = mutateFn.mock.calls[0][0]
+    expect(payload).toMatchObject({ name: 'Nuevo Servicio' })
+    expect('calendar_id' in payload).toBe(false)
   })
 
   it('botón "Editar" muestra el formulario inline con datos precargados', () => {
@@ -212,6 +259,35 @@ describe('ServicesView', () => {
     // Datos precargados
     const nameInput = screen.getByDisplayValue('Kinesiología')
     expect(nameInput).toBeInTheDocument()
+  })
+
+  // ── Hallazgo 2: "ID del Calendario Google" no debe pedirse en cuentas con
+  // calendario nativo, ni en alta ni en edición.
+
+  it('el formulario de edición NO muestra "ID del Calendario Google" cuando la cuenta usa calendario nativo', () => {
+    mockTenantConfig.current = true
+    setupDefaultMocks()
+    mockUseServices.mockReturnValue({
+      services: [ACTIVE_SERVICE],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    })
+
+    render(<ServicesView />)
+    fireEvent.click(screen.getByText('Editar'))
+
+    expect(screen.queryByLabelText(/ID del Calendario Google/)).not.toBeInTheDocument()
+  })
+
+  it('el formulario de creación SÍ muestra "ID del Calendario Google" cuando la cuenta NO usa calendario nativo', () => {
+    mockTenantConfig.current = false
+    setupDefaultMocks()
+
+    render(<ServicesView />)
+    fireEvent.click(screen.getByText('Agregar servicio'))
+
+    expect(screen.getByLabelText(/ID del Calendario Google/)).toBeInTheDocument()
   })
 
   it('botón "Desactivar" muestra confirmación antes de ejecutar la mutación', () => {

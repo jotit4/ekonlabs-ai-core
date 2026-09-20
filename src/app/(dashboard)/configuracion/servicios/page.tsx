@@ -16,7 +16,7 @@ export default async function ServiciosPage() {
     <section className="mx-auto w-full max-w-4xl px-6 py-8">
       <header className="mb-6">
         <p className="text-sm text-[var(--color-text-secondary)]">Configuración</p>
-        <h1 className="mt-1 text-[28px] font-semibold leading-tight">Servicios del agente</h1>
+        <h1 className="mt-1 text-[28px] font-semibold leading-tight">Servicios</h1>
       </header>
       <ServicesView />
     </section>

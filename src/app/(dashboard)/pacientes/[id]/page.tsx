@@ -4,7 +4,7 @@ import { useRef, useEffect, useState, type CSSProperties } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Dialog } from '@base-ui/react/dialog'
-import { format, formatISO } from 'date-fns'
+import { format, formatISO, parseISO, isValid } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { createSupabaseBrowserClient } from '@/lib/supabase/client'
 import { useSoftSync } from '@/hooks/use-soft-sync'
@@ -81,6 +81,17 @@ function PatientFichaSkeleton() {
 }
 
 // ─── Campo de dato personal ───────────────────────────────────────────────────
+
+// Fecha de nacimiento en formato argentino (dd/MM/yyyy) para la vista de solo
+// lectura — hallazgo 9: antes mostraba el ISO crudo ("1990-05-15") acá mientras
+// que el formulario de edición (input type="date") ya la muestra "17/08/1981".
+// Mismo dato, dos formatos en la misma pantalla.
+function formatDobDisplay(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const parsed = parseISO(iso)
+  if (!isValid(parsed)) return '—'
+  return format(parsed, 'dd/MM/yyyy', { locale: es })
+}
 
 // Estilos tipo "ficha médica" para el tab Datos personales (familiar para ISADI —
 // misma estética que la ficha imprimible: etiqueta gris + valor, con bordes).
@@ -330,7 +341,7 @@ export default function PacienteFichaPage() {
                 cursor: 'pointer',
               }}
             >
-              Próxima Cita Express
+              Nuevo turno
             </button>
           )}
           <button
@@ -520,7 +531,7 @@ export default function PacienteFichaPage() {
               </tr>
               <tr>
                 <td style={dpLabel}>Fecha de nacimiento</td>
-                <td style={dpValue}>{patient.date_of_birth || '—'}</td>
+                <td style={dpValue}>{formatDobDisplay(patient.date_of_birth)}</td>
                 <td style={dpLabel}>Edad</td>
                 <td style={dpValue}>{edad != null ? `${edad} años` : '—'}</td>
               </tr>

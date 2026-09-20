@@ -308,4 +308,74 @@ describe('POST /api/servicios', () => {
     )
     expect(res.status).toBe(400)
   })
+
+  // ── calendar_id: derivación para cuentas con calendario nativo ─────────────
+
+  it('deriva calendar_id sintético cuando la cuenta usa calendario nativo y no se envía (hallazgo 2)', async () => {
+    setupAdminAuth()
+    const tenantsChain = { select: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { uses_native_calendar: true }, error: null }) }
+    const servicesChain = makeInsertSelectSingleChain({ data: SAMPLE_SERVICE, error: null })
+    mockFrom.mockImplementation((table: string) => (table === 'tenants' ? tenantsChain : servicesChain))
+
+    const res = await POST(makePostRequest({ name: 'Kinesiología' }))
+    expect(res.status).toBe(201)
+    expect(servicesChain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        calendar_id: 'native_5298fcc5-15bf-494c-9655-b49d759cfef4_kinesiologia',
+      })
+    )
+  })
+
+  it('si no se puede leer la config de la cuenta, avisa que reintente (no pide un campo que el formulario esconde)', async () => {
+    setupAdminAuth()
+    const tenantsChain = {
+      select: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({ data: null, error: { message: 'timeout' } }),
+    }
+    const servicesChain = makeInsertSelectSingleChain({ data: SAMPLE_SERVICE, error: null })
+    mockFrom.mockImplementation((table: string) => (table === 'tenants' ? tenantsChain : servicesChain))
+
+    const res = await POST(makePostRequest({ name: 'Kinesiología' }))
+    const body = await res.json()
+    expect(res.status).toBe(503)
+    expect(body.error).toMatch(/reintentá/i)
+    expect(body.details).toBeUndefined()
+    expect(servicesChain.insert).not.toHaveBeenCalled()
+  })
+
+  it('un nombre sin letras ni números igual deriva un calendar_id válido', async () => {
+    setupAdminAuth()
+    const tenantsChain = { select: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { uses_native_calendar: true }, error: null }) }
+    const servicesChain = makeInsertSelectSingleChain({ data: SAMPLE_SERVICE, error: null })
+    mockFrom.mockImplementation((table: string) => (table === 'tenants' ? tenantsChain : servicesChain))
+
+    const res = await POST(makePostRequest({ name: '!!!' }))
+    expect(res.status).toBe(201)
+    expect(servicesChain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ calendar_id: 'native_5298fcc5-15bf-494c-9655-b49d759cfef4_servicio' })
+    )
+  })
+
+  it('retorna 400 si falta calendar_id y la cuenta NO usa calendario nativo', async () => {
+    setupAdminAuth()
+    const tenantsChain = { select: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { uses_native_calendar: false }, error: null }) }
+    mockFrom.mockImplementation((table: string) => (table === 'tenants' ? tenantsChain : makeInsertSelectSingleChain({ data: SAMPLE_SERVICE, error: null })))
+
+    const res = await POST(makePostRequest({ name: 'Kinesiología' }))
+    expect(res.status).toBe(400)
+    const body = await res.json() as { error: string }
+    expect(body.error).toBe('Datos inválidos')
+  })
+
+  it('usa el calendar_id enviado cuando viene, sin consultar tenants', async () => {
+    setupAdminAuth()
+    const servicesChain = makeInsertSelectSingleChain({ data: SAMPLE_SERVICE, error: null })
+    mockFrom.mockReturnValue(servicesChain)
+
+    const res = await POST(makePostRequest({ name: 'Kinesiología', calendar_id: 'kin@cal.com' }))
+    expect(res.status).toBe(201)
+    expect(servicesChain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ calendar_id: 'kin@cal.com' })
+    )
+  })
 })

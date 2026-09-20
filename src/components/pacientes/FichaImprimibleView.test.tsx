@@ -61,6 +61,9 @@ function makeDossier(overrides: Partial<FichaDossier> = {}): FichaDossier {
       treatmentPlansUnavailable: false,
       sessionNotesUnavailable: false,
     },
+    // Default deliberadamente distinto de "ISADI" — prueba que el título ya
+    // NO está fijo en el código (hallazgo 7).
+    tenantName: 'Clínica Demo',
     ...overrides,
   }
 }
@@ -95,6 +98,7 @@ function makeEmptyDossier(): FichaDossier {
       treatmentPlansUnavailable: false,
       sessionNotesUnavailable: false,
     },
+    tenantName: null,
   }
 }
 
@@ -107,7 +111,7 @@ describe('FichaImprimibleView', () => {
   it('renderiza la cabecera de admisión con los datos del paciente', () => {
     render(<FichaImprimibleView dossier={makeDossier()} />)
 
-    expect(screen.getByText('ISADI — Ficha kinesiológica')).toBeInTheDocument()
+    expect(screen.getByText('Clínica Demo — Ficha del paciente')).toBeInTheDocument()
     expect(screen.getByText('Ana López')).toBeInTheDocument()
     const expectedAge = calculateAge('1990-05-15')
     expect(screen.getByText(`${expectedAge} años`)).toBeInTheDocument()
@@ -117,6 +121,21 @@ describe('FichaImprimibleView', () => {
     expect(screen.getByText('Hipertensión')).toBeInTheDocument()
     expect(screen.getByText('Recuperar movilidad')).toBeInTheDocument()
     expect(screen.getByText('Losartán')).toBeInTheDocument()
+  })
+
+  // ── Hallazgo 7: título de la ficha ya NO nombra a ISADI fijo en el código ──
+
+  it('NO muestra "ISADI" en el título (usa tenantName del dossier)', () => {
+    render(<FichaImprimibleView dossier={makeDossier()} />)
+
+    expect(screen.queryByText(/ISADI/)).not.toBeInTheDocument()
+  })
+
+  it('muestra un título neutro sin nombre propio cuando tenantName es null', () => {
+    render(<FichaImprimibleView dossier={makeDossier({ tenantName: null })} />)
+
+    expect(screen.getByText('Ficha del paciente')).toBeInTheDocument()
+    expect(screen.queryByText(/ISADI/)).not.toBeInTheDocument()
   })
 
   it('renderiza el control de sesiones por tratamiento', () => {

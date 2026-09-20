@@ -109,7 +109,10 @@ export function AgentPromptEditor({
           tone_base: config.ia_config?.tone_base ?? '',
           tone_length: config.ia_config?.tone_length ?? 2,
           identity: config.ia_config?.identity ?? '',
-          constraints: config.ia_config?.constraints ?? '',
+          // constraints puede venir sembrado como objeto (p. ej. `{}`) en vez
+          // de string desde datos viejos/mal sembrados — sin este chequeo,
+          // React renderiza el textarea con "[object Object]" (hallazgo 4).
+          constraints: typeof config.ia_config?.constraints === 'string' ? config.ia_config.constraints : '',
           features: {
             enable_new_appointment: config.ia_config?.features?.enable_new_appointment ?? false,
             enable_cancel: config.ia_config?.features?.enable_cancel ?? false,
@@ -250,7 +253,7 @@ export function AgentPromptEditor({
                   maxLength={100}
                   {...register('agent_name')}
                   className={inputClass}
-                  placeholder="Ej: Asistente de ISADI"
+                  placeholder="Ej: Asistente de tu clínica"
                   aria-invalid={!!errors.agent_name}
                 />
                 {errors.agent_name && (

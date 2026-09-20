@@ -67,4 +67,8 @@ export interface FichaDossier {
   treatments: FichaTreatmentBlock[]
   evolucion: FichaEvolucionRow[]
   limitations: FichaLimitations
+  // Nombre de la cuenta (tenants.name) para el encabezado de la ficha — hallazgo 7
+  // (antes decía "ISADI" fijo en el código). null si no se pudo resolver: la vista
+  // cae a un título neutro en vez de inventar o dejar un nombre ajeno.
+  tenantName: string | null
 }

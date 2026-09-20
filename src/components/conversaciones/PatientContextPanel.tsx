@@ -1,10 +1,49 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { parseISO, isValid, format } from 'date-fns'
+import { formatInTimeZone } from 'date-fns-tz'
+import { es } from 'date-fns/locale'
 import { createSupabaseBrowserClient } from '@/lib/supabase/client'
 import { useAgentContext } from '@/hooks/use-agent-context'
+import { ARGENTINA_TIME_ZONE } from '@/lib/utils/argentina-date'
 import type { ConversationStatus } from '@/types/conversations'
 import { PatientQuickDrawer } from './PatientQuickDrawer'
+
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * Formatea el "horario solicitado" (slot_requested/availability_info) a texto
+ * legible en horario de Argentina — hallazgo 8: antes se mostraba el ISO crudo
+ * tal cual (ej. "2026-07-29T12:00:00+00:00"), y además esa hora está en UTC:
+ * 12:00 UTC son las 09:00 en Mendoza, así que leído literal daba una hora
+ * equivocada.
+ *
+ * - Fecha con hora (instante con offset, ej. slot_requested de un turno
+ *   confirmado): se convierte a America/Argentina/Buenos_Aires.
+ * - Fecha sola (YYYY-MM-DD, sin componente horario): se formatea tal cual sin
+ *   aplicar zona horaria — convertirla correría el día (medianoche UTC no es
+ *   medianoche en Argentina).
+ * - Cualquier otro texto (ej. "Prefiere por la mañana" en availability_info,
+ *   que es texto libre, no una fecha): se muestra tal cual.
+ */
+// Exportado solo para poder testear la DECISIÓN de rama sin depender de la
+// zona horaria de la máquina donde corren los tests: en una máquina en
+// Argentina las dos ramas dan el mismo resultado para una fecha sola, así que
+// un test de salida no probaría nada.
+export function isDateOnlySlot(value: string): boolean {
+  return DATE_ONLY_RE.test(value)
+}
+
+function formatSlotLabel(value: string): string {
+  if (isDateOnlySlot(value)) {
+    const parsed = parseISO(value)
+    return isValid(parsed) ? format(parsed, 'EEEE d/MM', { locale: es }) : value
+  }
+  const parsed = parseISO(value)
+  if (!isValid(parsed)) return value
+  return formatInTimeZone(parsed, ARGENTINA_TIME_ZONE, 'EEEE d/MM, HH:mm', { locale: es })
+}
 
 // ─── Subcomponentes internos ─────────────────────────────────────────────────
 
@@ -133,6 +172,11 @@ export function PatientContextPanel({ phone, conversationStatus }: PatientContex
   const isResolved =
     conversationStatus === 'resolved' || conversationStatus === 'human_takeover'
 
+  // "Horario solicitado" (hallazgo 8): slot_requested o, si no hay, texto libre
+  // de availability_info. Formateado a horario de Argentina — ver formatSlotLabel.
+  const rawSlot = context?.slot_requested ?? context?.availability_info
+  const slotLabel = rawSlot ? formatSlotLabel(rawSlot) : rawSlot
+
   return (
     <aside
       role="complementary"
@@ -223,13 +267,10 @@ export function PatientContextPanel({ phone, conversationStatus }: PatientContex
             </div>
           )}
 
-          <ContextField label="Intención detectada" value={context.detected_intent} />
+          <ContextField label="Qué quiere hacer" value={context.detected_intent} />
           <ContextField label="DNI" value={context.dni} />
           <ContextField label="Servicio solicitado" value={context.service_requested} />
-          <ContextField
-            label="Slot / Disponibilidad"
-            value={context.slot_requested ?? context.availability_info}
-          />
+          <ContextField label="Horario solicitado" value={slotLabel} />
           <ContextField label="Obra social" value={context.obra_social} />
 
           {/* Bloqueo actual: solo si tiene valor */}

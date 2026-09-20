@@ -25,7 +25,13 @@ export type CreateServiceExceptionFormValues = z.infer<typeof CreateServiceExcep
 
 export const CreateServiceSchema = z.object({
   name: z.string().min(1, { error: 'El nombre es requerido' }).max(100, { error: 'Máximo 100 caracteres' }),
-  calendar_id: z.string().min(1, { error: 'El calendario Google es requerido' }),
+  // calendar_id (Google Calendar): campo legacy, código muerto en las cuentas
+  // que usan calendario nativo (uses_native_calendar=true — todas las de
+  // producción hoy). Ya no es obligatorio acá: si la cuenta usa calendario
+  // nativo y no se envía, el servidor deriva un valor sintético (ver
+  // src/app/api/servicios/route.ts). Si la cuenta NO usa calendario nativo,
+  // el servidor lo sigue exigiendo.
+  calendar_id: z.string().optional(),
   professional_name: z.string().max(100, { error: 'Máximo 100 caracteres' }).optional(),
   duration_minutes: z.number().int().min(5, { error: 'Mínimo 5 minutos' }).max(480, { error: 'Máximo 8 horas' }).optional(),
   booking_mode: z.enum(['appointment', 'walk_in', 'gated', 'cycle']).optional(),

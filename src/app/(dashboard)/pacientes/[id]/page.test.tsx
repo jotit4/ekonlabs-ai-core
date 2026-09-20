@@ -218,6 +218,49 @@ describe('PacienteFichaPage', () => {
     expect(screen.getByText('OSDE')).toBeInTheDocument()
   })
 
+  // ── Hallazgo 9: fecha de nacimiento en formato argentino, no ISO crudo ──────
+
+  it('muestra la fecha de nacimiento en formato argentino dd/MM/yyyy, no el ISO crudo', async () => {
+    mockQueryState.data = makePatient({ date_of_birth: '1981-08-17' })
+
+    render(<PacienteFichaPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('17/08/1981')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('1981-08-17')).not.toBeInTheDocument()
+  })
+
+  it('fecha de nacimiento null → muestra "—"', async () => {
+    mockQueryState.data = makePatient({ date_of_birth: null })
+
+    render(<PacienteFichaPage />)
+
+    await waitFor(() => {
+      const allAnaLopez = screen.getAllByText('Ana López')
+      expect(allAnaLopez.length).toBeGreaterThanOrEqual(1)
+    })
+    // Hay múltiples "—" en la tabla de datos personales para otros campos
+    // vacíos — alcanza con que no rompa y no muestre "null"/"undefined".
+    expect(screen.queryByText('null')).not.toBeInTheDocument()
+    expect(screen.queryByText('undefined')).not.toBeInTheDocument()
+  })
+
+  // ── Hallazgo 10: el botón de turno rápido usa "turno", no "cita"/"express" ──
+
+  it('botón para agendar dice "Nuevo turno" (no "Próxima Cita Express")', async () => {
+    mockCurrentTenant.role = 'admin'
+    mockQueryState.data = makePatient()
+
+    render(<PacienteFichaPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Nuevo turno')).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/Cita Express/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/express/i)).not.toBeInTheDocument()
+  })
+
   // ── Ficha de admisión (migración 047 — Fase 1 digitalización) ───────────────
 
   it('muestra los campos de la ficha de admisión (lugar/ocupación/derivación/actividad física/KLGO a cargo)', async () => {

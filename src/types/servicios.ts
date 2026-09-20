@@ -72,7 +72,9 @@ export interface ServicesListResponse {
 
 export interface CreateServicePayload {
   name: string
-  calendar_id: string
+  // Opcional: si la cuenta usa calendario nativo (hallazgo 2) y no se envía,
+  // el servidor deriva un valor sintético — ver src/app/api/servicios/route.ts.
+  calendar_id?: string
   professional_name?: string
   duration_minutes?: number
   booking_mode?: 'appointment' | 'walk_in' | 'gated' | 'cycle'

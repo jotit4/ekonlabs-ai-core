@@ -3,9 +3,16 @@ import { render, screen } from '@testing-library/react'
 
 // ── Mocks hoisted ─────────────────────────────────────────────────────────────
 
-const { mockGetUser, mockGetSession } = vi.hoisted(() => ({
-  mockGetUser: vi.fn(),
-  mockGetSession: vi.fn(),
+// La página resuelve el rol con `getAuthClaims()`, que internamente usa
+// `supabase.auth.getClaims()`. El mock anterior de este archivo solo exponía
+// `getUser`/`getSession`: al no existir `getClaims`, `getAuthClaims` caía a su
+// camino de compatibilidad, que a propósito NO lee el rol. Con eso `auth.role`
+// era siempre `undefined` y los cuatro tests pasaban (o fallaban) por el
+// motivo equivocado: el de admin fallaba, y los de recepción y profesional
+// pasaban sin ejercitar el control de rol. Se mockea `getAuthClaims` directo,
+// como hacen los tests de `src/app/api/media/*`.
+const { mockGetAuthClaims } = vi.hoisted(() => ({
+  mockGetAuthClaims: vi.fn(),
 }))
 
 vi.mock('server-only', () => ({}))
@@ -16,12 +23,8 @@ vi.mock('next/navigation', () => ({
   }),
 }))
 
-vi.mock('@/lib/supabase/server', () => ({
-  createSupabaseServerClient: vi.fn(() =>
-    Promise.resolve({
-      auth: { getUser: mockGetUser, getSession: mockGetSession },
-    })
-  ),
+vi.mock('@/lib/auth/claims', () => ({
+  getAuthClaims: mockGetAuthClaims,
 }))
 
 vi.mock('@/components/configuracion/ServicesView', () => ({
@@ -32,12 +35,13 @@ import ServiciosPage from './page'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function makeJwt(claims: Record<string, unknown> = { app_role: 'admin', tenant_id: 'tenant-1' }) {
-  const encoded = btoa(JSON.stringify(claims))
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-  return `h.${encoded}.sig`
+function authComoRol(role: string) {
+  return {
+    userId: 'user-1',
+    role,
+    tenantId: 'tenant-1',
+    claims: { sub: 'user-1', app_role: role, tenant_id: 'tenant-1' },
+  }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -48,52 +52,36 @@ describe('ServiciosPage', () => {
   })
 
   it('redirige a /login si no hay usuario autenticado', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: null } })
-    mockGetSession.mockResolvedValue({ data: { session: null } })
+    mockGetAuthClaims.mockResolvedValue(null)
 
     await expect(ServiciosPage()).rejects.toThrow('REDIRECT:/login')
   })
 
   it('redirige a /agenda si el rol es receptionist', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
-    mockGetSession.mockResolvedValue({
-      data: {
-        session: {
-          access_token: makeJwt({ app_role: 'receptionist', tenant_id: 'tenant-1' }),
-        },
-      },
-    })
+    mockGetAuthClaims.mockResolvedValue(authComoRol('receptionist'))
 
     await expect(ServiciosPage()).rejects.toThrow('REDIRECT:/agenda')
   })
 
   it('redirige a /agenda si el rol es doctor', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
-    mockGetSession.mockResolvedValue({
-      data: {
-        session: {
-          access_token: makeJwt({ app_role: 'doctor', tenant_id: 'tenant-1' }),
-        },
-      },
-    })
+    mockGetAuthClaims.mockResolvedValue(authComoRol('doctor'))
+
+    await expect(ServiciosPage()).rejects.toThrow('REDIRECT:/agenda')
+  })
+
+  it('redirige a /agenda si la sesión no trae rol', async () => {
+    mockGetAuthClaims.mockResolvedValue({ userId: 'user-1', role: undefined, tenantId: 'tenant-1', claims: {} })
 
     await expect(ServiciosPage()).rejects.toThrow('REDIRECT:/agenda')
   })
 
   it('renderiza ServicesView cuando el rol es admin', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } })
-    mockGetSession.mockResolvedValue({
-      data: {
-        session: {
-          access_token: makeJwt({ app_role: 'admin', tenant_id: 'tenant-1' }),
-        },
-      },
-    })
+    mockGetAuthClaims.mockResolvedValue(authComoRol('admin'))
 
     const element = await ServiciosPage()
     render(element)
 
     expect(screen.getByTestId('services-view')).toBeInTheDocument()
-    expect(screen.getByText('Servicios del agente')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Servicios' })).toBeInTheDocument()
   })
 })

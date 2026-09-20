@@ -42,7 +42,7 @@ function orDash(value: string | null | undefined): string {
  */
 export function FichaImprimibleView({ dossier }: FichaImprimibleViewProps) {
   const router = useRouter()
-  const { patient, tratamientoObjetivo, treatments, evolucion, limitations } = dossier
+  const { patient, tratamientoObjetivo, treatments, evolucion, limitations, tenantName } = dossier
 
   const edad = calculateAge(patient.date_of_birth)
   // Filas de la grilla unificada de sesiones = el bono con más sesiones.
@@ -114,7 +114,12 @@ export function FichaImprimibleView({ dossier }: FichaImprimibleViewProps) {
       {/* ── Ficha (esto es lo único visible al imprimir) ──────────────────────── */}
       <div className="ficha-imprimible">
         <header className="ficha-header">
-          <h1>ISADI — Ficha kinesiológica</h1>
+          {/* hallazgo 7: antes decía "ISADI — Ficha kinesiológica" fijo en el
+              código — cualquier clínica imprimía la ficha con el nombre de
+              ISADI, y "kinesiológica" asume una especialidad que no todas las
+              cuentas tienen. tenantName viene de tenants.name (dossier
+              server-side); si no se pudo resolver, cae a un título neutro. */}
+          <h1>{tenantName ? `${tenantName} — Ficha del paciente` : 'Ficha del paciente'}</h1>
         </header>
 
         {/* Bloque 1 — Cabecera de admisión */}

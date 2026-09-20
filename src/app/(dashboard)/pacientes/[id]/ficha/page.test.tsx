@@ -73,6 +73,7 @@ function makeDossier(overrides: Partial<FichaDossier> = {}): FichaDossier {
       treatmentPlansUnavailable: false,
       sessionNotesUnavailable: false,
     },
+    tenantName: null,
     ...overrides,
   }
 }
