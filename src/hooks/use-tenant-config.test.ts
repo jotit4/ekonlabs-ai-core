@@ -35,7 +35,12 @@ describe('useTenantConfig', () => {
     const { Wrapper } = makeWrapper()
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ uses_native_calendar: false, agenda_area_focus: null }),
+      json: async () => ({
+        uses_native_calendar: false,
+        agenda_area_focus: null,
+        reception_groups: {},
+        reception_default_group: null,
+      }),
     })
     const { result, unmount } = renderHook(() => useTenantConfig(), { wrapper: Wrapper })
     await waitFor(() => expect(result.current.isPending).toBe(false))
@@ -47,7 +52,12 @@ describe('useTenantConfig', () => {
     const { Wrapper } = makeWrapper()
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ uses_native_calendar: true, agenda_area_focus: null }),
+      json: async () => ({
+        uses_native_calendar: true,
+        agenda_area_focus: null,
+        reception_groups: {},
+        reception_default_group: null,
+      }),
     })
     const { result, unmount } = renderHook(() => useTenantConfig(), { wrapper: Wrapper })
     await waitFor(() => expect(result.current.isPending).toBe(false))
@@ -69,11 +79,82 @@ describe('useTenantConfig', () => {
     const { Wrapper } = makeWrapper()
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ uses_native_calendar: false, agenda_area_focus: null }),
+      json: async () => ({
+        uses_native_calendar: false,
+        agenda_area_focus: null,
+        reception_groups: {},
+        reception_default_group: null,
+      }),
     })
     const { unmount } = renderHook(() => useTenantConfig(), { wrapper: Wrapper })
     await waitFor(() => expect(mockFetch).toHaveBeenCalledWith('/api/tenant/config'))
     unmount()
+  })
+
+  // ── reception_groups / reception_default_group (tenants.rules, migración 069) ──
+  describe('receptionGroups / receptionDefaultGroup', () => {
+    it('receptionGroups es {} y receptionDefaultGroup es null por defecto mientras carga', () => {
+      const { Wrapper } = makeWrapper()
+      mockFetch.mockReturnValue(new Promise(() => {})) // never resolves
+      const { result, unmount } = renderHook(() => useTenantConfig(), { wrapper: Wrapper })
+      expect(result.current.receptionGroups).toEqual({})
+      expect(result.current.receptionDefaultGroup).toBeNull()
+      unmount()
+    })
+
+    it('expone receptionGroups y receptionDefaultGroup tal como los devuelve la API (ISADI)', async () => {
+      const { Wrapper } = makeWrapper()
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          uses_native_calendar: false,
+          agenda_area_focus: 'rehab',
+          reception_groups: {
+            fisioterapia: { label: 'Fisioterapia', main_service_id: 'svc-fisio' },
+            pileta: { label: 'Pileta', main_service_id: null },
+            pilates: { label: 'Pilates', main_service_id: null },
+          },
+          reception_default_group: 'fisioterapia',
+        }),
+      })
+      const { result, unmount } = renderHook(() => useTenantConfig(), { wrapper: Wrapper })
+      await waitFor(() => expect(result.current.isPending).toBe(false))
+      expect(result.current.receptionGroups).toEqual({
+        fisioterapia: { label: 'Fisioterapia', main_service_id: 'svc-fisio' },
+        pileta: { label: 'Pileta', main_service_id: null },
+        pilates: { label: 'Pilates', main_service_id: null },
+      })
+      expect(result.current.receptionDefaultGroup).toBe('fisioterapia')
+      unmount()
+    })
+
+    it('receptionGroups es {} y receptionDefaultGroup es null cuando la cuenta no tiene el ajuste (cuenta demo)', async () => {
+      const { Wrapper } = makeWrapper()
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          uses_native_calendar: false,
+          agenda_area_focus: null,
+          reception_groups: {},
+          reception_default_group: null,
+        }),
+      })
+      const { result, unmount } = renderHook(() => useTenantConfig(), { wrapper: Wrapper })
+      await waitFor(() => expect(result.current.isPending).toBe(false))
+      expect(result.current.receptionGroups).toEqual({})
+      expect(result.current.receptionDefaultGroup).toBeNull()
+      unmount()
+    })
+
+    it('receptionGroups es {} y receptionDefaultGroup es null si la API falla (fallback seguro)', async () => {
+      const { Wrapper } = makeWrapper()
+      mockFetch.mockResolvedValue({ ok: false, status: 500 })
+      const { result, unmount } = renderHook(() => useTenantConfig(), { wrapper: Wrapper })
+      await waitFor(() => expect(result.current.isPending).toBe(false), { timeout: 6000 })
+      expect(result.current.receptionGroups).toEqual({})
+      expect(result.current.receptionDefaultGroup).toBeNull()
+      unmount()
+    })
   })
 
   // ── agendaAreaFocus (tenants.rules.agenda_area_focus, migración 062) ───────

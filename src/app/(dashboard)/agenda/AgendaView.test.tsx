@@ -62,7 +62,7 @@ vi.mock('@/hooks/use-gcal-channel-status', () => ({
 }))
 
 vi.mock('@/hooks/use-tenant-config', () => ({
-  useTenantConfig: vi.fn(() => ({ usesNativeCalendar: false, agendaAreaFocus: null, isPending: false, isError: false, refetch: vi.fn() })),
+  useTenantConfig: vi.fn(() => ({ usesNativeCalendar: false, agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null, isPending: false, isError: false, refetch: vi.fn() })),
 }))
 
 vi.mock('@/components/agenda/SyncStatusBanner', () => ({
@@ -336,7 +336,7 @@ describe('AgendaPage', () => {
       isError: false,
       refetch: vi.fn(),
     })
-    vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, agendaAreaFocus: null, isPending: false, isError: false, refetch: vi.fn() })
+    vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null, isPending: false, isError: false, refetch: vi.fn() })
     vi.mocked(useWalkInService).mockReturnValue(null)
   })
 
@@ -541,7 +541,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = { vista: 'dia' }
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: null,
+        agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: false,
         refetch: vi.fn(),
@@ -565,7 +565,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = { vista: 'dia' }
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: 'rehab',
+        agendaAreaFocus: 'rehab', receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: false,
         refetch: vi.fn(),
@@ -597,7 +597,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = { vista: 'dia' }
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: 'rehab',
+        agendaAreaFocus: 'rehab', receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: false,
         refetch: vi.fn(),
@@ -629,7 +629,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = { vista: 'dia' }
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: null,
+        agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null,
         isPending: true,
         isError: false,
         refetch: vi.fn(),
@@ -670,7 +670,7 @@ describe('AgendaPage', () => {
       const mockRefetchAppointments = vi.fn()
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: null,
+        agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: true,
         refetch: mockRefetchTenantConfig,
@@ -716,7 +716,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = {}
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: null,
+        agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: false,
         refetch: vi.fn(),
@@ -739,7 +739,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = {}
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: 'rehab',
+        agendaAreaFocus: 'rehab', receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: false,
         refetch: vi.fn(),
@@ -762,7 +762,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = {}
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: null,
+        agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null,
         isPending: true,
         isError: false,
         refetch: vi.fn(),
@@ -790,7 +790,7 @@ describe('AgendaPage', () => {
       const mockRangeRefetch = vi.fn()
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: null,
+        agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: true,
         refetch: mockRefetchTenantConfig,
@@ -887,7 +887,7 @@ describe('AgendaPage', () => {
   describe('condicionalidad GCal según uses_native_calendar', () => {
     it('muestra banners GCal cuando usesNativeCalendar=false y vista día', () => {
       mockSearchParamsData = { vista: 'dia' }
-      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, agendaAreaFocus: null, isPending: false, isError: false, refetch: vi.fn() })
+      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null, isPending: false, isError: false, refetch: vi.fn() })
       render(<AgendaPage />)
       expect(screen.getByTestId('sync-status-banner')).toBeInTheDocument()
       expect(screen.getByTestId('gcal-degradation-banner')).toBeInTheDocument()
@@ -895,7 +895,7 @@ describe('AgendaPage', () => {
 
     it('NO muestra banners GCal cuando usesNativeCalendar=true', () => {
       mockSearchParamsData = { vista: 'dia' }
-      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: true, agendaAreaFocus: null, isPending: false, isError: false, refetch: vi.fn() })
+      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: true, agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null, isPending: false, isError: false, refetch: vi.fn() })
       render(<AgendaPage />)
       expect(screen.queryByTestId('sync-status-banner')).not.toBeInTheDocument()
       expect(screen.queryByTestId('gcal-degradation-banner')).not.toBeInTheDocument()
@@ -903,14 +903,14 @@ describe('AgendaPage', () => {
 
     it('cuando usesNativeCalendar=true, useGCalChannelStatus se llama con enabled=false', () => {
       mockSearchParamsData = {}
-      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: true, agendaAreaFocus: null, isPending: false, isError: false, refetch: vi.fn() })
+      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: true, agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null, isPending: false, isError: false, refetch: vi.fn() })
       render(<AgendaPage />)
       expect(vi.mocked(useGCalChannelStatus)).toHaveBeenCalledWith(false)
     })
 
     it('cuando tenantConfig está pendiente (isPending=true), useGCalChannelStatus se llama con enabled=false', () => {
       mockSearchParamsData = {}
-      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, agendaAreaFocus: null, isPending: true, isError: false, refetch: vi.fn() })
+      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null, isPending: true, isError: false, refetch: vi.fn() })
       render(<AgendaPage />)
       expect(vi.mocked(useGCalChannelStatus)).toHaveBeenCalledWith(false)
     })
@@ -932,7 +932,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = { vista: 'dia' }
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: null,
+        agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: true,
         refetch: vi.fn(),
@@ -946,7 +946,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = {}
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: null,
+        agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: true,
         refetch: vi.fn(),

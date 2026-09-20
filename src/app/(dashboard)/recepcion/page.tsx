@@ -20,6 +20,7 @@ import { ProximosTurnos } from '@/components/recepcion/ProximosTurnos'
 import { WalkInQueuePanel } from '@/components/recepcion/WalkInQueuePanel'
 import { useAppointments } from '@/hooks/use-appointments'
 import { useCurrentUser } from '@/hooks/use-current-user'
+import { useTenantConfig } from '@/hooks/use-tenant-config'
 import type { ConversationSummary } from '@/types/conversations'
 
 const NewTurnoModal = dynamic(() =>
@@ -53,6 +54,9 @@ export default function RecepcionPage() {
   // Nombre de la persona logueada para el saludo. Mismo hook que usa el resto
   // del dashboard (TakeoverBar, perfil, etc.).
   const { user } = useCurrentUser()
+  // Deja pedida la config de la cuenta al entrar: «Dar un turno» la necesita
+  // para decidir su formulario y así no abre con un estado de carga.
+  useTenantConfig()
   const primerNombre = user?.fullName ? user.fullName.trim().split(/\s+/)[0] : ''
 
   // Hoy, en formato YYYY-MM-DD local (mismo formato que usa la agenda).

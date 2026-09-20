@@ -25,6 +25,30 @@ vi.mock('@/hooks/use-availability', () => ({
 }))
 import { useAvailability, fetchAvailabilityDays } from '@/hooks/use-availability'
 
+// Mock de la config de la cuenta (tenants.rules.reception_groups /
+// reception_default_group, migración 069). Default = mismos datos que ISADI
+// hoy (grupo por defecto 'fisioterapia' con label "Fisioterapia"), para que
+// todos los tests de "modo recepción" existentes seguir pasando sin cambios —
+// el default de este mock reproduce el comportamiento ANTES fijo en el
+// código. Los tests de la cuenta demo / grupo custom / loading / error
+// sobrescriben `mockTenantConfig.current` puntualmente.
+const mockTenantConfig = vi.hoisted(() => ({
+  current: {
+    receptionGroups: {
+      fisioterapia: { label: 'Fisioterapia', main_service_id: null },
+      pileta: { label: 'Pileta', main_service_id: null },
+      pilates: { label: 'Pilates', main_service_id: null },
+    } as Record<string, { label: string; main_service_id: string | null }>,
+    receptionDefaultGroup: 'fisioterapia' as string | null,
+    isPending: false,
+    isError: false,
+    refetch: vi.fn(),
+  },
+}))
+vi.mock('@/hooks/use-tenant-config', () => ({
+  useTenantConfig: () => mockTenantConfig.current,
+}))
+
 function makeShift(open: string): AvailabilityShift {
   return {
     open,
@@ -239,6 +263,19 @@ describe('NewTurnoModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockServicesData.current = DEFAULT_SERVICES.map((service) => ({ ...service }))
+    // Default: config de la cuenta = ISADI (grupo por defecto 'fisioterapia'
+    // con servicios activos) — ver comentario del mock arriba.
+    mockTenantConfig.current = {
+      receptionGroups: {
+        fisioterapia: { label: 'Fisioterapia', main_service_id: null },
+        pileta: { label: 'Pileta', main_service_id: null },
+        pilates: { label: 'Pilates', main_service_id: null },
+      },
+      receptionDefaultGroup: 'fisioterapia',
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    }
     // Default: búsqueda sin resultados
     setupFetch({ search: [] })
     // Default: disponibilidad con 09:00–11:00 libres cuando se eligió servicio+profesional+fecha
@@ -1783,6 +1820,305 @@ describe('NewTurnoModal', () => {
       // catálogo) — lo que NO debe existir es el rótulo fijo (un <p>, no una
       // opción del select) del modo recepción.
       expect(screen.queryByText('Fisioterapia', { selector: 'p' })).not.toBeInTheDocument()
+    })
+  })
+
+  // ─── El grupo por defecto de recepción es un DATO DE LA CUENTA (migración 069) ──
+  // Antes "fisioterapia"/"Fisioterapia" eran un valor y un nombre fijos en el
+  // código (RECEPTION_FISIO_GROUP). Ahora salen de
+  // tenants.rules.reception_groups / reception_default_group (useTenantConfig,
+  // mockeado arriba con `mockTenantConfig`). Este bloque cubre la matriz de
+  // cuentas: con grupo (ISADI), sin `reception_groups` (compat con la
+  // migración sin aplicar), sin ningún grupo (cuenta demo — bug original) y
+  // con un grupo de nombre distinto.
+  describe('grupo por defecto de recepción — dato de la cuenta (migración 069)', () => {
+    const singlePatient = {
+      patient_id: 'pat-uuid-1',
+      full_name: 'María López',
+      phone_number: '+5491111111111',
+      obra_social: null,
+      deletion_requested_at: null,
+    }
+
+    describe('cuenta SIN reception_groups en rules (código publicado antes que la migración)', () => {
+      beforeEach(() => {
+        mockTenantConfig.current = {
+          ...mockTenantConfig.current,
+          receptionGroups: {},
+          receptionDefaultGroup: 'fisioterapia',
+        }
+      })
+
+      it('el rótulo fijo cae al fallback capitalizado ("Fisioterapia") — mismo texto que con la migración aplicada', () => {
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" isReceptionist />)
+        expect(screen.getByText('Fisioterapia')).toBeInTheDocument()
+        expect(screen.queryByLabelText('Servicio')).not.toBeInTheDocument()
+      })
+
+      it('la serie sigue resolviendo el servicio principal por respaldo de nombre (svc-2, "Fisioterapia")', async () => {
+        const user = userEvent.setup()
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-30" isReceptionist />)
+
+        await user.click(screen.getByRole('button', { name: /5 sesiones/i }))
+
+        expect(vi.mocked(useAvailability)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            serviceId: 'svc-2',
+            professionalId: null,
+            allProfessionals: true,
+          }),
+        )
+      })
+    })
+
+    describe('cuenta sin ningún grupo configurado (demo) — reproduce el bug original', () => {
+      const DEMO_SERVICES = [
+        {
+          service_id: 'svc-demo-1',
+          name: 'Consulta General',
+          professional_name: 'Dra. Gómez',
+          duration_minutes: 30,
+          booking_mode: 'appointment',
+          reception_group: null,
+        },
+        {
+          service_id: 'svc-demo-2',
+          name: 'Odontología',
+          professional_name: null,
+          duration_minutes: 45,
+          booking_mode: 'appointment',
+          reception_group: null,
+        },
+      ]
+
+      beforeEach(() => {
+        mockServicesData.current = DEMO_SERVICES.map((service) => ({ ...service }))
+        mockTenantConfig.current = {
+          ...mockTenantConfig.current,
+          receptionGroups: {},
+          receptionDefaultGroup: null,
+        }
+        setupFetch({
+          search: [singlePatient],
+          professionals: [{ professional_id: 'prof-demo', name: 'Dra. Gómez' }],
+        })
+      })
+
+      // Bug original (verificado en prod con la cuenta demo): el rol
+      // recepción mostraba el servicio fijo "Fisioterapia" (inexistente en
+      // esta cuenta) y el horario quedaba deshabilitado, sin ningún aviso.
+      // Con la cuenta sin `reception_default_group`, recepción debe ver el
+      // MISMO formulario completo que administración — nunca el rótulo fijo
+      // ni un horario deshabilitado sin explicación.
+      it('recepción ve el formulario completo (selector de Servicio real) y puede elegir horario — NO el rótulo fijo "Fisioterapia"', async () => {
+        const user = userEvent.setup()
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" isReceptionist />)
+
+        await search(user, '87654321')
+        await waitFor(() => screen.getByText(/María López/))
+
+        expect(screen.getByLabelText('Servicio')).toBeInTheDocument()
+        expect(screen.queryByText('Fisioterapia')).not.toBeInTheDocument()
+        expect(screen.getByLabelText('Horario')).toBeDisabled()
+
+        await user.selectOptions(screen.getByLabelText('Servicio'), 'svc-demo-1')
+
+        // El horario deja de estar permanentemente deshabilitado: con
+        // servicio (+ profesional autoseleccionado "cualquiera") + fecha, se
+        // habilita con horarios reales — no un callejón sin salida. (Con
+        // "cualquier profesional" el <option> incluye el nombre del
+        // profesional del hueco, ver rama isAnyProfessional del modal.)
+        await waitFor(() => expect(screen.getByLabelText('Horario')).not.toBeDisabled())
+        expect(screen.getByRole('option', { name: /^09:00/ })).toBeInTheDocument()
+      })
+
+      it('grupo por defecto configurado pero SIN servicios activos en ese grupo: recepción ve el formulario completo', async () => {
+        mockTenantConfig.current = {
+          ...mockTenantConfig.current,
+          receptionGroups: { fisioterapia: { label: 'Fisioterapia', main_service_id: null } },
+          receptionDefaultGroup: 'fisioterapia',
+        }
+        const user = userEvent.setup()
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" isReceptionist />)
+
+        await search(user, '87654321')
+        await waitFor(() => screen.getByText(/María López/))
+
+        expect(screen.getByLabelText('Servicio')).toBeInTheDocument()
+        expect(screen.queryByText('Fisioterapia')).not.toBeInTheDocument()
+      })
+
+      it('el modo serie (x5/x10) también usa el formulario completo (elige servicio y profesional, no el rótulo fijo)', async () => {
+        const user = userEvent.setup()
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" isReceptionist />)
+
+        await user.click(screen.getByRole('button', { name: /5 sesiones/i }))
+
+        expect(screen.getByLabelText('Servicio')).toBeInTheDocument()
+        expect(screen.getByLabelText('Profesional')).toBeInTheDocument()
+        expect(screen.queryByText('Fisioterapia')).not.toBeInTheDocument()
+      })
+    })
+
+    describe('cuenta con un grupo de nombre distinto (ej. "consultorios") como default', () => {
+      const CONSULTORIOS_SERVICES = [
+        {
+          service_id: 'svc-c1',
+          name: 'Consulta general',
+          professional_name: null,
+          duration_minutes: 30,
+          booking_mode: 'appointment',
+          reception_group: 'consultorios',
+        },
+        {
+          service_id: 'svc-c2',
+          name: 'Control',
+          professional_name: null,
+          duration_minutes: 20,
+          booking_mode: 'appointment',
+          reception_group: 'consultorios',
+        },
+      ]
+
+      beforeEach(() => {
+        mockServicesData.current = CONSULTORIOS_SERVICES.map((service) => ({ ...service }))
+        mockTenantConfig.current = {
+          ...mockTenantConfig.current,
+          receptionGroups: {
+            consultorios: { label: 'Consultorios', main_service_id: 'svc-c1' },
+          },
+          receptionDefaultGroup: 'consultorios',
+        }
+      })
+
+      it('flujo simplificado sobre ESE grupo: rótulo = la etiqueta configurada, sin selector de Servicio/Profesional', () => {
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" isReceptionist />)
+        expect(screen.getByText('Consultorios')).toBeInTheDocument()
+        expect(screen.queryByLabelText('Servicio')).not.toBeInTheDocument()
+        expect(screen.queryByLabelText('Profesional')).not.toBeInTheDocument()
+      })
+
+      it('pide disponibilidad para TODOS los service_id del grupo "consultorios"', async () => {
+        const receivedCalls: { serviceIds?: string[] | null }[] = []
+        vi.mocked(useAvailability).mockImplementation((args) => {
+          receivedCalls.push(args)
+          return {
+            daysShifts: {},
+            daysSummary: {},
+            isLoading: false,
+            isError: false,
+            refetch: vi.fn(),
+            shiftsForDate: () => [],
+          }
+        })
+
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" isReceptionist />)
+
+        await waitFor(() => {
+          expect(receivedCalls.at(-1)?.serviceIds).toEqual(['svc-c1', 'svc-c2'])
+        })
+      })
+
+      it('la serie usa el main_service_id configurado (svc-c1), no el primer servicio del grupo', async () => {
+        const user = userEvent.setup()
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-30" isReceptionist />)
+
+        await user.click(screen.getByRole('button', { name: /5 sesiones/i }))
+
+        expect(vi.mocked(useAvailability)).toHaveBeenCalledWith(
+          expect.objectContaining({ serviceId: 'svc-c1' }),
+        )
+      })
+    })
+
+    describe('mientras carga la config de la cuenta', () => {
+      beforeEach(() => {
+        mockTenantConfig.current = {
+          receptionGroups: {},
+          receptionDefaultGroup: null,
+          isPending: true,
+          isError: false,
+          refetch: vi.fn(),
+        }
+      })
+
+      it('no muestra un formulario a medias: ni el rótulo fijo ni el selector de Servicio, solo el estado de carga', () => {
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" isReceptionist />)
+        expect(screen.getByText(/cargando configuración de la cuenta/i)).toBeInTheDocument()
+        expect(screen.queryByLabelText('Servicio')).not.toBeInTheDocument()
+        expect(screen.queryByText('Fisioterapia')).not.toBeInTheDocument()
+        expect(screen.queryByRole('group', { name: 'Cantidad de sesiones' })).not.toBeInTheDocument()
+      })
+
+      it('"Guardar turno" queda deshabilitado aunque haya paciente', async () => {
+        setupFetch({ search: [singlePatient] })
+        const user = userEvent.setup()
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" isReceptionist />)
+
+        await search(user, '87654321')
+        await waitFor(() => screen.getByText(/María López/))
+
+        expect(screen.getByRole('button', { name: /guardar turno/i })).toBeDisabled()
+      })
+
+      it('NO afecta a administración: el formulario completo se muestra igual', () => {
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" />)
+        expect(screen.getByLabelText('Servicio')).toBeInTheDocument()
+        expect(screen.queryByText(/cargando configuración de la cuenta/i)).not.toBeInTheDocument()
+      })
+    })
+
+    describe('la config de la cuenta falló', () => {
+      it('muestra un error visible con reintento, no un formulario roto', async () => {
+        const mockRefetchTenantConfig = vi.fn()
+        mockTenantConfig.current = {
+          receptionGroups: {},
+          receptionDefaultGroup: null,
+          isPending: false,
+          isError: true,
+          refetch: mockRefetchTenantConfig,
+        }
+
+        const user = userEvent.setup()
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" isReceptionist />)
+
+        expect(screen.getByRole('alert')).toHaveTextContent(/no se pudo cargar la configuración de la cuenta/i)
+        expect(screen.queryByLabelText('Servicio')).not.toBeInTheDocument()
+
+        await user.click(screen.getByRole('button', { name: /reintentar/i }))
+        expect(mockRefetchTenantConfig).toHaveBeenCalled()
+      })
+
+      it('"Guardar turno" queda deshabilitado', async () => {
+        mockTenantConfig.current = {
+          receptionGroups: {},
+          receptionDefaultGroup: null,
+          isPending: false,
+          isError: true,
+          refetch: vi.fn(),
+        }
+        setupFetch({ search: [singlePatient] })
+        const user = userEvent.setup()
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" isReceptionist />)
+
+        await search(user, '87654321')
+        await waitFor(() => screen.getByText(/María López/))
+
+        expect(screen.getByRole('button', { name: /guardar turno/i })).toBeDisabled()
+      })
+
+      it('NO afecta a administración: el formulario completo se muestra igual, sin ningún alert', () => {
+        mockTenantConfig.current = {
+          receptionGroups: {},
+          receptionDefaultGroup: null,
+          isPending: false,
+          isError: true,
+          refetch: vi.fn(),
+        }
+        render(<NewTurnoModal open={true} onClose={mockOnClose} date="2026-07-16" />)
+        expect(screen.getByLabelText('Servicio')).toBeInTheDocument()
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      })
     })
   })
 

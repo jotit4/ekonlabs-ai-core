@@ -22,10 +22,12 @@ import { type SelectedSlot } from '@/components/agenda/AvailabilitySlotPicker'
 import { ColorSwatchPicker } from '@/components/agenda/ColorSwatchPicker'
 import { ANY_PROFESSIONAL } from '@/lib/agenda/any-professional'
 import { listAlternateProfessionalShifts } from '@/lib/agenda/reception-retry'
+import { resolveGroupLabel, resolveGroupMainService } from '@/lib/agenda/reception-groups'
 import { summarizeSkipped } from '@/lib/paquetes/skip-reasons'
 import { getArgentinaToday } from '@/lib/utils/argentina-date'
 import type { AvailabilityShift, DayShifts } from '@/types/availability'
 import { createSupabaseBrowserClient } from '@/lib/supabase/client'
+import { useTenantConfig } from '@/hooks/use-tenant-config'
 
 function formatDateToArgentinaISO(date: Date): string {
   const argentinaTime = new Date(date.getTime() - 3 * 3600 * 1000)
@@ -54,11 +56,6 @@ interface ServiceOption {
   reception_group?: string | null
 }
 
-// Grupo fijo que usa el turno único de recepción ("Dar un turno" sin elegir
-// servicio ni profesional). Los otros grupos (pileta/pilates) no tienen este
-// flujo simplificado — solo Fisioterapia, por pedido explícito del cliente.
-const RECEPTION_FISIO_GROUP = 'fisioterapia'
-
 // Ítem B5 — tope duro de reintentos con OTRO profesional a la misma hora tras
 // un 409 del hueco colapsado (ver `handleSubmitReceptionTurno`). El bound real
 // ya lo da la cantidad de profesionales alternativos que devuelve el refetch
@@ -84,9 +81,13 @@ interface NewTurnoModalProps {
   initialProfessionalId?: string
   initialDate?: string // YYYY-MM-DD
   initialTimeHHmm?: string // HH:MM
-  // Pedido 1 (ISADI 2026-07-16) — modo recepción: el turno único (1 sesión)
-  // es siempre del grupo Fisioterapia, sin elegir servicio ni profesional.
-  // Default false (admin/doctor): el modal queda EXACTAMENTE como antes.
+  // Pedido 1 (ISADI 2026-07-16) — modo recepción: SI la cuenta tiene grupo
+  // por defecto con servicios activos (tenants.rules.reception_default_group,
+  // migración 069 — en ISADI, 'fisioterapia'), el turno único (1 sesión) es
+  // siempre de ESE grupo, sin elegir servicio ni profesional. Si no, recepción
+  // ve el mismo formulario completo que administración (ver
+  // receptionHasSimplifiedFlow). Default false (admin/doctor): el modal
+  // queda EXACTAMENTE como antes.
   isReceptionist?: boolean
   initialPatient?: PatientResult
   initialPatientPhone?: string
@@ -166,11 +167,19 @@ export function NewTurnoModal({
   const [createdTreatmentId, setCreatedTreatmentId] = useState<string | null>(null)
   const isPackageMode = sessionCount > 1
 
-  // Recepción nunca elige servicio/profesional: el turno único resuelve ambos
-  // desde el hueco del grupo y la serie usa el servicio canónico Fisioterapia
-  // con un profesional real distinto por sesión.
-  const isReceptionSingleTurno = isReceptionist && !isPackageMode
-  const isReceptionPackage = isReceptionist && isPackageMode
+  // Grupo por defecto de recepción y sus etiquetas/servicio principal — dato
+  // DE LA CUENTA (tenants.rules.reception_groups / reception_default_group,
+  // migración 069), no un nombre fijo en el código. Ver
+  // receptionHasSimplifiedFlow más abajo (una vez calculado `services`) para
+  // la definición de isReceptionSingleTurno / isReceptionPackage.
+  const {
+    receptionGroups,
+    receptionDefaultGroup,
+    isPending: isTenantConfigPending,
+    isError: isTenantConfigError,
+    refetch: refetchTenantConfig,
+  } = useTenantConfig()
+
   // Hueco elegido en modo recepción: clave compuesta
   // `${service_id}__${professional_id}__${HH:MM}` — a diferencia de
   // `anySlotKey` (solo profesional), acá también hace falta el service_id
@@ -233,12 +242,38 @@ export function NewTurnoModal({
     (s) => s.booking_mode === undefined || s.booking_mode === 'appointment',
   )
 
-  // El turno único usa todo el grupo. Las series requieren exactamente el
-  // servicio activo "Fisioterapia": elegir el primer servicio del grupo sería
+  // Grupo por defecto de recepción (tenants.rules.reception_default_group,
+  // migración 069) — dato de la cuenta. El turno único usa TODO el grupo. Las
+  // series requieren exactamente el servicio PRINCIPAL del grupo
+  // (`reception_groups[grupo].main_service_id`, con respaldo por nombre —
+  // ver resolveGroupMainService): elegir el primer servicio del grupo sería
   // ambiguo y podría mezclar semánticas/cupos.
-  const fisioServices = services.filter((s) => s.reception_group === RECEPTION_FISIO_GROUP)
-  const fisioServiceIds = fisioServices.map((s) => s.service_id)
-  const receptionFisioService = fisioServices.find((s) => s.name === 'Fisioterapia')
+  const defaultGroupKey = receptionDefaultGroup
+  const defaultGroupServices = defaultGroupKey
+    ? services.filter((s) => s.reception_group === defaultGroupKey)
+    : []
+  const defaultGroupServiceIds = defaultGroupServices.map((s) => s.service_id)
+  const defaultGroupLabel = defaultGroupKey ? resolveGroupLabel(defaultGroupKey, receptionGroups) : ''
+  const defaultGroupMainService = defaultGroupKey
+    ? resolveGroupMainService(defaultGroupKey, receptionGroups, defaultGroupServices)
+    : undefined
+
+  // Flujo simplificado de recepción ("Dar un turno" sin elegir servicio ni
+  // profesional): solo si la cuenta tiene grupo por defecto Y ese grupo tiene
+  // servicios activos. Si no (cuenta sin el ajuste, o el grupo quedó sin
+  // servicios), recepción ve el MISMO formulario completo que administración
+  // — bug corregido: antes el turno único quedaba atado a 'fisioterapia' fijo
+  // en el código, así que una cuenta sin ese grupo veía un servicio
+  // inexistente ("Fisioterapia") y el horario quedaba deshabilitado sin
+  // ningún aviso.
+  const receptionHasSimplifiedFlow =
+    isReceptionist && !!defaultGroupKey && defaultGroupServices.length > 0
+  const isReceptionSingleTurno = receptionHasSimplifiedFlow && !isPackageMode
+  const isReceptionPackage = receptionHasSimplifiedFlow && isPackageMode
+  // Mientras la config de la cuenta carga o falló, recepción no debe ver ni
+  // el flujo simplificado ni un formulario completo a medias (ambos dependen
+  // de saber si hay grupo por defecto) — ver el guard en el JSX del formulario.
+  const receptionConfigBlocking = isReceptionist && (isTenantConfigPending || isTenantConfigError)
 
   // Watch selección de servicio / profesional / fecha para calcular la
   // disponibilidad REAL (no horarios inventados). El horario solo se elige
@@ -265,7 +300,7 @@ export function NewTurnoModal({
   // Modo recepción (turno único): no hay servicio/profesional elegidos — la
   // condición pasa a ser "hay servicios del grupo Fisioterapia + fecha".
   const availabilityEnabled = isReceptionSingleTurno
-    ? fisioServiceIds.length > 0 && !!selectedDate
+    ? defaultGroupServiceIds.length > 0 && !!selectedDate
     : !!selectedServiceId && !!selectedProfessionalId && !!selectedDate
   const {
     shiftsForDate,
@@ -279,7 +314,7 @@ export function NewTurnoModal({
     // Pedido 1 — grupo completo de Fisioterapia, cualquier profesional (la
     // API resuelve TODOS los profesionales de TODOS esos servicios y une los
     // huecos; cada uno conserva su propio service_id/professional_id).
-    serviceIds: isReceptionSingleTurno ? fisioServiceIds : undefined,
+    serviceIds: isReceptionSingleTurno ? defaultGroupServiceIds : undefined,
     professionalId: isReceptionSingleTurno ? null : (isAnyProfessional ? null : selectedProfessionalId || null),
     allProfessionals: isReceptionSingleTurno ? true : isAnyProfessional,
     enabled: availabilityEnabled,
@@ -790,7 +825,7 @@ export function NewTurnoModal({
 
   // B5/Consumo de paquetes — hace el POST del turno único o sesión de paquete
   const postReceptionAction = (patientId: string, svcId: string, profId: string, hhmm: string) => {
-    const svc = fisioServices.find((s) => s.service_id === svcId)
+    const svc = defaultGroupServices.find((s) => s.service_id === svcId)
     const receptionDurationMinutes = svc?.duration_minutes ?? 60
     const appointmentTimeISO = `${selectedDate}T${hhmm}:00-03:00`
 
@@ -872,7 +907,7 @@ export function NewTurnoModal({
               const fresh = await fetchAvailabilityDays({
                 dateFrom: selectedDate,
                 dateTo: selectedDate,
-                serviceIds: fisioServiceIds,
+                serviceIds: defaultGroupServiceIds,
                 allProfessionals: true,
               })
               const freshShifts = (fresh.days as Record<string, DayShifts>)[selectedDate]?.shifts ?? []
@@ -960,7 +995,7 @@ export function NewTurnoModal({
     if (!patient) return
     const values = appointmentForm.getValues()
     const serviceId = isReceptionPackage
-      ? (receptionFisioService?.service_id ?? '')
+      ? (defaultGroupMainService?.service_id ?? '')
       : values.service_id
     const professionalId = isReceptionPackage
       ? ANY_PROFESSIONAL
@@ -969,7 +1004,7 @@ export function NewTurnoModal({
     if (!serviceId) {
       setSubmitError(
         isReceptionPackage
-          ? 'Falta configurar el servicio activo “Fisioterapia” dentro del grupo de recepción.'
+          ? `Falta configurar el servicio activo “${defaultGroupLabel}” dentro del grupo de recepción.`
           : 'Elegí un servicio',
       )
       return
@@ -1148,7 +1183,8 @@ export function NewTurnoModal({
     !patient ||
     packageChosen < 1 ||
     isSubmittingPackage ||
-    (isReceptionPackage && !receptionFisioService)
+    (isReceptionPackage && !defaultGroupMainService) ||
+    receptionConfigBlocking
   const packageSubmitLabel = isSubmittingPackage
     ? 'Reservando...'
     : packageChosen === 0
@@ -1480,6 +1516,37 @@ export function NewTurnoModal({
                     {/* patient_id hidden */}
                     <input type="hidden" {...appointmentForm.register('patient_id')} />
 
+                    {/* Config de la cuenta (reception_groups/reception_default_group,
+                        migración 069) todavía cargando o en error: recepción NO debe
+                        ver un formulario a medias (no sabemos aún si tiene flujo
+                        simplificado o completo). Solo aplica al rol recepción —
+                        administración no depende de esta config. */}
+                    {receptionConfigBlocking ? (
+                      isTenantConfigPending ? (
+                        <div
+                          role="status"
+                          aria-live="polite"
+                          className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-6 text-center text-sm text-[var(--color-text-secondary)]"
+                        >
+                          Cargando configuración de la cuenta…
+                        </div>
+                      ) : (
+                        <div
+                          role="alert"
+                          className="rounded-[8px] border border-red-300 bg-red-50 dark:bg-red-950/20 dark:border-red-800 px-4 py-4 space-y-2 text-sm text-red-700 dark:text-red-400"
+                        >
+                          <p>No se pudo cargar la configuración de la cuenta.</p>
+                          <button
+                            type="button"
+                            onClick={() => refetchTenantConfig()}
+                            className="min-h-[44px] px-4 text-sm font-medium text-[var(--color-interactive)] hover:underline"
+                          >
+                            Reintentar
+                          </button>
+                        </div>
+                      )
+                    ) : (
+                    <>
                     {/* Cantidad de sesiones: 1 turno suelto o serie/bono (x5/x10) */}
                     <div>
                       <span className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
@@ -1513,19 +1580,21 @@ export function NewTurnoModal({
                       )}
                     </div>
 
-                    {/* Para Recepción la operación completa se llama Fisioterapia.
-                        En series, el id interno debe ser el servicio canónico exacto. */}
-                    {isReceptionist ? (
+                    {/* Para Recepción la operación completa se llama como el grupo
+                        por defecto de la cuenta (`defaultGroupLabel`, dato de
+                        tenants.rules — ya NO un nombre fijo). En series, el id
+                        interno debe ser el servicio principal exacto del grupo. */}
+                    {receptionHasSimplifiedFlow ? (
                       <div>
                         <span className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
                           Servicio
                         </span>
                         <p className="px-3 py-2 rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text-primary)]">
-                          Fisioterapia
+                          {defaultGroupLabel}
                         </p>
-                        {isReceptionPackage && !receptionFisioService && (
+                        {isReceptionPackage && !defaultGroupMainService && (
                           <p role="alert" className="mt-2 text-xs text-red-600">
-                            Falta configurar un servicio activo llamado exactamente “Fisioterapia”
+                            Falta configurar un servicio activo llamado exactamente “{defaultGroupLabel}”
                             dentro del grupo de recepción. Pedile a Administración que revise Servicios.
                           </p>
                         )}
@@ -1564,10 +1633,10 @@ export function NewTurnoModal({
                     )}
 
                     {/* Profesional — el paciente elige (modelo por profesional).
-                        Pedido 1: oculto en el turno único de recepción — se resuelve
-                        automáticamente del hueco elegido (cualquier profesional del
-                        grupo Fisioterapia). */}
-                    {!isReceptionist && (
+                        Pedido 1: oculto en el flujo simplificado de recepción — se
+                        resuelve automáticamente del hueco elegido (cualquier
+                        profesional del grupo por defecto de la cuenta). */}
+                    {!receptionHasSimplifiedFlow && (
                     <div>
                       <label
                         htmlFor="professional-select"
@@ -1911,9 +1980,9 @@ export function NewTurnoModal({
                         <label className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
                           Horarios de las {sessionCount} sesiones
                         </label>
-                        {isReceptionPackage && !receptionFisioService ? (
+                        {isReceptionPackage && !defaultGroupMainService ? (
                           <p className="text-sm text-[var(--color-text-secondary)]">
-                            El scheduler estará disponible cuando se configure el servicio Fisioterapia.
+                            El scheduler estará disponible cuando se configure el servicio {defaultGroupLabel}.
                           </p>
                         ) : !isReceptionPackage && (!selectedServiceId || !selectedProfessionalId) ? (
                           <p className="text-sm text-[var(--color-text-secondary)]">
@@ -1923,7 +1992,7 @@ export function NewTurnoModal({
                           <MultiSessionScheduler
                             serviceId={
                               isReceptionPackage
-                                ? receptionFisioService!.service_id
+                                ? defaultGroupMainService!.service_id
                                 : selectedServiceId
                             }
                             professionalId={
@@ -1975,6 +2044,8 @@ export function NewTurnoModal({
                         {submitError}
                       </p>
                     )}
+                    </>
+                    )}
                   </form>
                 </div>
               </div>
@@ -2017,7 +2088,7 @@ export function NewTurnoModal({
                   disabled={
                     isReceptionSingleTurno
                       ? !patient || !receptionSlotKey || isSubmittingReceptionTurno
-                      : !patient || appointmentForm.formState.isSubmitting
+                      : !patient || appointmentForm.formState.isSubmitting || receptionConfigBlocking
                   }
                   className={[
                     'px-4 py-2 rounded-[8px] text-sm font-medium min-h-[44px]',
@@ -2026,7 +2097,7 @@ export function NewTurnoModal({
                     (
                       isReceptionSingleTurno
                         ? !patient || !receptionSlotKey || isSubmittingReceptionTurno
-                        : !patient || appointmentForm.formState.isSubmitting
+                        : !patient || appointmentForm.formState.isSubmitting || receptionConfigBlocking
                     )
                       ? 'opacity-50 cursor-not-allowed'
                       : '',
