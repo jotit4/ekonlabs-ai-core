@@ -2,6 +2,8 @@
 
 import { useList } from '@refinedev/core'
 import { useProfesionales } from '@/hooks/use-profesionales'
+import { useTenantConfig } from '@/hooks/use-tenant-config'
+import { resolveGroupLabel, sortGroupKeys } from '@/lib/agenda/reception-groups'
 import type { Service } from '@/types/servicios'
 
 // Foco del área visible en la agenda. 'rehab' recorta la agenda a servicios
@@ -16,18 +18,18 @@ export type AreaFocus = 'rehab' | 'todos'
 
 // ─── Botones de GRUPO (decisión ISADI 2026-07-16) ─────────────────────────────
 
-// La agenda se filtra por 3 botones de GRUPO — uno por cada
-// `services.reception_group` no nulo presente (Fisioterapia / Pileta /
-// Pilates). Es el ÚNICO modo de filtrado por servicio para TODOS los roles de
-// /agenda (admin y recepción) — el dueño pidió "igual que recepción". Orden
-// fijo (no alfabético) — coincide con el orden en que el cliente los nombró.
-// `hint` es SOLO etiqueta (texto), sin lógica de cupos.
-const RECEPTION_GROUPS: { value: string; label: string; hint?: string }[] = [
-  { value: 'fisioterapia', label: 'Fisioterapia' },
-  { value: 'pileta', label: 'Pileta' },
-  { value: 'pilates', label: 'Pilates' },
-]
-
+// La agenda se filtra por botones de GRUPO — uno por cada
+// `services.reception_group` (migración 053) no nulo presente en el catálogo
+// de servicios activos. Es el ÚNICO modo de filtrado por servicio para TODOS
+// los roles de /agenda (admin y recepción) — el dueño pidió "igual que
+// recepción". Antes la lista de grupos válidos (y su etiqueta visible) era un
+// array fijo en el código (solo fisioterapia/pileta/pilates) — una cuenta que
+// etiquetara sus servicios con otro grupo no veía ningún botón. Ahora los
+// grupos salen de los servicios activos y la etiqueta de
+// `tenants.rules.reception_groups` (migración 069, vía useTenantConfig) —
+// dato de la cuenta, no un nombre fijo. El orden sale de
+// `reception_groups[grupo].order` (ver sortGroupKeys); los grupos sin `order`
+// van después, en orden de aparición entre los servicios activos.
 interface AgendaServiceButtonsProps {
   // Grupo de recepción seleccionado (Fisioterapia/Pileta/Pilates) — estado
   // controlado. `null` = ningún grupo elegido (agenda sin recorte por grupo).
@@ -48,8 +50,11 @@ interface AgendaServiceButtonsProps {
  * "Filtrar" (a diferencia de <AgendaFilters>, que sí queda plegada para
  * recepción).
  *
- * Se ofrece un botón por cada `reception_group` no nulo presente en el catálogo
- * de servicios activos — ver RECEPTION_GROUPS arriba.
+ * Se ofrece un botón por cada `reception_group` no nulo presente en el
+ * catálogo de servicios activos — ver comentario arriba de
+ * `AgendaServiceButtonsProps`. La etiqueta visible sale de
+ * `tenants.rules.reception_groups` (useTenantConfig) o, si la cuenta no la
+ * configuró, de la clave con la primera letra en mayúscula.
  */
 export function AgendaServiceButtons({
   receptionGroup,
@@ -62,14 +67,33 @@ export function AgendaServiceButtons({
     pagination: { mode: 'off' },
     filters: [{ field: 'active', operator: 'eq', value: true }],
   })
+  const { receptionGroups, isPending: tenantConfigPending } = useTenantConfig()
 
   const allServicios = serviciosResult?.data ?? []
 
-  const presentGroups = new Set(
-    allServicios.map((s) => s.reception_group).filter((g): g is string => !!g),
-  )
-  const groups = RECEPTION_GROUPS.filter((g) => presentGroups.has(g.value))
+  // Grupos presentes entre los servicios activos, en orden de primera
+  // aparición (los servicios ya vienen ordenados por nombre — `sorters`
+  // arriba). Reemplaza el array fijo que solo conocía fisioterapia/pileta/
+  // pilates.
+  const presentGroupKeys: string[] = []
+  const seenGroupKeys = new Set<string>()
+  for (const s of allServicios) {
+    if (s.reception_group && !seenGroupKeys.has(s.reception_group)) {
+      seenGroupKeys.add(s.reception_group)
+      presentGroupKeys.push(s.reception_group)
+    }
+  }
+  const groups = sortGroupKeys(presentGroupKeys, receptionGroups).map((value) => ({
+    value,
+    label: resolveGroupLabel(value, receptionGroups),
+  }))
 
+  // Mientras la config de la cuenta carga no se pinta ningún botón: el orden
+  // y las etiquetas salen de `reception_groups`, y pintarlos antes los
+  // mostraría en otro orden (el de aparición) para reacomodarlos después. Si
+  // la config FALLA sí se pintan, con orden de aparición y etiqueta derivada
+  // de la clave: filtrar por grupo sigue funcionando.
+  if (tenantConfigPending) return null
   if (groups.length === 0) return null
 
   return (
@@ -94,7 +118,6 @@ export function AgendaServiceButtons({
             ].join(' ')}
           >
             {g.label}
-            {g.hint ? ` · ${g.hint}` : ''}
           </button>
         )
       })}

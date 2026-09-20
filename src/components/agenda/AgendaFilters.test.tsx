@@ -25,6 +25,21 @@ vi.mock('@refinedev/core', () => ({
   }),
 }))
 
+// Grupos de recepción (tenants.rules.reception_groups, migración 069) — dato
+// de la cuenta leído vía useTenantConfig, ya NO un array fijo en el código.
+// Mock configurable por test (default: mismas etiquetas que ISADI hoy).
+const mockReceptionGroups = vi.hoisted(() => ({
+  current: {
+    fisioterapia: { label: 'Fisioterapia', main_service_id: null },
+    pileta: { label: 'Pileta', main_service_id: null },
+    pilates: { label: 'Pilates', main_service_id: null },
+  } as Record<string, { label: string; main_service_id: string | null; order?: number }>,
+  isPending: false,
+}))
+vi.mock('@/hooks/use-tenant-config', () => ({
+  useTenantConfig: () => ({ receptionGroups: mockReceptionGroups.current, isPending: mockReceptionGroups.isPending }),
+}))
+
 import { AgendaFilters, AgendaServiceButtons } from './AgendaFilters'
 
 const defaultProps = {
@@ -170,21 +185,51 @@ describe('AgendaFilters (Profesional + Área + Limpiar)', () => {
   })
 })
 
-// ─── AgendaServiceButtons — 3 botones de GRUPO (decisión ISADI 2026-07-16) ────
-// La agenda se filtra por 3 botones de GRUPO (Fisioterapia/Pileta/Pilates) —
-// uno por cada `reception_group` no nulo presente en el catálogo. Es el ÚNICO
-// modo para TODOS los roles (admin y recepción): "igual que recepción". Ya no
-// existe el botón por servicio individual ni las props
-// `serviceId`/`onServiceChange`/`areaFocus`/`isReceptionist`.
+// ─── AgendaServiceButtons — botones de GRUPO (decisión ISADI 2026-07-16) ─────
+// La agenda se filtra por botones de GRUPO — uno por cada `reception_group`
+// no nulo presente en el catálogo. Es el ÚNICO modo para TODOS los roles
+// (admin y recepción): "igual que recepción". Ya no existe el botón por
+// servicio individual ni las props `serviceId`/`onServiceChange`/`areaFocus`/
+// `isReceptionist`. La etiqueta de cada grupo ya NO es un array fijo en el
+// código (antes solo conocía fisioterapia/pileta/pilates) — sale de
+// `tenants.rules.reception_groups` (useTenantConfig) o, si la cuenta no la
+// configuró, de la clave capitalizada.
 describe('AgendaServiceButtons (botones de grupo)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockReceptionGroups.isPending = false
+    mockReceptionGroups.current = {
+      fisioterapia: { label: 'Fisioterapia', main_service_id: null },
+      pileta: { label: 'Pileta', main_service_id: null },
+      pilates: { label: 'Pilates', main_service_id: null },
+    }
   })
 
   const groupProps = {
     receptionGroup: null,
     onReceptionGroupChange: vi.fn(),
   }
+
+  it('el orden de los botones sale de `order` de la cuenta, no del orden de aparición de los servicios', () => {
+    mockReceptionGroups.current = {
+      fisioterapia: { label: 'Fisioterapia', main_service_id: null, order: 3 },
+      pileta: { label: 'Pileta', main_service_id: null, order: 1 },
+      pilates: { label: 'Pilates', main_service_id: null, order: 2 },
+    }
+    render(<AgendaServiceButtons {...groupProps} />)
+    const labels = screen
+      .getAllByRole('button')
+      .map((b) => b.textContent?.trim())
+      .filter((t) => t === 'Fisioterapia' || t === 'Pileta' || t === 'Pilates')
+    expect(labels).toEqual(['Pileta', 'Pilates', 'Fisioterapia'])
+  })
+
+  it('mientras la config de la cuenta carga NO pinta botones (evita mostrarlos en otro orden y reacomodarlos)', () => {
+    mockReceptionGroups.isPending = true
+    mockReceptionGroups.current = {}
+    const { container } = render(<AgendaServiceButtons {...groupProps} />)
+    expect(container).toBeEmptyDOMElement()
+  })
 
   it('renderiza un botón por cada reception_group presente (Fisioterapia/Pileta/Pilates)', () => {
     render(<AgendaServiceButtons {...groupProps} />)
@@ -259,5 +304,29 @@ describe('AgendaServiceButtons (botones de grupo)', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: /^pileta$/i }))
     expect(onReceptionGroupChange).toHaveBeenCalledWith('pileta')
+  })
+
+  // ── Etiqueta = dato de la cuenta (tenants.rules.reception_groups) ──────────
+  describe('etiqueta configurable por cuenta', () => {
+    it('usa la etiqueta configurada en reception_groups en vez de un nombre fijo', () => {
+      mockReceptionGroups.current = {
+        fisioterapia: { label: 'Kinesiología', main_service_id: null },
+        pileta: { label: 'Pileta', main_service_id: null },
+        pilates: { label: 'Pilates', main_service_id: null },
+      }
+      render(<AgendaServiceButtons {...groupProps} />)
+      expect(screen.getByRole('button', { name: /^kinesiología$/i })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /^fisioterapia$/i })).not.toBeInTheDocument()
+    })
+
+    it('cae a la clave capitalizada cuando la cuenta no configuró reception_groups (cuenta demo)', () => {
+      mockReceptionGroups.current = {}
+      render(<AgendaServiceButtons {...groupProps} />)
+      // Fallback: mismo texto que hoy para ISADI (capitalizar('fisioterapia')
+      // = 'Fisioterapia'), pero derivado de la clave, no de un array fijo.
+      expect(screen.getByRole('button', { name: /^fisioterapia$/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /^pileta$/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /^pilates$/i })).toBeInTheDocument()
+    })
   })
 })

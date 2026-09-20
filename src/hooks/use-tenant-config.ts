@@ -1,10 +1,15 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
+import type { ReceptionGroupsConfig } from '@/lib/agenda/reception-groups'
 
 interface TenantConfigResponse {
   uses_native_calendar: boolean
   agenda_area_focus: 'rehab' | null
+  // reception_groups / reception_default_group (tenants.rules, migración 069)
+  // — ver /api/tenant/config y src/lib/agenda/reception-groups.ts.
+  reception_groups: ReceptionGroupsConfig
+  reception_default_group: string | null
 }
 
 export function useTenantConfig() {
@@ -34,6 +39,15 @@ export function useTenantConfig() {
     // `isPending`/`isError` sea true, no pinta turnos (skeleton o estado de
     // error) en vez de decidir un `areaFocus` provisorio — ver AgendaView.
     agendaAreaFocus: data?.agenda_area_focus ?? null,
+    // reception_groups / reception_default_group — mismo criterio que
+    // agendaAreaFocus arriba: mientras carga, falló, o el tenant no tiene el
+    // ajuste, se exponen sus defaults seguros ({} / null). NewTurnoModal los
+    // usa para decidir si recepción tiene flujo simplificado (ver
+    // receptionHasSimplifiedFlow) — con estos defaults, cualquier cuenta sin
+    // el ajuste cae al formulario completo (igual que administración), nunca
+    // a un grupo inexistente.
+    receptionGroups: data?.reception_groups ?? {},
+    receptionDefaultGroup: data?.reception_default_group ?? null,
     isPending,
     isError,
     refetch,
