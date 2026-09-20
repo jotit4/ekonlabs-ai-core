@@ -1,0 +1,13 @@
+-- RLS en la tabla de respaldo de la base de conocimiento (2026-09-20)
+--
+-- `knowledge_chunks_backup_20260812` se creó el 2026-08-12 como respaldo antes de
+-- reescribir la base de conocimiento de ISADI, y quedó sin RLS: era la única tabla
+-- del esquema public sin aislamiento (32 de 33). No contiene datos de pacientes,
+-- pero sí contenido de una cuenta, expuesto por la API sin ninguna regla.
+--
+-- Se activa RLS SIN políticas: la tabla queda accesible solo con la clave de
+-- servicio, igual que `appointment_counters` y `clinical_notes_backup_20260721`.
+-- Idempotente. Reversible con DISABLE ROW LEVEL SECURITY.
+--
+-- Ya aplicada en producción el 2026-09-20.
+ALTER TABLE public.knowledge_chunks_backup_20260812 ENABLE ROW LEVEL SECURITY;
