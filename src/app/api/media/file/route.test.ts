@@ -1,4 +1,14 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
+
+const { mockGetAuthClaims } = vi.hoisted(() => ({
+  mockGetAuthClaims: vi.fn(),
+}))
+
+vi.mock('server-only', () => ({}))
+vi.mock('@/lib/auth/claims', () => ({
+  getAuthClaims: mockGetAuthClaims,
+}))
+
 import { GET } from './route'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -43,6 +53,10 @@ describe('GET /api/media/file', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockGetAuthClaims.mockResolvedValue({
+      userId: 'user-1',
+      claims: { sub: 'user-1', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' },
+    })
     // Por defecto: el host permitido se deriva de CHATWOOT_BASE_URL
     process.env = { ...originalEnv, CHATWOOT_BASE_URL: `https://${ALLOWED_HOST}` }
   })
@@ -118,6 +132,20 @@ describe('GET /api/media/file', () => {
     const req = makeRequest(OTHER_HOST_URL)
     const res = await GET(req)
     expect(res.status).toBe(403)
+  })
+
+  it('retorna 403 tenant_required para una identidad de plataforma antes del fetch', async () => {
+    mockGetAuthClaims.mockResolvedValue({
+      userId: 'platform-1',
+      claims: { sub: 'platform-1', platform_role: 'comercial' },
+    })
+    const mockFetch = vi.fn()
+    vi.stubGlobal('fetch', mockFetch)
+
+    const res = await GET(makeRequest(ALLOWED_URL))
+    expect(res.status).toBe(403)
+    await expect(res.json()).resolves.toEqual({ error: 'tenant_required' })
+    expect(mockFetch).not.toHaveBeenCalled()
   })
 
   it('maneja CHATWOOT_BASE_URL inválida sin lanzar excepción (deny-by-default)', async () => {

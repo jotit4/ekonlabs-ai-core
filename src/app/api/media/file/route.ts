@@ -6,6 +6,8 @@
 // Mismo patrón que /api/media/audio (helper compartido).
 
 import { buildAllowedMediaHosts } from '@/lib/media/allowed-hosts'
+import { getAuthClaims } from '@/lib/auth/claims'
+import { requireTenantId } from '@/lib/auth/require-tenant'
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
@@ -34,6 +36,11 @@ export async function GET(request: Request) {
   if (!allowedHosts.has(targetUrl.hostname)) {
     return new Response('Forbidden: host not allowed', { status: 403 })
   }
+
+  const sessionAuth = await getAuthClaims()
+  if (!sessionAuth) return Response.json({ error: 'No autorizado' }, { status: 401 })
+  const tenantCheck = requireTenantId(sessionAuth.claims)
+  if (tenantCheck instanceof Response) return tenantCheck
 
   // 5. Fetchear el recurso server-side (Node.js no tiene restricciones CORS)
   try {

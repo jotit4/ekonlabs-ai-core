@@ -1,5 +1,14 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 
+const { mockGetAuthClaims } = vi.hoisted(() => ({
+  mockGetAuthClaims: vi.fn(),
+}))
+
+vi.mock('server-only', () => ({}))
+vi.mock('@/lib/auth/claims', () => ({
+  getAuthClaims: mockGetAuthClaims,
+}))
+
 import { GET } from './route'
 
 // El host permitido se deriva de CHATWOOT_BASE_URL (no se hardcodea ningún dominio).
@@ -16,6 +25,10 @@ function makeRequest(url: string, extraHeaders: Record<string, string> = {}) {
 describe('GET /api/media/audio', () => {
   beforeEach(() => {
     vi.stubEnv('CHATWOOT_BASE_URL', `https://${CHATWOOT_HOST}`)
+    mockGetAuthClaims.mockResolvedValue({
+      userId: 'user-1',
+      claims: { sub: 'user-1', tenant_id: '5298fcc5-15bf-494c-9655-b49d759cfef4' },
+    })
   })
 
   afterEach(() => {
@@ -47,6 +60,20 @@ describe('GET /api/media/audio', () => {
     const res = await GET(req)
     expect(res.status).toBe(403)
     expect(await res.text()).toContain('Forbidden: only https allowed')
+  })
+
+  it('retorna 403 tenant_required para una identidad de plataforma antes del fetch', async () => {
+    mockGetAuthClaims.mockResolvedValue({
+      userId: 'platform-1',
+      claims: { sub: 'platform-1', platform_role: 'comercial' },
+    })
+    const mockFetch = vi.fn()
+    vi.stubGlobal('fetch', mockFetch)
+
+    const res = await GET(makeRequest(ALLOWED_URL))
+    expect(res.status).toBe(403)
+    await expect(res.json()).resolves.toEqual({ error: 'tenant_required' })
+    expect(mockFetch).not.toHaveBeenCalled()
   })
 
   it('streamea el audio con 200 y Content-Type correcto', async () => {
