@@ -62,7 +62,21 @@ vi.mock('@/hooks/use-gcal-channel-status', () => ({
 }))
 
 vi.mock('@/hooks/use-tenant-config', () => ({
-  useTenantConfig: vi.fn(() => ({ usesNativeCalendar: false, agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null, isPending: false, isError: false, refetch: vi.fn() })),
+  useTenantConfig: vi.fn(() => ({ usesNativeCalendar: false, agendaAreaFocus: null, agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null, isPending: false, isError: false, refetch: vi.fn() })),
+}))
+
+// Preferencia "Ver" del usuario (paso 2/3, migración 075) — default: sin
+// preferencia guardada (agendaView: null), como cualquier usuario que nunca
+// tocó el selector.
+vi.mock('@/hooks/use-agenda-view-preference', () => ({
+  useAgendaViewPreference: vi.fn(() => ({
+    agendaView: null,
+    isPending: false,
+    isError: false,
+    refetch: vi.fn(),
+    setAgendaView: vi.fn(),
+    isSaving: false,
+  })),
 }))
 
 vi.mock('@/components/agenda/SyncStatusBanner', () => ({
@@ -306,6 +320,21 @@ vi.mock('@/components/agenda/AgendaFilters', () => ({
       <button onClick={() => onReceptionGroupChange?.(null)}>mock-clear-grupo</button>
     </div>
   ),
+  // Selector "Ver" (paso 2/3, migración 075) — stub que expone el value
+  // recibido y dos botones para ejercitar onChange('todos')/onChange('foco')
+  // desde AgendaView.
+  AgendaFocusSelector: ({
+    value,
+    onChange,
+  }: {
+    value?: 'foco' | 'todos'
+    onChange?: (value: 'foco' | 'todos') => void
+  }) => (
+    <div data-testid="agenda-focus-selector" data-value={value ?? ''}>
+      <button onClick={() => onChange?.('todos')}>mock-ver-todos</button>
+      <button onClick={() => onChange?.('foco')}>mock-ver-foco</button>
+    </div>
+  ),
 }))
 
 import { AgendaView as AgendaPage } from './AgendaView'
@@ -313,6 +342,7 @@ import { useUserRole } from '@/hooks/use-user-role'
 import { useAppointments } from '@/hooks/use-appointments'
 import { useAppointmentsRange } from '@/hooks/use-appointments-range'
 import { useTenantConfig } from '@/hooks/use-tenant-config'
+import { useAgendaViewPreference } from '@/hooks/use-agenda-view-preference'
 import { useGCalChannelStatus } from '@/hooks/use-gcal-channel-status'
 import { useWalkInService } from '@/hooks/use-walk-in-service'
 
@@ -336,7 +366,15 @@ describe('AgendaPage', () => {
       isError: false,
       refetch: vi.fn(),
     })
-    vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null, isPending: false, isError: false, refetch: vi.fn() })
+    vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, agendaAreaFocus: null, agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null, isPending: false, isError: false, refetch: vi.fn() })
+    vi.mocked(useAgendaViewPreference).mockReturnValue({
+      agendaView: null,
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+      setAgendaView: vi.fn(),
+      isSaving: false,
+    })
     vi.mocked(useWalkInService).mockReturnValue(null)
   })
 
@@ -541,7 +579,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = { vista: 'dia' }
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null,
+        agendaAreaFocus: null, agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: false,
         refetch: vi.fn(),
@@ -565,7 +603,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = { vista: 'dia' }
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: 'rehab', receptionGroups: {}, receptionDefaultGroup: null,
+        agendaAreaFocus: 'rehab', agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: false,
         refetch: vi.fn(),
@@ -597,7 +635,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = { vista: 'dia' }
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: 'rehab', receptionGroups: {}, receptionDefaultGroup: null,
+        agendaAreaFocus: 'rehab', agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: false,
         refetch: vi.fn(),
@@ -629,7 +667,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = { vista: 'dia' }
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null,
+        agendaAreaFocus: null, agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
         isPending: true,
         isError: false,
         refetch: vi.fn(),
@@ -670,7 +708,7 @@ describe('AgendaPage', () => {
       const mockRefetchAppointments = vi.fn()
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null,
+        agendaAreaFocus: null, agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: true,
         refetch: mockRefetchTenantConfig,
@@ -716,7 +754,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = {}
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null,
+        agendaAreaFocus: null, agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: false,
         refetch: vi.fn(),
@@ -739,7 +777,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = {}
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: 'rehab', receptionGroups: {}, receptionDefaultGroup: null,
+        agendaAreaFocus: 'rehab', agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: false,
         refetch: vi.fn(),
@@ -762,7 +800,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = {}
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null,
+        agendaAreaFocus: null, agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
         isPending: true,
         isError: false,
         refetch: vi.fn(),
@@ -790,7 +828,7 @@ describe('AgendaPage', () => {
       const mockRangeRefetch = vi.fn()
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null,
+        agendaAreaFocus: null, agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: true,
         refetch: mockRefetchTenantConfig,
@@ -887,7 +925,7 @@ describe('AgendaPage', () => {
   describe('condicionalidad GCal según uses_native_calendar', () => {
     it('muestra banners GCal cuando usesNativeCalendar=false y vista día', () => {
       mockSearchParamsData = { vista: 'dia' }
-      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null, isPending: false, isError: false, refetch: vi.fn() })
+      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, agendaAreaFocus: null, agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null, isPending: false, isError: false, refetch: vi.fn() })
       render(<AgendaPage />)
       expect(screen.getByTestId('sync-status-banner')).toBeInTheDocument()
       expect(screen.getByTestId('gcal-degradation-banner')).toBeInTheDocument()
@@ -895,7 +933,7 @@ describe('AgendaPage', () => {
 
     it('NO muestra banners GCal cuando usesNativeCalendar=true', () => {
       mockSearchParamsData = { vista: 'dia' }
-      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: true, agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null, isPending: false, isError: false, refetch: vi.fn() })
+      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: true, agendaAreaFocus: null, agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null, isPending: false, isError: false, refetch: vi.fn() })
       render(<AgendaPage />)
       expect(screen.queryByTestId('sync-status-banner')).not.toBeInTheDocument()
       expect(screen.queryByTestId('gcal-degradation-banner')).not.toBeInTheDocument()
@@ -903,14 +941,14 @@ describe('AgendaPage', () => {
 
     it('cuando usesNativeCalendar=true, useGCalChannelStatus se llama con enabled=false', () => {
       mockSearchParamsData = {}
-      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: true, agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null, isPending: false, isError: false, refetch: vi.fn() })
+      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: true, agendaAreaFocus: null, agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null, isPending: false, isError: false, refetch: vi.fn() })
       render(<AgendaPage />)
       expect(vi.mocked(useGCalChannelStatus)).toHaveBeenCalledWith(false)
     })
 
     it('cuando tenantConfig está pendiente (isPending=true), useGCalChannelStatus se llama con enabled=false', () => {
       mockSearchParamsData = {}
-      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null, isPending: true, isError: false, refetch: vi.fn() })
+      vi.mocked(useTenantConfig).mockReturnValue({ usesNativeCalendar: false, agendaAreaFocus: null, agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null, isPending: true, isError: false, refetch: vi.fn() })
       render(<AgendaPage />)
       expect(vi.mocked(useGCalChannelStatus)).toHaveBeenCalledWith(false)
     })
@@ -932,7 +970,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = { vista: 'dia' }
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null,
+        agendaAreaFocus: null, agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: true,
         refetch: vi.fn(),
@@ -946,7 +984,7 @@ describe('AgendaPage', () => {
       mockSearchParamsData = {}
       vi.mocked(useTenantConfig).mockReturnValue({
         usesNativeCalendar: false,
-        agendaAreaFocus: null, receptionGroups: {}, receptionDefaultGroup: null,
+        agendaAreaFocus: null, agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
         isPending: false,
         isError: true,
         refetch: vi.fn(),
@@ -1288,6 +1326,214 @@ describe('AgendaPage', () => {
       mockSearchParamsData = { vista: 'dia', professional_id: 'prof-walkin' }
       render(<AgendaPage />)
       expect(screen.getByTestId('cola-orden-llegada')).toHaveAttribute('data-hoy-iso', hoyISO)
+    })
+  })
+
+  // ── Selector "Ver" — foco de área configurable por usuario (paso 2/3, migr 075) ──
+  // Pedido del dueño sobre agenda_area_focus (migración 062): un selector
+  // persistente por usuario al lado de los botones de grupo. AgendaView
+  // combina el default de la CUENTA (agenda_area_focus) con la preferencia
+  // del USUARIO (agenda_view) para decidir `areaFocus`.
+  describe('Selector "Ver" — preferencia de foco por usuario (migración 075)', () => {
+    it('cuenta SIN agenda_area_focus → el selector no aparece (nada que elegir)', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: null, agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+      })
+      render(<AgendaPage />)
+      // El stub de AgendaFocusSelector se sigue montando (es AgendaView quien
+      // decide qué le pasa, no si se monta), pero el componente real es quien
+      // se autogatea — ver AgendaFilters.test.tsx. Acá solo confirmamos que
+      // AgendaView le pasa el `value` correcto ('todos', el único posible sin
+      // agenda_area_focus) y no rompe nada.
+      expect(screen.getByTestId('agenda-focus-selector')).toHaveAttribute('data-value', 'todos')
+    })
+
+    it('cuenta CON agenda_area_focus="rehab" y sin preferencia guardada → value="foco" (default de ISADI, sin cambios)', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: 'rehab', agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+      })
+      vi.mocked(useAgendaViewPreference).mockReturnValue({
+        agendaView: null,
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+        setAgendaView: vi.fn(),
+        isSaving: false,
+      })
+      render(<AgendaPage />)
+      expect(screen.getByTestId('agenda-focus-selector')).toHaveAttribute('data-value', 'foco')
+    })
+
+    it('preferencia guardada "todos" gana sobre el default de la cuenta', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      mockSearchParamsData = { vista: 'dia' }
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: 'rehab', agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+      })
+      vi.mocked(useAgendaViewPreference).mockReturnValue({
+        agendaView: 'todos',
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+        setAgendaView: vi.fn(),
+        isSaving: false,
+      })
+      vi.mocked(useAppointments).mockReturnValue({
+        appointments: [
+          { appointment_id: 'a1', services: { name: 'Kinesiología', reception_group: 'fisioterapia' } },
+          { appointment_id: 'a2', services: { name: 'Consulta General', reception_group: null } },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+        overtime: {},
+      } as unknown as ReturnType<typeof useAppointments>)
+      render(<AgendaPage />)
+      expect(screen.getByTestId('agenda-focus-selector')).toHaveAttribute('data-value', 'todos')
+      // Sin recorte: se ven los 2 turnos (antes, con solo agenda_area_focus,
+      // se habría recortado a 1).
+      expect(screen.getByTestId('calendar-view')).toHaveAttribute('data-appt-count', '2')
+    })
+
+    it('preferencia guardada "foco" con cuenta con agenda_area_focus → sigue recortando', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      mockSearchParamsData = { vista: 'dia' }
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: 'rehab', agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+      })
+      vi.mocked(useAgendaViewPreference).mockReturnValue({
+        agendaView: 'foco',
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+        setAgendaView: vi.fn(),
+        isSaving: false,
+      })
+      vi.mocked(useAppointments).mockReturnValue({
+        appointments: [
+          { appointment_id: 'a1', services: { name: 'Kinesiología', reception_group: 'fisioterapia' } },
+          { appointment_id: 'a2', services: { name: 'Consulta General', reception_group: null } },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+        overtime: {},
+      } as unknown as ReturnType<typeof useAppointments>)
+      render(<AgendaPage />)
+      expect(screen.getByTestId('calendar-view')).toHaveAttribute('data-appt-count', '1')
+    })
+
+    it('elegir "Todos los servicios" en el selector llama setAgendaView("todos")', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      const mockSetAgendaView = vi.fn()
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: 'rehab', agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+      })
+      vi.mocked(useAgendaViewPreference).mockReturnValue({
+        agendaView: 'foco',
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+        setAgendaView: mockSetAgendaView,
+        isSaving: false,
+      })
+      render(<AgendaPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'mock-ver-todos' }))
+      expect(mockSetAgendaView).toHaveBeenCalledWith('todos')
+    })
+
+    // Mismo criterio que tenantConfigPending: mientras la preferencia carga
+    // (y la cuenta SÍ tiene agenda_area_focus, por lo que la preferencia
+    // puede cambiar el resultado) no se pinta ningún turno — evita mostrar un
+    // foco provisorio que después cambie.
+    it('cuenta con agenda_area_focus + preferencia todavía cargando → skeleton, no se pinta ningún turno', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      mockSearchParamsData = { vista: 'dia' }
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: 'rehab', agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+      })
+      vi.mocked(useAgendaViewPreference).mockReturnValue({
+        agendaView: null,
+        isPending: true,
+        isError: false,
+        refetch: vi.fn(),
+        setAgendaView: vi.fn(),
+        isSaving: false,
+      })
+      vi.mocked(useAppointments).mockReturnValue({
+        appointments: [
+          { appointment_id: 'a1', services: { name: 'Kinesiología', reception_group: 'fisioterapia' } },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+        overtime: {},
+      } as unknown as ReturnType<typeof useAppointments>)
+      render(<AgendaPage />)
+      expect(screen.getByTestId('calendar-view-skeleton')).toBeInTheDocument()
+      expect(screen.queryByTestId('calendar-view')).not.toBeInTheDocument()
+    })
+
+    // Cuenta SIN agenda_area_focus: la preferencia nunca puede cambiar el
+    // resultado (siempre 'todos'), así que su loading NO debe demorar el
+    // render — evita una espera innecesaria para la mayoría de las cuentas
+    // (demo y cualquier cliente que no sea ISADI).
+    it('cuenta SIN agenda_area_focus + preferencia cargando → NO gatea el render (se pinta igual)', () => {
+      vi.mocked(useUserRole).mockReturnValue('admin')
+      mockSearchParamsData = { vista: 'dia' }
+      vi.mocked(useTenantConfig).mockReturnValue({
+        usesNativeCalendar: false,
+        agendaAreaFocus: null, agendaAreaFocusLabel: 'Rehabilitación', receptionGroups: {}, receptionDefaultGroup: null,
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+      })
+      vi.mocked(useAgendaViewPreference).mockReturnValue({
+        agendaView: null,
+        isPending: true,
+        isError: false,
+        refetch: vi.fn(),
+        setAgendaView: vi.fn(),
+        isSaving: false,
+      })
+      vi.mocked(useAppointments).mockReturnValue({
+        appointments: [
+          { appointment_id: 'a1', services: { name: 'Consulta General', reception_group: null } },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+        overtime: {},
+      } as unknown as ReturnType<typeof useAppointments>)
+      render(<AgendaPage />)
+      expect(screen.getByTestId('calendar-view')).toHaveAttribute('data-appt-count', '1')
+      expect(screen.queryByTestId('calendar-view-skeleton')).not.toBeInTheDocument()
     })
   })
 })

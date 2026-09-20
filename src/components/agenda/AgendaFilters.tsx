@@ -125,6 +125,64 @@ export function AgendaServiceButtons({
   )
 }
 
+// ─── Selector "Ver" — foco de área configurable por usuario (paso 2/3) ────────
+//
+// Pedido del dueño sobre `agenda_area_focus` (migración 062): el recorte a
+// rehabilitación de ISADI era invisible y no se podía desactivar desde la
+// interfaz. Textual: "un selector al lado de los filtros del Calendario...
+// que ofrezca lo que es Fisioterapia, por su nombre... y que sea
+// persistente... guardado como config de preferencia para ese usuario
+// logueado". El comportamiento actual (recortar) sigue siendo el DEFAULT de
+// la cuenta — ver useAgendaViewPreference — este control solo permite
+// cambiarlo.
+//
+// Vive ACÁ (junto a AgendaServiceButtons) y no en AgendaView porque, igual
+// que los botones de grupo, es autosuficiente respecto de la config de la
+// cuenta: lee `agendaAreaFocus`/`agendaAreaFocusLabel` de useTenantConfig
+// para decidir si se pinta y con qué texto. El VALOR seleccionado y el
+// guardado los controla AgendaView (mismo patrón que receptionGroup con
+// AgendaServiceButtons) porque también los necesita para filtrar los turnos.
+export interface AgendaFocusSelectorProps {
+  value: 'foco' | 'todos'
+  onChange: (value: 'foco' | 'todos') => void
+}
+
+/**
+ * Selector "Ver": alterna entre el foco por defecto de la cuenta (etiqueta
+ * configurable, ej. "Rehabilitación") y "Todos los servicios". SOLO se pinta
+ * si la cuenta tiene `agenda_area_focus` configurado — si no, no hay nada
+ * que elegir (el recorte no existe para esa cuenta). Mientras la config de
+ * la cuenta carga no se pinta, mismo criterio que AgendaServiceButtons
+ * (evita mostrarlo y esconderlo un instante después).
+ */
+export function AgendaFocusSelector({ value, onChange }: AgendaFocusSelectorProps) {
+  const { agendaAreaFocus, agendaAreaFocusLabel, isPending: tenantConfigPending } = useTenantConfig()
+
+  if (tenantConfigPending) return null
+  if (agendaAreaFocus !== 'rehab') return null
+
+  return (
+    <div className="flex items-center gap-2">
+      <label
+        htmlFor="agenda-focus-selector"
+        className="text-sm text-[var(--color-text-secondary)] whitespace-nowrap"
+      >
+        Ver
+      </label>
+      <select
+        id="agenda-focus-selector"
+        value={value}
+        onChange={(e) => onChange(e.target.value === 'todos' ? 'todos' : 'foco')}
+        className="min-h-[44px] rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-sm text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-interactive)]"
+        aria-label="Ver"
+      >
+        <option value="foco">{agendaAreaFocusLabel}</option>
+        <option value="todos">Todos los servicios</option>
+      </select>
+    </div>
+  )
+}
+
 // ─── Resto de filtros: Profesional, Limpiar ───────────────────────────────────
 
 interface AgendaFiltersProps {

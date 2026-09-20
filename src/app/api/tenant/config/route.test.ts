@@ -65,6 +65,7 @@ describe('GET /api/tenant/config', () => {
     expect(body).toEqual({
       uses_native_calendar: false,
       agenda_area_focus: null,
+      agenda_area_focus_label: 'Rehabilitación',
       reception_groups: {},
       reception_default_group: null,
     })
@@ -91,6 +92,7 @@ describe('GET /api/tenant/config', () => {
     expect(body).toEqual({
       uses_native_calendar: true,
       agenda_area_focus: null,
+      agenda_area_focus_label: 'Rehabilitación',
       reception_groups: {},
       reception_default_group: null,
     })
@@ -121,6 +123,7 @@ describe('GET /api/tenant/config', () => {
     expect(body).toEqual({
       uses_native_calendar: false,
       agenda_area_focus: 'rehab',
+      agenda_area_focus_label: 'Rehabilitación',
       reception_groups: {},
       reception_default_group: null,
     })
@@ -147,6 +150,7 @@ describe('GET /api/tenant/config', () => {
     expect(body).toEqual({
       uses_native_calendar: false,
       agenda_area_focus: null,
+      agenda_area_focus_label: 'Rehabilitación',
       reception_groups: {},
       reception_default_group: null,
     })
@@ -173,6 +177,7 @@ describe('GET /api/tenant/config', () => {
     expect(body).toEqual({
       uses_native_calendar: false,
       agenda_area_focus: null,
+      agenda_area_focus_label: 'Rehabilitación',
       reception_groups: {},
       reception_default_group: null,
     })
@@ -199,6 +204,7 @@ describe('GET /api/tenant/config', () => {
     expect(body).toEqual({
       uses_native_calendar: false,
       agenda_area_focus: null,
+      agenda_area_focus_label: 'Rehabilitación',
       reception_groups: {},
       reception_default_group: null,
     })
@@ -355,16 +361,73 @@ describe('GET /api/tenant/config', () => {
     })
   })
 
+  // ── agenda_area_focus_label (tenants.rules, migración 075) ─────────────────
+  // Etiqueta visible del selector "Ver" de la agenda (paso 2/3 del pedido del
+  // dueño). A diferencia de agenda_area_focus, SIEMPRE resuelve a un string —
+  // no representa "sin ajuste", solo el texto a mostrar.
+  describe('agenda_area_focus_label', () => {
+    function mockRules(rules: Record<string, unknown>) {
+      mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
+      mockGetSession.mockResolvedValue({
+        data: { session: { access_token: 'token-abc' } },
+        error: null,
+      })
+      mockFrom.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({
+            data: { uses_native_calendar: false, rules },
+            error: null,
+          }),
+        }),
+      })
+    }
+
+    it('retorna la etiqueta configurada por la cuenta (ISADI, tras la migración 075)', async () => {
+      mockRules({ agenda_area_focus: 'rehab', agenda_area_focus_label: 'Rehabilitación' })
+      const response = await GET()
+      const body = await response.json()
+      expect(body.agenda_area_focus_label).toBe('Rehabilitación')
+    })
+
+    it('cae a "Rehabilitación" cuando la cuenta no configuró la etiqueta', async () => {
+      mockRules({})
+      const response = await GET()
+      const body = await response.json()
+      expect(body.agenda_area_focus_label).toBe('Rehabilitación')
+    })
+
+    it('cae a "Rehabilitación" cuando el valor no es un string no vacío', async () => {
+      mockRules({ agenda_area_focus_label: '   ' })
+      const response = await GET()
+      const body = await response.json()
+      expect(body.agenda_area_focus_label).toBe('Rehabilitación')
+    })
+
+    it('cae a "Rehabilitación" cuando el valor es de un tipo inválido', async () => {
+      mockRules({ agenda_area_focus_label: 123 })
+      const response = await GET()
+      const body = await response.json()
+      expect(body.agenda_area_focus_label).toBe('Rehabilitación')
+    })
+
+    it('respeta una etiqueta distinta a "Rehabilitación" si otra cuenta la configura así', async () => {
+      mockRules({ agenda_area_focus_label: 'Kinesiología' })
+      const response = await GET()
+      const body = await response.json()
+      expect(body.agenda_area_focus_label).toBe('Kinesiología')
+    })
+  })
+
   // ── Contrato de la respuesta ────────────────────────────────────────────────
   // La ruta lee `rules` entero de la DB (para poder leer `agenda_area_focus` /
-  // `reception_groups` / `reception_default_group`), pero SOLO debe exponer
-  // esos campos públicos — nunca `rules` completo ni ninguna de sus otras
-  // claves (ej. `absence_policy`). Este test falla si alguien cambia la ruta
-  // para devolver `rules` tal cual (spread o campo directo): `Object.keys`
-  // detecta cualquier clave extra, cosa que `toEqual` por sí solo también
-  // haría, pero acá lo hacemos explícito e independiente del resto de los
-  // valores.
-  it('la respuesta expone SOLO uses_native_calendar, agenda_area_focus, reception_groups y reception_default_group, aunque rules tenga otras claves', async () => {
+  // `agenda_area_focus_label` / `reception_groups` / `reception_default_group`),
+  // pero SOLO debe exponer esos campos públicos — nunca `rules` completo ni
+  // ninguna de sus otras claves (ej. `absence_policy`). Este test falla si
+  // alguien cambia la ruta para devolver `rules` tal cual (spread o campo
+  // directo): `Object.keys` detecta cualquier clave extra, cosa que `toEqual`
+  // por sí solo también haría, pero acá lo hacemos explícito e independiente
+  // del resto de los valores.
+  it('la respuesta expone SOLO uses_native_calendar, agenda_area_focus, agenda_area_focus_label, reception_groups y reception_default_group, aunque rules tenga otras claves', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
     mockGetSession.mockResolvedValue({
       data: { session: { access_token: 'token-abc' } },
@@ -377,6 +440,7 @@ describe('GET /api/tenant/config', () => {
             uses_native_calendar: true,
             rules: {
               agenda_area_focus: 'rehab',
+              agenda_area_focus_label: 'Rehabilitación',
               reception_groups: { fisioterapia: { label: 'Fisioterapia', main_service_id: null } },
               reception_default_group: 'fisioterapia',
               absence_policy: { notice_window_hours: 24, allow_recovery_on_notice: true, no_show_consequence: 'lose' },
@@ -393,6 +457,7 @@ describe('GET /api/tenant/config', () => {
     const body = await response.json()
     expect(Object.keys(body).sort()).toEqual([
       'agenda_area_focus',
+      'agenda_area_focus_label',
       'reception_default_group',
       'reception_groups',
       'uses_native_calendar',

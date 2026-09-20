@@ -6,6 +6,10 @@ import type { ReceptionGroupsConfig } from '@/lib/agenda/reception-groups'
 interface TenantConfigResponse {
   uses_native_calendar: boolean
   agenda_area_focus: 'rehab' | null
+  // agenda_area_focus_label (tenants.rules, migración 075) — etiqueta visible
+  // del selector "Ver" de la agenda (AgendaFocusSelector, AgendaFilters.tsx).
+  // Siempre viene como string ('Rehabilitación' si la cuenta no la configuró).
+  agenda_area_focus_label: string
   // reception_groups / reception_default_group (tenants.rules, migración 069)
   // — ver /api/tenant/config y src/lib/agenda/reception-groups.ts.
   reception_groups: ReceptionGroupsConfig
@@ -39,6 +43,9 @@ export function useTenantConfig() {
     // `isPending`/`isError` sea true, no pinta turnos (skeleton o estado de
     // error) en vez de decidir un `areaFocus` provisorio — ver AgendaView.
     agendaAreaFocus: data?.agenda_area_focus ?? null,
+    // agenda_area_focus_label — fallback 'Rehabilitación' mientras carga, si
+    // falló, o si la cuenta no la configuró (mismo texto que hoy ve ISADI).
+    agendaAreaFocusLabel: data?.agenda_area_focus_label ?? 'Rehabilitación',
     // reception_groups / reception_default_group — mismo criterio que
     // agendaAreaFocus arriba: mientras carga, falló, o el tenant no tiene el
     // ajuste, se exponen sus defaults seguros ({} / null). NewTurnoModal los

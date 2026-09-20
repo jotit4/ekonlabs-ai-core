@@ -201,6 +201,45 @@ describe('useTenantConfig', () => {
     })
   })
 
+  // ── agendaAreaFocusLabel (tenants.rules.agenda_area_focus_label, migración 075) ──
+  // Etiqueta visible del selector "Ver" de la agenda. A diferencia de
+  // agendaAreaFocus, SIEMPRE resuelve a un string ('Rehabilitación' de
+  // fallback) — no representa "sin ajuste".
+  describe('agendaAreaFocusLabel', () => {
+    it('es "Rehabilitación" por defecto mientras carga', () => {
+      const { Wrapper } = makeWrapper()
+      mockFetch.mockReturnValue(new Promise(() => {})) // never resolves
+      const { result, unmount } = renderHook(() => useTenantConfig(), { wrapper: Wrapper })
+      expect(result.current.agendaAreaFocusLabel).toBe('Rehabilitación')
+      unmount()
+    })
+
+    it('expone la etiqueta que devuelve la API (ISADI)', async () => {
+      const { Wrapper } = makeWrapper()
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          uses_native_calendar: false,
+          agenda_area_focus: 'rehab',
+          agenda_area_focus_label: 'Rehabilitación',
+        }),
+      })
+      const { result, unmount } = renderHook(() => useTenantConfig(), { wrapper: Wrapper })
+      await waitFor(() => expect(result.current.isPending).toBe(false))
+      expect(result.current.agendaAreaFocusLabel).toBe('Rehabilitación')
+      unmount()
+    })
+
+    it('cae a "Rehabilitación" si la API falla (fallback seguro)', async () => {
+      const { Wrapper } = makeWrapper()
+      mockFetch.mockResolvedValue({ ok: false, status: 500 })
+      const { result, unmount } = renderHook(() => useTenantConfig(), { wrapper: Wrapper })
+      await waitFor(() => expect(result.current.isPending).toBe(false), { timeout: 6000 })
+      expect(result.current.agendaAreaFocusLabel).toBe('Rehabilitación')
+      unmount()
+    })
+  })
+
   // ── isError / refetch (corrección de code review — High 2) ────────────────
   // Antes de esta corrección, el hook no exponía si la config había fallado:
   // AgendaView no tenía forma de distinguir "el tenant no tiene el ajuste" de

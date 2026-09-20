@@ -48,6 +48,18 @@ function normalizeReceptionDefaultGroup(raw: unknown): string | null {
   return typeof raw === 'string' && raw.trim() !== '' ? raw : null
 }
 
+// Normaliza `tenants.rules.agenda_area_focus_label` (migración 075) —
+// etiqueta visible del foco de área en el selector "Ver" de la agenda (ver
+// AgendaFilters.tsx). Es un DATO DE LA CUENTA, no un nombre fijo en el
+// código, mismo criterio que `reception_groups[...].label` arriba. Si la
+// cuenta no la configuró (o el valor no es un string no vacío), cae a
+// 'Rehabilitación' — el texto que ISADI ya usa hoy en el resto de la UI
+// (botón de grupo "Fisioterapia" aparte; esto es la etiqueta del FOCO, no de
+// un grupo puntual).
+function normalizeAgendaAreaFocusLabel(raw: unknown): string {
+  return typeof raw === 'string' && raw.trim() !== '' ? raw : 'Rehabilitación'
+}
+
 export async function GET(): Promise<Response> {
   const supabase = await createSupabaseServerClient()
 
@@ -82,11 +94,18 @@ export async function GET(): Promise<Response> {
   // route.test.ts, incluye estas dos claves nuevas).
   const receptionGroups = normalizeReceptionGroups(rules?.reception_groups)
   const receptionDefaultGroup = normalizeReceptionDefaultGroup(rules?.reception_default_group)
+  // agenda_area_focus_label (tenants.rules, migración 075) — etiqueta visible
+  // del selector "Ver" (paso 2/3 del pedido de foco de área configurable).
+  // Siempre resuelve a un string (fallback 'Rehabilitación'), a diferencia de
+  // agenda_area_focus/reception_default_group: no representa "ausencia de
+  // ajuste", solo el texto a mostrar cuando el selector aplica.
+  const agendaAreaFocusLabel = normalizeAgendaAreaFocusLabel(rules?.agenda_area_focus_label)
 
   return Response.json(
     {
       uses_native_calendar: data.uses_native_calendar,
       agenda_area_focus: agendaAreaFocus,
+      agenda_area_focus_label: agendaAreaFocusLabel,
       reception_groups: receptionGroups,
       reception_default_group: receptionDefaultGroup,
     },

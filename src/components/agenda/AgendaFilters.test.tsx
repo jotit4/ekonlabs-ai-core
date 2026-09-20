@@ -28,6 +28,9 @@ vi.mock('@refinedev/core', () => ({
 // Grupos de recepción (tenants.rules.reception_groups, migración 069) — dato
 // de la cuenta leído vía useTenantConfig, ya NO un array fijo en el código.
 // Mock configurable por test (default: mismas etiquetas que ISADI hoy).
+// agendaAreaFocus/agendaAreaFocusLabel (migración 075) viven en el mismo
+// objeto — default: cuenta SIN foco (agendaAreaFocus: null), como la
+// mayoría de los tests de este archivo no le atañe.
 const mockReceptionGroups = vi.hoisted(() => ({
   current: {
     fisioterapia: { label: 'Fisioterapia', main_service_id: null },
@@ -35,12 +38,19 @@ const mockReceptionGroups = vi.hoisted(() => ({
     pilates: { label: 'Pilates', main_service_id: null },
   } as Record<string, { label: string; main_service_id: string | null; order?: number }>,
   isPending: false,
+  agendaAreaFocus: null as 'rehab' | null,
+  agendaAreaFocusLabel: 'Rehabilitación',
 }))
 vi.mock('@/hooks/use-tenant-config', () => ({
-  useTenantConfig: () => ({ receptionGroups: mockReceptionGroups.current, isPending: mockReceptionGroups.isPending }),
+  useTenantConfig: () => ({
+    receptionGroups: mockReceptionGroups.current,
+    isPending: mockReceptionGroups.isPending,
+    agendaAreaFocus: mockReceptionGroups.agendaAreaFocus,
+    agendaAreaFocusLabel: mockReceptionGroups.agendaAreaFocusLabel,
+  }),
 }))
 
-import { AgendaFilters, AgendaServiceButtons } from './AgendaFilters'
+import { AgendaFilters, AgendaServiceButtons, AgendaFocusSelector } from './AgendaFilters'
 
 const defaultProps = {
   professionalId: null,
@@ -328,5 +338,82 @@ describe('AgendaServiceButtons (botones de grupo)', () => {
       expect(screen.getByRole('button', { name: /^pileta$/i })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /^pilates$/i })).toBeInTheDocument()
     })
+  })
+})
+
+// ─── AgendaFocusSelector — selector "Ver" (foco de área configurable, paso 2/3) ─
+// Pedido del dueño sobre agenda_area_focus (migración 062): un selector
+// persistente al lado de los botones de grupo que permita cambiar el
+// comportamiento por defecto de la cuenta. Solo aparece si la cuenta tiene
+// agenda_area_focus configurado.
+describe('AgendaFocusSelector (selector "Ver")', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockReceptionGroups.isPending = false
+    mockReceptionGroups.agendaAreaFocus = null
+    mockReceptionGroups.agendaAreaFocusLabel = 'Rehabilitación'
+  })
+
+  const selectorProps = { value: 'foco' as const, onChange: vi.fn() }
+
+  it('NO se pinta cuando la cuenta no tiene agenda_area_focus (cuenta demo)', () => {
+    mockReceptionGroups.agendaAreaFocus = null
+    const { container } = render(<AgendaFocusSelector {...selectorProps} />)
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('NO se pinta mientras la config de la cuenta está pendiente', () => {
+    mockReceptionGroups.agendaAreaFocus = 'rehab'
+    mockReceptionGroups.isPending = true
+    const { container } = render(<AgendaFocusSelector {...selectorProps} />)
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('se pinta cuando la cuenta tiene agenda_area_focus="rehab" (ISADI)', () => {
+    mockReceptionGroups.agendaAreaFocus = 'rehab'
+    render(<AgendaFocusSelector {...selectorProps} />)
+    expect(screen.getByLabelText('Ver')).toBeInTheDocument()
+  })
+
+  it('la opción de foco usa la etiqueta configurada por la cuenta, no un nombre fijo', () => {
+    mockReceptionGroups.agendaAreaFocus = 'rehab'
+    mockReceptionGroups.agendaAreaFocusLabel = 'Kinesiología'
+    render(<AgendaFocusSelector {...selectorProps} />)
+    expect(screen.getByRole('option', { name: 'Kinesiología' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Rehabilitación' })).not.toBeInTheDocument()
+  })
+
+  it('ofrece "Todos los servicios" como segunda opción', () => {
+    mockReceptionGroups.agendaAreaFocus = 'rehab'
+    render(<AgendaFocusSelector {...selectorProps} />)
+    expect(screen.getByRole('option', { name: 'Todos los servicios' })).toBeInTheDocument()
+  })
+
+  it('refleja el value recibido por props', () => {
+    mockReceptionGroups.agendaAreaFocus = 'rehab'
+    render(<AgendaFocusSelector value="todos" onChange={vi.fn()} />)
+    expect(screen.getByLabelText('Ver')).toHaveValue('todos')
+  })
+
+  it('llama onChange con "todos" al elegir esa opción', () => {
+    mockReceptionGroups.agendaAreaFocus = 'rehab'
+    const onChange = vi.fn()
+    render(<AgendaFocusSelector value="foco" onChange={onChange} />)
+    fireEvent.change(screen.getByLabelText('Ver'), { target: { value: 'todos' } })
+    expect(onChange).toHaveBeenCalledWith('todos')
+  })
+
+  it('llama onChange con "foco" al volver a elegir esa opción', () => {
+    mockReceptionGroups.agendaAreaFocus = 'rehab'
+    const onChange = vi.fn()
+    render(<AgendaFocusSelector value="todos" onChange={onChange} />)
+    fireEvent.change(screen.getByLabelText('Ver'), { target: { value: 'foco' } })
+    expect(onChange).toHaveBeenCalledWith('foco')
+  })
+
+  it('cumple el mínimo táctil de 44px', () => {
+    mockReceptionGroups.agendaAreaFocus = 'rehab'
+    render(<AgendaFocusSelector {...selectorProps} />)
+    expect(screen.getByLabelText('Ver').className).toContain('min-h-[44px]')
   })
 })

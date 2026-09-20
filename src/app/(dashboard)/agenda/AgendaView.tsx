@@ -14,7 +14,7 @@ import { CalendarView } from '@/components/agenda/CalendarView'
 import { CalendarViewRangeReadOnly } from '@/components/agenda/CalendarViewRangeReadOnly'
 import { CalendarViewSelector, type CalendarViewType } from '@/components/agenda/CalendarViewSelector'
 import { KPIStrip } from '@/components/agenda/KPIStrip'
-import { AgendaFilters, AgendaServiceButtons, type AreaFocus } from '@/components/agenda/AgendaFilters'
+import { AgendaFilters, AgendaServiceButtons, AgendaFocusSelector, type AreaFocus } from '@/components/agenda/AgendaFilters'
 import { ColaOrdenLlegada } from '@/components/recepcion/ColaOrdenLlegada'
 import { isRehabService } from '@/lib/agenda/service-visuals'
 import { SyncStatusBanner } from '@/components/agenda/SyncStatusBanner'
@@ -24,6 +24,7 @@ import { useAppointments } from '@/hooks/use-appointments'
 import { useAppointmentsRange } from '@/hooks/use-appointments-range'
 import { useGCalChannelStatus } from '@/hooks/use-gcal-channel-status'
 import { useTenantConfig } from '@/hooks/use-tenant-config'
+import { useAgendaViewPreference } from '@/hooks/use-agenda-view-preference'
 import { useUserRole } from '@/hooks/use-user-role'
 import { useDayStatusRange } from '@/hooks/use-day-status'
 import { useSetDayStatus } from '@/hooks/use-set-day-status'
@@ -125,7 +126,41 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
     isError: tenantConfigError,
     refetch: refetchTenantConfig,
   } = useTenantConfig()
-  const areaFocus: AreaFocus = configAreaFocus === 'rehab' ? 'rehab' : 'todos'
+
+  // ── Preferencia "Ver" del usuario (paso 2/3, migración 075) ─────────────────
+  // Selector persistente al lado de AgendaServiceButtons (ver
+  // AgendaFocusSelector, AgendaFilters.tsx) que permite a cada usuario elegir
+  // si la agenda respeta el recorte por defecto de la cuenta ('foco') o lo
+  // ignora ('todos'). Sin preferencia guardada (agendaView === null), el
+  // default lo decide la CUENTA: 'foco' si tiene agenda_area_focus, 'todos'
+  // si no — así, una cuenta sin el ajuste no cambia en nada, y un usuario de
+  // ISADI que nunca tocó el selector ve EXACTAMENTE lo mismo que antes de
+  // esta feature.
+  const tenantHasAreaFocus = configAreaFocus === 'rehab'
+  const {
+    agendaView: savedAgendaView,
+    isPending: agendaViewPrefPending,
+    setAgendaView,
+  } = useAgendaViewPreference(tenantHasAreaFocus)
+  const effectiveAgendaView: 'foco' | 'todos' = savedAgendaView ?? (tenantHasAreaFocus ? 'foco' : 'todos')
+  const areaFocus: AreaFocus = tenantHasAreaFocus && effectiveAgendaView === 'foco' ? 'rehab' : 'todos'
+
+  // Ojo: con un botón de grupo activo, el filtro de grupo manda y el selector
+  // no cambia lo que se ve (ver `applyRehabFocus` más abajo). Es lo esperado
+  // —el filtro específico gana sobre el default de la cuenta— pero se lee
+  // como "el selector no hace nada" si alguien lo prueba con un grupo puesto.
+  function handleAgendaViewChange(next: 'foco' | 'todos') {
+    setAgendaView(next)
+  }
+
+  // La preferencia solo puede cambiar `areaFocus` cuando la cuenta TIENE
+  // agenda_area_focus — para cualquier otra cuenta (la mayoría) `areaFocus`
+  // ya es 'todos' sin depender de la preferencia, así que no hace falta
+  // esperarla para pintar (evita una demora extra en cuentas sin este
+  // ajuste). Para una cuenta CON el ajuste (ISADI), sí hay que esperar a
+  // saber la preferencia antes de pintar — igual que con tenantConfigPending
+  // — para no mostrar un foco provisorio que después cambie.
+  const agendaViewGatesRender = tenantHasAreaFocus && agendaViewPrefPending
 
   // Grupo seleccionado (Fisioterapia/Pileta/Pilates, ver AgendaServiceButtons).
   // Estado local (no URL): no es un service_id real (los grupos no existen en la
@@ -196,14 +231,14 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
   // más abajo, junto a useGCalChannelStatus), que también respeta el error de
   // config por la misma razón: mientras la config no resolvió, no hay que
   // pintar nada que dependa de ella (ni turnos ni banners).
-  const combinedIsLoading = isLoading || tenantConfigPending
+  const combinedIsLoading = isLoading || tenantConfigPending || agendaViewGatesRender
   const combinedIsError = isError || tenantConfigError
   function handleRefetchDay() {
     refetch()
     refetchTenantConfig()
   }
 
-  const combinedRangeIsLoading = rangeLoading || tenantConfigPending
+  const combinedRangeIsLoading = rangeLoading || tenantConfigPending || agendaViewGatesRender
   const combinedRangeIsError = rangeError || tenantConfigError
   function handleRefetchRange() {
     rangeRefetch()
@@ -573,10 +608,17 @@ export function AgendaView({ initialRole = null }: AgendaViewProps = {}) {
               de un toque, no debe quedar escondida detrás de "Filtrar" como el
               resto de los controles secundarios. Decisión ISADI 2026-07-16:
               admin ve los mismos 3 grupos que recepción. */}
-          <AgendaServiceButtons
-            receptionGroup={receptionGroup}
-            onReceptionGroupChange={handleReceptionGroupChange}
-          />
+          <div className="flex items-center gap-3 flex-wrap">
+            <AgendaServiceButtons
+              receptionGroup={receptionGroup}
+              onReceptionGroupChange={handleReceptionGroupChange}
+            />
+            {/* Selector "Ver" (paso 2/3, migración 075) — al lado de los
+                botones de grupo, mismo criterio de "siempre visible" (no
+                escondido detrás de "Filtrar"). Se autogatea: no se pinta si
+                la cuenta no tiene agenda_area_focus — ver AgendaFocusSelector. */}
+            <AgendaFocusSelector value={effectiveAgendaView} onChange={handleAgendaViewChange} />
+          </div>
           <div id="agenda-secondary-controls">
             {secondaryVisible && (
               <AgendaFilters
